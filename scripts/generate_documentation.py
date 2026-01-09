@@ -298,6 +298,85 @@ Samo JSON."""
 
         return categories_result
 
+    async def _document_single_tool(
+        self,
+        op_id: str,
+        tool: UnifiedToolDefinition,
+        category: str
+    ) -> Optional[Dict]:
+        """
+        Fallback: Document a single tool when batch fails.
+        Simpler prompt, more reliable JSON.
+        """
+        parameters_with_origin = {}
+        for name, p in tool.parameters.items():
+            parameters_with_origin[name] = {
+                "type": p.param_type,
+                "required": p.required,
+                "description": p.description or "",
+                "origin": p.dependency_source.value,
+                "context_key": p.context_key if p.context_key else None
+            }
+
+        info = {
+            "id": op_id,
+            "method": tool.method,
+            "path": tool.path,
+            "description": tool.description or "",
+            "category": category,
+            "parameters": parameters_with_origin
+        }
+
+        prompt = f"""Generiraj dokumentaciju za ovaj API endpoint. Vrati SAMO JSON objekt.
+
+ENDPOINT:
+{json.dumps(info, ensure_ascii=False, indent=2)}
+
+Vrati TOČNO ovaj format (JSON objekt, NE array):
+{{
+  "operation_id": "{op_id}",
+  "purpose": "Kratki opis svrhe (hrvatski)",
+  "when_to_use": ["Scenarij 1", "Scenarij 2"],
+  "when_not_to_use": ["Kad ne koristiti"],
+  "prerequisites": ["Preduvjet 1"],
+  "common_errors": {{"400": "Nevaljani podaci", "404": "Nije pronađeno"}},
+  "example_queries_hr": ["Primjer pitanja 1", "Primjer pitanja 2"],
+  "parameter_origin_guide": {{}}
+}}
+
+SAMO JSON objekt, bez teksta prije ili poslije."""
+
+        for attempt in range(3):
+            result = await self._call_llm(prompt, max_tokens=1500)
+            if result:
+                try:
+                    # Try to extract JSON from response
+                    result = result.strip()
+                    if result.startswith("```"):
+                        result = result.split("```")[1]
+                        if result.startswith("json"):
+                            result = result[4:]
+                    doc = json.loads(result)
+                    doc["operation_id"] = op_id  # Ensure correct ID
+                    return doc
+                except json.JSONDecodeError as e:
+                    logger.debug(f"Single tool {op_id} attempt {attempt+1} failed: {e}")
+                    await asyncio.sleep(1)
+
+        # Final fallback - return minimal doc
+        logger.warning(f"Failed to document {op_id} after 3 attempts, using minimal doc")
+        return {
+            "operation_id": op_id,
+            "purpose": tool.description or f"{tool.method} {tool.path}",
+            "when_to_use": [f"Za {category.replace('_', ' ')}"],
+            "when_not_to_use": [],
+            "prerequisites": [],
+            "common_errors": {},
+            "example_queries_hr": [],
+            "parameter_origin_guide": {},
+            "_auto_generated": True
+        }
+
     async def _generate_documentation(
         self,
         tools: Dict[str, UnifiedToolDefinition],
@@ -307,8 +386,10 @@ Samo JSON."""
         Generate detailed documentation for each tool.
 
         Batches tools for efficient processing.
+        Falls back to single-tool documentation when batch fails.
         """
         documentation = {}
+        failed_tools = []  # Track tools that need retry
         tool_list = list(tools.items())
         batches = [tool_list[i:i + DOC_BATCH_SIZE]
                    for i in range(0, len(tool_list), DOC_BATCH_SIZE)]
@@ -316,20 +397,22 @@ Samo JSON."""
         for batch_num, batch in enumerate(batches):
             logger.info(f"Documenting batch {batch_num + 1}/{len(batches)} ({len(batch)} tools)")
 
+            # Track which tools are in this batch
+            batch_tool_ids = [op_id for op_id, _ in batch]
+
             # Prepare batch info
             batch_info = []
             for op_id, tool in batch:
                 category = categories.get("tool_to_category", {}).get(op_id, "uncategorized")
 
                 # PILLAR 2: Include dependency_source for each parameter
-                # This tells LLM where each parameter comes from
                 parameters_with_origin = {}
                 for name, p in tool.parameters.items():
                     parameters_with_origin[name] = {
                         "type": p.param_type,
                         "required": p.required,
                         "description": p.description or "",
-                        "origin": p.dependency_source.value,  # "context", "user_input", or "output"
+                        "origin": p.dependency_source.value,
                         "context_key": p.context_key if p.context_key else None
                     }
 
@@ -376,6 +459,7 @@ Za SVAKI endpoint vrati:
 Vrati JSON array svih endpointa. Samo JSON."""
 
             result = await self._call_llm(prompt, max_tokens=4000)
+            batch_success = False
             if result:
                 try:
                     docs = json.loads(result)
@@ -383,9 +467,44 @@ Vrati JSON array svih endpointa. Samo JSON."""
                         op_id = doc.get("operation_id", "")
                         if op_id:
                             documentation[op_id] = doc
+                    batch_success = True
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse documentation batch: {e}")
                     self.stats["errors"] += 1
+
+            # Check which tools from this batch are still missing
+            missing_from_batch = [
+                (op_id, tool) for op_id, tool in batch
+                if op_id not in documentation
+            ]
+
+            if missing_from_batch:
+                if not batch_success:
+                    logger.info(f"Batch failed, falling back to single-tool for {len(missing_from_batch)} tools")
+                else:
+                    logger.info(f"Batch partial success, {len(missing_from_batch)} tools missing")
+
+                # Fallback: document missing tools one by one
+                for op_id, tool in missing_from_batch:
+                    category = categories.get("tool_to_category", {}).get(op_id, "uncategorized")
+                    doc = await self._document_single_tool(op_id, tool, category)
+                    if doc:
+                        documentation[op_id] = doc
+                        logger.info(f"  ✓ Documented {op_id} via fallback")
+                    else:
+                        failed_tools.append(op_id)
+                        logger.warning(f"  ✗ Failed to document {op_id}")
+
+        # Final validation
+        all_tool_ids = set(tools.keys())
+        documented_ids = set(documentation.keys())
+        still_missing = all_tool_ids - documented_ids
+
+        if still_missing:
+            logger.warning(f"COMPLETENESS CHECK: {len(still_missing)} tools still missing after all retries")
+            self.stats["missing_tools"] = list(still_missing)
+        else:
+            logger.info(f"✅ COMPLETENESS CHECK: All {len(tools)} tools documented!")
 
         return documentation
 

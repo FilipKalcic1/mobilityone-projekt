@@ -23,22 +23,20 @@
       ],
       "relationships": {
         "assigned_to": "Person",
-        "has_bookings": "Booking",
-        "belongs_to": "Tenant"
+        "has_bookings": "Booking"
       },
       "description": "Vozilo koje se koristi za rezervacije"
     },
     "Booking": {
       "properties": [
         "BookingId",
-        "StartDate",
-        "EndDate",
+        "StartTime",
+        "EndTime",
         "Status"
       ],
       "relationships": {
         "for_vehicle": "Vehicle",
-        "made_by": "Person",
-        "related_to": "Tenant"
+        "made_by": "Person"
       },
       "description": "Rezervacija vozila"
     },
@@ -46,38 +44,35 @@
       "properties": [
         "TenantId",
         "Name",
-        "Address",
-        "ContactInfo"
+        "Address"
       ],
       "relationships": {
-        "has_persons": "Person",
-        "has_vehicles": "Vehicle",
-        "has_bookings": "Booking"
+        "has_users": "Person",
+        "manages_bookings": "Booking"
       },
-      "description": "Organizacija koja koristi vozila"
+      "description": "Organizacija koja koristi sustav"
     },
     "Case": {
       "properties": [
         "CaseId",
         "Description",
-        "Status",
-        "CreatedDate"
+        "Status"
       ],
       "relationships": {
         "related_to": "Tenant",
         "assigned_to": "Person"
       },
-      "description": "Slučaj povezan s rezervacijama ili vozilima"
+      "description": "Slučaj povezan s korisnikom ili organizacijom"
     },
     "Registration": {
       "properties": [
         "RegistrationId",
         "VehicleId",
-        "RegistrationDate",
-        "ExpiryDate"
+        "RegistrationDate"
       ],
       "relationships": {
-        "for_vehicle": "Vehicle"
+        "for_vehicle": "Vehicle",
+        "registered_by": "Person"
       },
       "description": "Registracija vozila"
     }
@@ -88,21 +83,17 @@
       "description": "Vozilo ne može imati dvije rezervacije u isto vrijeme"
     },
     {
-      "name": "vehicle_registration_required",
-      "description": "Svako vozilo mora imati registraciju"
-    },
-    {
-      "name": "person_email_unique",
-      "description": "Email adresa osobe mora biti jedinstvena"
+      "name": "unique_vehicle_registration",
+      "description": "Svako vozilo može imati samo jednu aktivnu registraciju u isto vrijeme"
     }
   ],
   "entity_resolution": {
     "my_vehicle": "Vehicle assigned to current Person",
     "moje vozilo": "Vehicle assigned to current Person",
-    "my_bookings": "Bookings made by current Person",
-    "moje rezervacije": "Bookings made by current Person"
+    "my_booking": "Booking made by current Person",
+    "moje rezervacije": "Booking made by current Person"
   },
-  "generated_at": "2026-01-05T10:25:38.913241",
+  "generated_at": "2026-01-09T14:24:34.838496",
   "detected_entities": [
     "",
     "AcquiringType",
