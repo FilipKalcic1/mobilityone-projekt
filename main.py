@@ -18,9 +18,15 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import text
 
-# Configure logging FIRST
+# Import config FIRST to get LOG_LEVEL
+from config import get_settings
+
+settings = get_settings()
+
+# Configure logging with level from settings
+log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
@@ -30,11 +36,7 @@ logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-# Import config
-from config import get_settings
-
-settings = get_settings()
+logger.info(f"Logging configured: level={settings.LOG_LEVEL}")
 
 # Prometheus metrics
 REQUEST_COUNT = Counter(

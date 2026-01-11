@@ -1,15 +1,22 @@
 """
 Flow Handler - Multi-turn conversation flows.
-Version: 1.0
+Version: 2.0
 
 Single responsibility: Handle selection, confirmation, gathering, and availability flows.
+
+v2.0 Changes:
+- Integrated ConfirmationDialog for human-readable parameter display
+- Added parameter modification support ("Bilješka: tekst", "Od: 10:00")
+- Better Croatian formatting for dates, vehicles, etc.
 """
 
 import logging
+import re
 from typing import Dict, Any, List, Optional
 
 from services.booking_contracts import AssigneeType, EntryType
 from services.error_translator import get_error_translator
+from services.confirmation_dialog import get_confirmation_dialog, ConfirmationDialog
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +38,7 @@ class FlowHandler:
         self.executor = executor
         self.ai = ai
         self.formatter = formatter
+        self.confirmation_dialog = get_confirmation_dialog()
 
     async def handle_availability(
         self,
@@ -127,12 +135,10 @@ class FlowHandler:
         await conv_manager.add_parameters(parameters)
         await conv_manager.select_item(first_vehicle)
 
+        # RACE CONDITION FIX v2.1: Batch all tool_outputs updates into single dict
+        # to prevent partial state being saved if interrupted between updates
         if hasattr(conv_manager.context, 'tool_outputs'):
-            conv_manager.context.tool_outputs["VehicleId"] = vehicle_id
-            conv_manager.context.tool_outputs["vehicleId"] = vehicle_id
-
-            # CRITICAL FIX: Store only minimal vehicle data to prevent JSON serialization issues
-            # Full API objects can contain non-serializable fields that break Redis storage
+            # Build minimal vehicle data first (no async operations here)
             minimal_vehicles = []
             for v in items:
                 minimal_vehicles.append({
@@ -140,10 +146,16 @@ class FlowHandler:
                     "DisplayName": v.get("DisplayName") or v.get("FullVehicleName") or v.get("Name") or "Vozilo",
                     "LicencePlate": v.get("LicencePlate") or v.get("Plate") or "N/A"
                 })
-            conv_manager.context.tool_outputs["all_available_vehicles"] = minimal_vehicles
-            conv_manager.context.tool_outputs["vehicle_count"] = len(items)
 
-            logger.info(f"Stored {len(minimal_vehicles)} vehicles for booking flow")
+            # ATOMIC UPDATE: All tool_outputs changes in one dict.update() call
+            conv_manager.context.tool_outputs.update({
+                "VehicleId": vehicle_id,
+                "vehicleId": vehicle_id,
+                "all_available_vehicles": minimal_vehicles,
+                "vehicle_count": len(items)
+            })
+
+            logger.info(f"Stored {len(minimal_vehicles)} vehicles for booking flow (atomic update)")
 
         conv_manager.context.current_tool = "post_VehicleCalendar"
 
@@ -182,19 +194,44 @@ class FlowHandler:
         user_context: Dict[str, Any],
         conv_manager
     ) -> Dict[str, Any]:
-        """Request confirmation for critical operation."""
+        """
+        Request confirmation for critical operation.
+
+        v2.0: Uses ConfirmationDialog for human-readable parameter display.
+        - Vehicle IDs shown as names with plates
+        - Dates shown in Croatian format
+        - Users can modify params with "Bilješka: tekst" syntax
+        """
         await conv_manager.add_parameters(parameters)
 
         tool = self.registry.get_tool(tool_name)
-        desc = tool.description[:100] if tool and tool.description else tool_name
 
-        message = f"**Potvrda operacije:**\n\n{desc}\n\n"
+        # Build context data for better formatting
+        context_data = {}
+        if hasattr(conv_manager.context, 'tool_outputs'):
+            # Get selected vehicle for display
+            selected = conv_manager.get_selected_item()
+            if selected:
+                context_data['selected_vehicle'] = selected
+            # Also check tool_outputs for vehicle info
+            vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
+            if vehicles:
+                context_data['vehicle'] = vehicles[0]
 
-        for key, value in list(parameters.items())[:5]:
-            if value is not None:
-                message += f"* {key}: {value}\n"
+        # Format parameters using ConfirmationDialog
+        param_displays = self.confirmation_dialog.format_parameters(
+            tool_name=tool_name,
+            parameters=parameters,
+            tool_definition=tool,
+            context_data=context_data
+        )
 
-        message += "\n_Potvrdite s 'Da' ili odustanite s 'Ne'._"
+        # Generate the confirmation message
+        message = self.confirmation_dialog.generate_confirmation_message(
+            tool_name=tool_name,
+            parameters=param_displays,
+            operation_description=tool.description[:100] if tool and tool.description else ""
+        )
 
         await conv_manager.request_confirmation(message)
         conv_manager.context.current_tool = tool_name
@@ -258,25 +295,28 @@ class FlowHandler:
         conv_manager
     ) -> str:
         """Handle confirmation response."""
-        # CRITICAL FIX v15.1: Check if user wants to see other vehicles
         text_lower = text.lower()
-        if any(keyword in text_lower for keyword in ["pokaz", "ostala", "druga", "jos vozila", "vise"]):
-            # User wants to see other available vehicles
+
+        # NEW: Detect filter commands like "pokaži Passat" or "pokaži ZG"
+        filter_text = self._extract_filter_text(text)
+        if filter_text and hasattr(conv_manager.context, 'tool_outputs'):
+            all_vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
+            if all_vehicles:
+                message = self.formatter.format_vehicle_list(all_vehicles, filter_text=filter_text)
+                # Stay in SELECTING_ITEM state to allow selection
+                await conv_manager.request_selection(message)
+                await conv_manager.save()
+                return message
+
+        # CRITICAL FIX v15.1: Check if user wants to see other vehicles
+        if any(keyword in text_lower for keyword in ["pokaz", "ostala", "druga", "jos vozila", "vise", "sva"]):
+            # User wants to see all available vehicles
             if hasattr(conv_manager.context, 'tool_outputs'):
                 all_vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
 
                 if len(all_vehicles) > 1:
-                    message = "**Sva dostupna vozila:**\n\n"
-                    for idx, vehicle in enumerate(all_vehicles[:10], 1):  # Show max 10
-                        v_name = (
-                            vehicle.get("FullVehicleName") or
-                            vehicle.get("DisplayName") or
-                            "Vozilo"
-                        )
-                        plate = vehicle.get("LicencePlate", "N/A")
-                        message += f"{idx}. **{v_name}** ({plate})\n"
-
-                    message += "\n_Recite broj vozila koje želite (npr. '2') ili 'odustani' za povratak._"
+                    # Use formatter with filter instructions
+                    message = self.formatter.format_vehicle_list(all_vehicles)
 
                     # Switch to SELECTING_ITEM state
                     await conv_manager.request_selection(message)
@@ -286,10 +326,40 @@ class FlowHandler:
 
             return "Trenutno nema drugih dostupnih vozila."
 
+        # NEW v2.0: Check for parameter modifications
+        # Examples: "Bilješka: službeni put", "Od: 10:00", "Note: xyz"
+        modification = self.confirmation_dialog.parse_modification(text)
+        if modification:
+            param_name, new_value = modification
+            params = conv_manager.get_parameters()
+            old_value = params.get(param_name)
+
+            # Update the parameter
+            params[param_name] = new_value
+            await conv_manager.add_parameters({param_name: new_value})
+            await conv_manager.save()
+
+            # Generate update message
+            display_name = self.confirmation_dialog.DISPLAY_NAMES.get(param_name, param_name)
+            message = (
+                f"✏️ **Ažurirano!**\n"
+                f"{display_name}: {new_value}\n\n"
+                f"Potvrdite s **Da** ili nastavite s izmjenama."
+            )
+            return message
+
         confirmation = conv_manager.parse_confirmation(text)
 
         if confirmation is None:
-            return "Molim potvrdite s 'Da' ili odustanite s 'Ne'."
+            # P1 FIX: Detect if user is asking a question mid-flow
+            # Allow them to get information without losing confirmation state
+            if self._is_question(text):
+                logger.info(f"Mid-flow question detected: '{text[:50]}'")
+                # Return special marker to let message_engine handle the question
+                # The flow state is preserved so user can still confirm after
+                return {"mid_flow_question": True, "question": text}
+
+            return "Molim potvrdite s 'Da' ili odustanite s 'Ne'.\n_Ili dodajte parametar, npr: 'Bilješka: tekst'_"
 
         if not confirmation:
             await conv_manager.cancel()
@@ -626,3 +696,93 @@ class FlowHandler:
             lines.append(f"* {prompts.get(param, param)}")
 
         return "\n".join(lines)
+
+    def _is_question(self, text: str) -> bool:
+        """
+        Detect if user input is a question (P1 FIX: mid-flow escape).
+
+        Allows users to ask questions during confirmation flow
+        without losing their booking state.
+
+        Examples:
+        - "Kolika je kilometraža?" → True
+        - "Koja vozila imam?" → True
+        - "Da" → False
+        - "Bilješka: tekst" → False
+        """
+        text_lower = text.lower().strip()
+
+        # Question word patterns (Croatian)
+        question_patterns = [
+            r'\b(koliko|kolika|koliki)\b',   # How much/many
+            r'\b(koji|koja|koje|kojih)\b',    # Which
+            r'\b(što|sta|sto)\b',             # What
+            r'\b(gdje|di)\b',                 # Where
+            r'\b(kada|kad)\b',                # When
+            r'\b(zašto|zasto)\b',             # Why
+            r'\b(kako)\b',                    # How
+            r'\b(tko|ko)\b',                  # Who
+            r'\b(ima li|postoji li)\b',       # Is there
+            r'\b(mogu li|može li|moze li)\b', # Can I/Can it
+            r'\b(je li|jel)\b',               # Is it
+        ]
+
+        for pattern in question_patterns:
+            if re.search(pattern, text_lower):
+                return True
+
+        # Check for question mark
+        if text.strip().endswith('?'):
+            return True
+
+        # Check for common question phrases
+        question_phrases = [
+            "reci mi", "kaži mi", "kazi mi",
+            "pokaži mi", "pokazi mi",
+            "daj mi info", "trebam znati",
+            "što je s", "sta je s", "sto je s",
+        ]
+
+        for phrase in question_phrases:
+            if phrase in text_lower:
+                return True
+
+        return False
+
+    def _extract_filter_text(self, text: str) -> Optional[str]:
+        """
+        Extract filter text from user input.
+
+        Detects patterns like:
+        - "pokaži Passat" → "Passat"
+        - "pokaži samo ZG" → "ZG"
+        - "filtriraj Golf" → "Golf"
+        - "samo Octavia" → "Octavia"
+
+        Returns filter text or None if no filter detected.
+        """
+        import re
+
+        text_lower = text.lower().strip()
+
+        # Filter patterns (Croatian)
+        patterns = [
+            r'pokaži\s+(?:samo\s+)?(.+)',        # "pokaži Passat", "pokaži samo ZG"
+            r'pokazi\s+(?:samo\s+)?(.+)',        # "pokazi Passat" (without č)
+            r'filtriraj\s+(.+)',                  # "filtriraj Golf"
+            r'samo\s+(.+)',                       # "samo Octavia"
+            r'traži\s+(.+)',                      # "traži VW"
+            r'trazi\s+(.+)',                      # "trazi VW" (without ž)
+            r'nađi\s+(.+)',                       # "nađi Škoda"
+            r'nadji\s+(.+)',                      # "nadji Skoda" (without đ)
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                filter_val = match.group(1).strip()
+                # Don't treat confirmation words as filters
+                if filter_val not in ['da', 'ne', 'odustani', 'potvrdi', 'ostala', 'druga', 'vozila']:
+                    return filter_val
+
+        return None

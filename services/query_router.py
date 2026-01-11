@@ -107,6 +107,9 @@ class QueryRouter:
                     r"trebam.*unijeti.*(km|kilometra)",
                     r"unijeti.*(km|kilometra)",
                     r"unesi.*\d+",  # "unesi 15000" with number
+                    r"dodaj.*(km|kilometra)",     # Phase 3: "dodaj kilometražu"
+                    r"dodaj.*km",                 # Phase 3: "dodaj km"
+                    r"stavi.*(km|kilometra)",     # Phase 3: "stavi kilometražu"
                 ],
                 "intent": "INPUT_MILEAGE",
                 "tool": "post_AddMileage",
@@ -125,6 +128,10 @@ class QueryRouter:
                     r"koja.*kilometra[zž]",
                     r"trenutna.*kilometra",
                     r"kilometra[zž]a.*vozil",
+                    r"kolko.*pre[sš]",            # Phase 3: "kolko je prešo"
+                    r"koliko.*pre[sš]",           # Phase 3: "koliko je prešao"
+                    r"pre[sš]ao.*auto",           # Phase 3: "prešao auto"
+                    r"pre[sš]lo.*vozil",          # Phase 3: "prešlo vozilo"
                 ],
                 "intent": "GET_MILEAGE",
                 "tool": "get_MasterData",
@@ -155,12 +162,22 @@ class QueryRouter:
                     r"informacij.*vozil",
                     r"vozilo.*podaci",
                     r"moje.*vozilo",
+                    r"moja.*vozila",             # Phase 3: "moja vozila"
                     r"koje.*vozilo",
+                    r"koji.*auto.*imam",         # Phase 3: "koji auto imam"
+                    r"koje.*auto.*imam",         # Phase 3: "koje auto imam"
+                    r"daj.*info.*auto",          # Phase 3: "daj info o autu"
+                    r"info.*o.*auto",            # Phase 3: "info o autu"
+                    r"info.*o.*vozil",           # Phase 3: "info o vozilu"
+                    r"poka[zž]i.*mi.*vozil",     # Phase 3: "pokaži mi vozila"
+                    r"poka[zž]i.*mi.*auto",      # Phase 3: "pokaži mi auto"
                     r"detalji.*vozil",
                     r"[sš]to.*jo[sš].*zna[sš]",  # što još znaš (about vehicle)
                     r"[sš]to.*sve.*zna",         # što sve znaš
                     r"svi.*podaci",              # svi podaci
                     r"sve.*o.*vozil",            # sve o vozilu
+                    r"registracij.*auto",        # Phase 3: "registracija auta"
+                    r"registracij.*vozil",       # Phase 3: "registracija vozila"
                 ],
                 "intent": "GET_VEHICLE_INFO",
                 "tool": "get_MasterData",
@@ -243,8 +260,12 @@ class QueryRouter:
                 "patterns": [
                     r"moje.*rezervacij",
                     r"moje.*booking",
+                    r"moji.*booking",          # Phase 3: "moji bookingi"
                     r"kada.*imam.*rezerv",
+                    r"kad.*imam.*auto",        # Phase 3: "kad imam auto"
+                    r"kad.*imam.*vozilo",      # Phase 3: "kad imam vozilo"
                     r"poka[zž]i.*rezervacij",  # pokaži/pokazi rezervacije
+                    r"poka[zž]i.*moje.*booking", # Phase 3: "pokaži moje bookinge"
                     r"prika[zž]i.*rezervacij", # prikaži/prikazi rezervacije
                     r"sve.*rezervacij",        # sve rezervacije
                     r"ima[lm].*rezerv",        # imam/imali rezervaciju
@@ -255,18 +276,109 @@ class QueryRouter:
                 "response_template": None,
                 "flow_type": "list",
             },
+            # === DELETE / CANCEL OPERATIONS (must be BEFORE booking!) ===
+            {
+                "patterns": [
+                    # Cancel reservation
+                    r"otka[zž]i.*rezerv",       # otkaži/otkazi rezervaciju
+                    r"cancel.*rezerv",          # cancel rezervaciju
+                    r"poni[sš]ti.*rezerv",      # poništi/ponisti rezervaciju
+                    r"obri[sš]i.*rezerv",       # obriši/obrisi rezervaciju
+                    r"ukloni.*rezerv",          # ukloni rezervaciju
+                    r"storniraj.*rezerv",       # storniraj rezervaciju
+                    # Cancel booking
+                    r"otka[zž]i.*booking",
+                    r"cancel.*booking",
+                    r"obri[sš]i.*booking",
+                    # General delete for calendar
+                    r"ne.*trebam.*vi[sš]e.*auto",   # ne trebam više auto
+                    r"ne.*trebam.*vi[sš]e.*vozilo", # ne trebam više vozilo
+                ],
+                "intent": "CANCEL_RESERVATION",
+                "tool": "delete_VehicleCalendar_id",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "delete_booking",
+            },
+            {
+                "patterns": [
+                    # Delete trips
+                    r"obri[sš]i.*putovanj",     # obriši/obrisi putovanje
+                    r"obri[sš]i.*trip",         # obriši/obrisi trip
+                    r"obri[sš]i.*vo[zž]nj",     # obriši/obrisi vožnju
+                    r"ukloni.*putovanj",        # ukloni putovanje
+                    r"izbri[sš]i.*putovanj",    # izbriši/izbrisi putovanje
+                ],
+                "intent": "DELETE_TRIP",
+                "tool": "delete_Trips_id",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "delete_trip",
+            },
+            {
+                "patterns": [
+                    # Delete partner
+                    r"obri[sš]i.*partner",      # obriši/obrisi partnera
+                    r"ukloni.*partner",         # ukloni partnera
+                    r"izbri[sš]i.*partner",     # izbriši/izbrisi partnera
+                    r"obri[sš]i.*dobavlja[cč]", # obriši/obrisi dobavljača
+                    r"ukloni.*dobavlja[cč]",    # ukloni dobavljača
+                ],
+                "intent": "DELETE_PARTNER",
+                "tool": "delete_Partners_id",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "delete_partner",
+            },
+            {
+                "patterns": [
+                    # Delete case
+                    r"obri[sš]i.*slu[cč]aj",    # obriši/obrisi slučaj
+                    r"obri[sš]i.*prijav",       # obriši/obrisi prijavu
+                    r"ukloni.*slu[cč]aj",       # ukloni slučaj
+                    r"zatvori.*slu[cč]aj",      # zatvori slučaj
+                ],
+                "intent": "DELETE_CASE",
+                "tool": "delete_Cases",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "delete_case",
+            },
+            {
+                "patterns": [
+                    # Delete expense
+                    r"obri[sš]i.*tro[sš]ak",    # obriši/obrisi trošak
+                    r"obri[sš]i.*rashod",       # obriši/obrisi rashod
+                    r"ukloni.*tro[sš]ak",       # ukloni trošak
+                ],
+                "intent": "DELETE_EXPENSE",
+                "tool": "delete_Expenses_id",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "delete_expense",
+            },
             # === BOOKING / RESERVATION ===
             {
                 "patterns": [
                     r"rezervir",
                     r"rezervacij",  # Note: "moje rezervacije" caught by MY_BOOKINGS above
                     r"trebam.*vozilo",
+                    r"trebam.*auto",          # Phase 3: Informal "trebam auto"
+                    r"trebam.*kola",          # Phase 3: Informal "trebam kola"
                     r"treba.*mi.*vozilo",
+                    r"treba.*mi.*auto",       # Phase 3: Informal
+                    r"daj.*mi.*auto",         # Phase 3: Informal "daj mi auto"
+                    r"daj.*mi.*vozilo",       # Phase 3: Informal
+                    r"ima.*li.*slobodn",      # Phase 3: "ima li slobodnih auta"
+                    r"slobodn.*vozil",        # Phase 3: "slobodna vozila"
+                    r"slobodn.*auto",         # Phase 3: "slobodna auta"
                     r"book(?!ing)",           # book but not booking (for "moje booking")
                     r"zauzmi",
                     r"zakup",
                     r"ho[cć]u.*rezerv",       # hoću rezervirati
                     r"[zž]elim.*rezerv",      # želim rezervirati
+                    r"[zž]elim.*auto",        # Phase 3: "želim auto"
+                    r"[zž]elim.*vozilo",      # Phase 3: "želim vozilo"
                 ],
                 "intent": "BOOK_VEHICLE",
                 "tool": "get_AvailableVehicles",
@@ -285,6 +397,8 @@ class QueryRouter:
                     r"o[sš]te[cć]enj",      # oštećenje, ostecenje
                     r"ne[sš]to.*ne.*radi",
                     r"problem.*vozil",
+                    r"problem.*auto",       # Phase 3: "problem s autom"
+                    r"imam.*problem.*auto", # Phase 3: "imam problem s autom"
                     r"kvar",
                     r"imam.*kvar",          # imam kvar
                     r"imam.*[sš]tet",       # imam štetu/stetu
@@ -489,7 +603,7 @@ class QueryRouter:
                     parts = date_part.split("-")
                     if len(parts) == 3:
                         return f"{parts[2]}.{parts[1]}.{parts[0]}"
-                except:
+                except (ValueError, AttributeError, IndexError):
                     pass
             return str(value)
 

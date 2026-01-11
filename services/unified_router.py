@@ -145,71 +145,65 @@ class UnifiedRouter:
         logger.info("UnifiedRouter: Registry set for semantic search")
 
     async def initialize(self):
-        """Load training data."""
+        """Initialize router (v4.0 - no training_queries.json)."""
         if self._initialized:
             return
 
-        try:
-            training_path = Path(__file__).parent.parent / "data" / "training_queries.json"
-            if training_path.exists():
-                with open(training_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                self._training_examples = data.get("examples", [])
-                logger.info(f"UnifiedRouter: Loaded {len(self._training_examples)} training examples")
-        except Exception as e:
-            logger.error(f"Failed to load training data: {e}")
+        # v4.0: training_queries.json REMOVED (unreliable, only 55% coverage)
+        # Now using tool_documentation.json exclusively via FAISS
+        self._training_examples = []  # Deprecated
+        logger.info("UnifiedRouter: Initialized (v4.0 - uses tool_documentation.json)")
 
         self._initialized = True
 
     async def _get_relevant_tools(self, query: str, top_k: int = 20) -> Dict[str, str]:
         """
-        Use semantic search to find relevant tools for this query.
-        
+        Use UnifiedSearch to find relevant tools for this query.
+
+        v4.0: Now uses UnifiedSearch which consolidates:
+        - ACTION INTENT GATE
+        - FAISS semantic search
+        - Category/Documentation/Example boosts
+
         Returns dict of {tool_name: description} for top_k most relevant tools.
         Falls back to PRIMARY_TOOLS if registry not available.
         """
         if not self._registry or not self._registry.is_ready:
             logger.debug("Registry not ready, using PRIMARY_TOOLS fallback")
             return PRIMARY_TOOLS
-        
+
         try:
-            # Use SearchEngine to find relevant tools
-            results = await self._registry._search.find_relevant_tools_with_scores(
-                query=query,
-                tools=self._registry.tools,
-                embeddings=self._registry.embeddings,
-                dependency_graph=self._registry.dependency_graph,
-                retrieval_tools=self._registry.retrieval_tools,
-                mutation_tools=self._registry.mutation_tools,
-                top_k=top_k,
-                threshold=0.40  # Lower threshold for broader search
-            )
-            
-            if not results:
-                logger.debug("No semantic results, using PRIMARY_TOOLS fallback")
-                return PRIMARY_TOOLS
-            
-            # Build dict of tool_name -> description
-            relevant_tools = {}
-            for r in results:
-                tool_name = r["name"]
-                tool = self._registry.get_tool(tool_name)
-                if tool:
-                    # Use tool's summary or build from path/method
-                    desc = tool.summary or f"{tool.method} {tool.path}"
-                    relevant_tools[tool_name] = desc
-            
-            # Always include PRIMARY_TOOLS that are relevant to common operations
-            # This ensures core functionality is always available
-            for tool_name, desc in PRIMARY_TOOLS.items():
-                if tool_name not in relevant_tools:
-                    relevant_tools[tool_name] = desc
-            
-            logger.info(f"🔍 Semantic search found {len(results)} tools, total {len(relevant_tools)} with PRIMARY merge")
-            return relevant_tools
-            
+            # v4.0: Use UnifiedSearch for consistent results
+            from services.unified_search import get_unified_search
+
+            unified = get_unified_search()
+            unified.set_registry(self._registry)
+
+            response = await unified.search(query, top_k=top_k)
+
+            if response.results:
+                # Build dict of tool_name -> description
+                relevant_tools = {}
+                for r in response.results:
+                    relevant_tools[r.tool_id] = r.description
+
+                # Always include PRIMARY_TOOLS
+                for tool_name, desc in PRIMARY_TOOLS.items():
+                    if tool_name not in relevant_tools:
+                        relevant_tools[tool_name] = desc
+
+                logger.info(
+                    f"UnifiedSearch: {len(response.results)} tools "
+                    f"(intent={response.intent.value}), "
+                    f"total {len(relevant_tools)} with PRIMARY merge"
+                )
+                return relevant_tools
+
+            logger.debug("UnifiedSearch returned no results, using PRIMARY_TOOLS fallback")
+            return PRIMARY_TOOLS
+
         except Exception as e:
-            logger.error(f"Semantic search failed: {e}, using PRIMARY_TOOLS fallback")
+            logger.error(f"UnifiedSearch failed: {e}, using PRIMARY_TOOLS fallback")
             return PRIMARY_TOOLS
 
     def _check_exit_signal(self, query: str) -> bool:

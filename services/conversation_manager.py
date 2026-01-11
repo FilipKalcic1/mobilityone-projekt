@@ -49,7 +49,8 @@ def _make_json_safe(obj: Any, max_depth: int = 10) -> Any:
     if isinstance(obj, bytes):
         try:
             return obj.decode('utf-8')
-        except:
+        except (UnicodeDecodeError, AttributeError) as e:
+            logger.debug(f"Bytes decode failed: {e}")
             return str(obj)
 
     # Handle lists
@@ -69,13 +70,15 @@ def _make_json_safe(obj: Any, max_depth: int = 10) -> Any:
     if hasattr(obj, '__dict__'):
         try:
             return _make_json_safe(obj.__dict__, max_depth - 1)
-        except:
+        except Exception as e:
+            logger.debug(f"Object __dict__ serialization failed: {type(obj).__name__}: {e}")
             return str(obj)
 
     # Fallback: convert to string
     try:
         return str(obj)
-    except:
+    except Exception as e:
+        logger.warning(f"Object str() conversion failed: {type(obj).__name__}: {e}")
         return "<non-serializable>"
 
 
@@ -471,7 +474,8 @@ class ConversationManager:
             started = datetime.fromisoformat(self.context.started_at)
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
             return elapsed > self.FLOW_TIMEOUT_SECONDS
-        except:
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Timeout check failed for {self.user_id[-4:]}: {e}")
             return False
     
     def to_dict(self) -> Dict[str, Any]:

@@ -1,12 +1,13 @@
 """
 Documentation Generator - Automated tool documentation using LLM.
-Version: 1.0
+Version: 2.0
 
 Generates:
 - config/tool_categories.json - Tool categorization (15-20 categories)
-- config/tool_documentation.json - Detailed docs for each tool
-- data/training_queries.json - 500+ query→tool examples
+- config/tool_documentation.json - Detailed docs for each tool (includes example_queries_hr)
 - config/knowledge_graph.json - Entity relationships
+
+NOTE: training_queries.json is DEPRECATED (v4.0) - examples are now in tool_documentation.json
 
 Usage:
     python -m scripts.generate_documentation
@@ -140,12 +141,10 @@ class DocumentationGenerator:
             logger.info(f"✅ Documented {len(documentation)} tools")
         self._save_json(CONFIG_DIR / "tool_documentation.json", documentation)
 
-        # Step 3: Generate training examples
+        # Step 3: DEPRECATED - training_queries.json no longer used (v4.0)
+        # Training examples are now in tool_documentation.json as example_queries_hr
         logger.info("=" * 60)
-        logger.info("STEP 3: Generating training examples...")
-        training_data = await self._generate_training_examples(tools, categories)
-        self._save_json(DATA_DIR / "training_queries.json", training_data)
-        logger.info(f"✅ Generated {len(training_data.get('examples', []))} training examples")
+        logger.info("STEP 3: SKIPPED - training_queries.json deprecated (using tool_documentation.json)")
 
         # Step 4: Build knowledge graph
         logger.info("=" * 60)

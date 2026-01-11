@@ -83,15 +83,15 @@ class SearchEngine:
     MAX_TOOLS_PER_RESPONSE = 20  # Increased from 12 to give LLM more options
 
     # Category matching configuration
-    # NOTE: Training boost REDUCED from 0.35 to 0.15 to prevent training examples
-    # from dominating tool selection. LLM should make the final decision based on
-    # understanding, not based on which tools have more training examples.
-    # See: https://github.com/MobilityOne/bot/issues/xxx - Fair tool selection
+    # NOTE: Boost values adjusted for "Rank Don't Filter" architecture
+    # All tools are scored, not filtered. Higher boosts help trained tools but
+    # documentation matching allows untrained tools to be discovered too.
     CATEGORY_CONFIG = {
         "category_boost": 0.12,        # Boost for tools in matching category
         "keyword_match_boost": 0.08,   # Boost for keyword matches
-        "documentation_boost": 0.10,   # Boost when query matches tool documentation
-        "training_match_boost": 0.15,  # REDUCED from 0.35 - Let LLM decide, not training bias!
+        "documentation_boost": 0.20,   # INCREASED: Query matches tool documentation
+        "training_match_boost": 0.20,  # INCREASED: Training examples matter
+        "example_query_boost": 0.25,   # NEW: Match against example_queries_hr
     }
 
     def __init__(self):
@@ -103,9 +103,11 @@ class SearchEngine:
         )
 
         # Load category and documentation data
+        # v4.0: REMOVED training_queries.json (unreliable, only 55% coverage)
+        # Now uses ONLY tool_documentation.json which has 100% tool coverage
         self._tool_categories = _load_json_file("tool_categories.json")
         self._tool_documentation = _load_json_file("tool_documentation.json")
-        self._training_queries = _load_json_file("training_queries.json")
+        # DEPRECATED: self._training_queries - no longer used in v4.0
 
         # Build reverse lookup: tool_id -> category
         self._tool_to_category: Dict[str, str] = {}
@@ -131,13 +133,7 @@ class SearchEngine:
         if self._tool_documentation:
             logger.info(f"📄 Loaded documentation for {len(self._tool_documentation)} tools")
 
-        if self._training_queries:
-            # Support both "examples" (new) and "training_data" (legacy)
-            training_count = len(self._training_queries.get("examples",
-                                  self._training_queries.get("training_data", [])))
-            logger.info(f"🎯 Loaded {training_count} training examples")
-
-        logger.debug("SearchEngine initialized (v2.0 with categories)")
+        logger.debug("SearchEngine initialized (v4.0 - documentation only, no training_queries)")
 
     async def find_relevant_tools_with_scores(
         self,
@@ -199,11 +195,12 @@ class SearchEngine:
             if similarity >= lenient_threshold:
                 scored.append((similarity, op_id))
 
-        # Apply scoring adjustments
+        # Apply scoring adjustments (Rank Don't Filter architecture)
         scored = self._apply_method_disambiguation(query, scored, tools)
         scored = self._apply_user_specific_boosting(query, scored, tools)
         scored = self._apply_category_boosting(query, scored, tools)
         scored = self._apply_documentation_boosting(query, scored)
+        scored = self._apply_example_query_boosting(query, scored)  # NEW: Match against example_queries_hr
         scored = self._apply_evaluation_adjustment(scored)
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -265,6 +262,79 @@ class SearchEngine:
         except Exception as e:
             logger.warning(f"Query embedding error: {e}")
             return None
+
+    def detect_put_patch_ambiguity(
+        self,
+        scored: List[Tuple[float, str]],
+        tools: Dict[str, UnifiedToolDefinition],
+        score_threshold: float = 0.70,
+        score_diff_threshold: float = 0.10
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect if both PUT and PATCH for the same resource are highly ranked.
+
+        This helps the system ask users for clarification:
+        - PUT = full update (replaces entire resource)
+        - PATCH = partial update (modifies only specified fields)
+
+        Args:
+            scored: List of (score, tool_id) tuples
+            tools: Tool definitions
+            score_threshold: Minimum score to consider a tool "highly ranked"
+            score_diff_threshold: Maximum score difference to consider ambiguous
+
+        Returns:
+            Dict with ambiguity info if detected, None otherwise
+        """
+        # Get top tools that are PUT or PATCH
+        put_tools = []
+        patch_tools = []
+
+        for score, op_id in scored[:10]:  # Check top 10
+            if score < score_threshold:
+                continue
+
+            tool = tools.get(op_id)
+            if not tool:
+                continue
+
+            if tool.method == "PUT" or "put_" in op_id.lower():
+                put_tools.append((score, op_id))
+            elif tool.method == "PATCH" or "patch_" in op_id.lower():
+                patch_tools.append((score, op_id))
+
+        if not put_tools or not patch_tools:
+            return None
+
+        # Check if they're for the same resource type
+        # Extract resource name from tool ID (e.g., "put_Vehicles_id" -> "Vehicles")
+        def extract_resource(op_id: str) -> str:
+            parts = op_id.replace("put_", "").replace("patch_", "").split("_")
+            return parts[0].lower() if parts else ""
+
+        for put_score, put_id in put_tools:
+            put_resource = extract_resource(put_id)
+            for patch_score, patch_id in patch_tools:
+                patch_resource = extract_resource(patch_id)
+
+                # Same resource with similar scores = ambiguous
+                if put_resource == patch_resource:
+                    if abs(put_score - patch_score) <= score_diff_threshold:
+                        logger.info(f"PUT/PATCH ambiguity detected: {put_id} vs {patch_id}")
+                        return {
+                            "ambiguous": True,
+                            "resource": put_resource.title(),
+                            "put_tool": put_id,
+                            "put_score": put_score,
+                            "patch_tool": patch_id,
+                            "patch_score": patch_score,
+                            "message": (
+                                f"Želite li potpuno ažuriranje (PUT - zamjenjuje sve podatke) "
+                                f"ili djelomično ažuriranje (PATCH - mijenja samo navedena polja)?"
+                            )
+                        }
+
+        return None
 
     def _apply_method_disambiguation(
         self,
@@ -630,7 +700,12 @@ class SearchEngine:
         query: str,
         scored: List[Tuple[float, str]]
     ) -> List[Tuple[float, str]]:
-        """Boost tools whose documentation matches the query."""
+        """
+        Boost tools whose documentation matches the query.
+
+        v4.0: Uses ONLY tool_documentation.json (100% coverage).
+        Removed training_queries.json dependency (was unreliable, 55% coverage).
+        """
         if not self._tool_documentation:
             return scored
 
@@ -639,36 +714,15 @@ class SearchEngine:
 
         config = self.CATEGORY_CONFIG
         doc_boost = config["documentation_boost"]
-        training_boost = config["training_match_boost"]
 
-        # Check for training example matches
-        matched_tools_from_training: Set[str] = set()
-        if self._training_queries:
-            # Support both "examples" (new) and "training_data" (legacy)
-            training_data = self._training_queries.get("examples",
-                             self._training_queries.get("training_data", []))
-            for example in training_data:
-                example_query = example.get("query", "").lower()
-                # Simple word overlap matching
-                example_words = set(example_query.split())
-                overlap = len(query_words & example_words)
-                if overlap >= 2 or (overlap >= 1 and len(query_words) <= 3):
-                    matched_tools_from_training.add(example.get("primary_tool", ""))
-                    for alt in example.get("alternative_tools", []):
-                        matched_tools_from_training.add(alt)
-
-        if matched_tools_from_training:
-            logger.info(f"🎯 Training matches: {list(matched_tools_from_training)[:5]}")
+        # v4.0: REMOVED training_queries matching - now uses only documentation
+        # training_queries.json had only 55% tool coverage and inconsistent quality
 
         adjusted = []
         for score, op_id in scored:
             boost = 0.0
 
-            # Check training example matches
-            if op_id in matched_tools_from_training:
-                boost += training_boost
-
-            # Check documentation matches
+            # Check documentation matches (v4.0: primary method)
             doc = self._tool_documentation.get(op_id, {})
 
             # Match against example_queries
@@ -692,6 +746,68 @@ class SearchEngine:
             purpose = doc.get("purpose", "").lower()
             if any(word in purpose for word in query_words if len(word) >= 4):
                 boost += doc_boost * 0.2
+
+            adjusted.append((score + boost, op_id))
+
+        return adjusted
+
+    def _apply_example_query_boosting(
+        self,
+        query: str,
+        scored: List[Tuple[float, str]]
+    ) -> List[Tuple[float, str]]:
+        """
+        Match user query against tool documentation example_queries_hr.
+
+        This is critical for "Rank Don't Filter" architecture:
+        - Allows untrained tools to be discovered through their documentation
+        - Each tool has example_queries_hr in tool_documentation.json
+        - Word overlap determines boost strength
+
+        Args:
+            query: User query
+            scored: List of (score, tool_id) tuples
+
+        Returns:
+            Adjusted scored list with example query boosts applied
+        """
+        if not self._tool_documentation:
+            return scored
+
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+
+        config = self.CATEGORY_CONFIG
+        example_boost = config.get("example_query_boost", 0.25)
+
+        adjusted = []
+        for score, op_id in scored:
+            doc = self._tool_documentation.get(op_id, {})
+            example_queries = doc.get("example_queries_hr", [])
+
+            if not example_queries:
+                adjusted.append((score, op_id))
+                continue
+
+            # Find best overlap with any example query
+            best_overlap = 0
+            for example in example_queries:
+                example_words = set(example.lower().split())
+                overlap = len(query_words & example_words)
+                best_overlap = max(best_overlap, overlap)
+
+            # Apply boost based on overlap strength
+            if best_overlap >= 3:
+                boost = example_boost  # Strong match
+            elif best_overlap >= 2:
+                boost = example_boost * 0.6  # Medium match
+            elif best_overlap >= 1:
+                boost = example_boost * 0.2  # Weak match
+            else:
+                boost = 0.0
+
+            if boost > 0:
+                logger.debug(f"📚 Example query boost +{boost:.2f} for {op_id} (overlap={best_overlap})")
 
             adjusted.append((score + boost, op_id))
 
@@ -733,45 +849,20 @@ class SearchEngine:
 
     def _find_direct_training_matches(self, query: str) -> Set[str]:
         """
-        Find tools that directly match training examples.
-        Uses word overlap to find training matches and returns the primary tools.
+        DEPRECATED v4.0: No longer uses training_queries.json.
+
+        This method used to match against training examples, but training_queries.json
+        had only 55% tool coverage and inconsistent quality.
+
+        Now uses tool_documentation.json via _apply_example_query_boosting() instead,
+        which has 100% tool coverage and accurate example queries.
 
         Returns:
-            Set of tool IDs that match training examples
+            Empty set (always)
         """
-        if not self._training_queries:
-            return set()
-
-        query_lower = query.lower().strip()
-        query_words = set(query_lower.split())
-        matched_tools: Set[str] = set()
-
-        training_data = self._training_queries.get("examples",
-                         self._training_queries.get("training_data", []))
-
-        best_overlap = 0
-        best_tool = None
-
-        for example in training_data:
-            example_query = example.get("query", "").lower()
-            example_words = set(example_query.split())
-            overlap = len(query_words & example_words)
-
-            # Require significant overlap
-            if overlap >= 3 or (overlap >= 2 and len(query_words) <= 4):
-                tool = example.get("primary_tool", "")
-                if tool:
-                    matched_tools.add(tool)
-                    # Track best match
-                    if overlap > best_overlap:
-                        best_overlap = overlap
-                        best_tool = tool
-
-        # If we have a clear best match (3+ words), prioritize it
-        if best_tool and best_overlap >= 3:
-            return {best_tool}
-
-        return matched_tools
+        # v4.0: DEPRECATED - training_queries.json removed
+        # Use _apply_example_query_boosting() instead for example-based matching
+        return set()
 
     # =========================================================================
     # NEW: FILTERING METHODS FOR OPTIMIZED SEARCH
@@ -971,11 +1062,12 @@ class SearchEngine:
             if similarity >= lenient_threshold:
                 scored.append((similarity, op_id))
 
-        # Apply scoring adjustments (boosts, not filters)
+        # Apply scoring adjustments (Rank Don't Filter architecture)
         scored = self._apply_method_disambiguation(query, scored, tools)
         scored = self._apply_user_specific_boosting(query, scored, tools)
         scored = self._apply_category_boosting(query, scored, tools)
         scored = self._apply_documentation_boosting(query, scored)
+        scored = self._apply_example_query_boosting(query, scored)  # NEW: Match against example_queries_hr
         scored = self._apply_evaluation_adjustment(scored)
 
         # CRITICAL: Find DIRECT training matches and boost them to TOP
@@ -1037,3 +1129,224 @@ class SearchEngine:
 
         logger.info(f"📦 Returning {len(result)} tools (filtered search with origin guides)")
         return result
+
+    # =========================================================================
+    # NEW: FAISS-BASED SEARCH WITH ACTION INTENT GATE
+    # =========================================================================
+
+    async def find_relevant_tools_faiss(
+        self,
+        query: str,
+        tools: Dict[str, UnifiedToolDefinition],
+        dependency_graph: Dict[str, DependencyGraph],
+        top_k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find relevant tools using FAISS + ACTION INTENT GATE.
+
+        NEW ARCHITECTURE:
+        1. ACTION INTENT GATE - Detect GET/POST/PUT/DELETE BEFORE search
+        2. FAISS semantic search - Fast in-memory vector search
+        3. Category boosting - Boost tools in matching categories
+        4. Documentation boosting - Boost based on tool docs (NOT training_queries!)
+
+        IMPORTANT: Does NOT use training_queries.json (UNRELIABLE).
+        Uses tool_documentation.json (ACCURATE) for embeddings.
+
+        Args:
+            query: User query text
+            tools: Dict of all tools
+            dependency_graph: Dependency graph for chaining
+            top_k: Number of tools to return
+
+        Returns:
+            List of dicts with name, score, schema, origin_guide
+        """
+        from services.faiss_vector_store import get_faiss_store
+        from services.action_intent_detector import (
+            detect_action_intent,
+            filter_tools_by_intent,
+            ActionIntent
+        )
+
+        logger.info(f"🔍 FAISS search for: '{query[:50]}...'")
+
+        # =================================================================
+        # STEP 0: ACTION INTENT GATE (CRITICAL - must come FIRST!)
+        # =================================================================
+        intent_result = detect_action_intent(query)
+        logger.info(
+            f"🎯 ACTION INTENT: {intent_result.intent.value} "
+            f"(confidence={intent_result.confidence:.2f}, reason={intent_result.reason})"
+        )
+
+        # Build tool_methods mapping
+        tool_methods = {
+            tool_id: getattr(tool, 'method', 'GET')
+            for tool_id, tool in tools.items()
+        }
+
+        # Filter tools by intent BEFORE search
+        all_tool_ids = set(tools.keys())
+        filtered_tool_ids = filter_tools_by_intent(
+            all_tool_ids,
+            tool_methods,
+            intent_result.intent
+        )
+
+        logger.info(
+            f"📊 Intent filter: {len(all_tool_ids)} → {len(filtered_tool_ids)} tools"
+        )
+
+        # =================================================================
+        # STEP 1: FAISS SEMANTIC SEARCH
+        # =================================================================
+        faiss_store = get_faiss_store()
+
+        if not faiss_store.is_initialized():
+            logger.warning("FAISS store not initialized, falling back to legacy search")
+            return await self.find_relevant_tools_filtered(
+                query, tools, {}, dependency_graph, set(), set(), top_k
+            )
+
+        # Map action intent to FAISS filter
+        action_filter = None
+        if intent_result.intent == ActionIntent.READ:
+            action_filter = "READ"
+        elif intent_result.intent == ActionIntent.CREATE:
+            action_filter = "CREATE"
+        elif intent_result.intent == ActionIntent.UPDATE:
+            action_filter = "UPDATE"
+        elif intent_result.intent == ActionIntent.DELETE:
+            action_filter = "DELETE"
+
+        # FAISS search with action filter
+        faiss_results = await faiss_store.search(
+            query,
+            top_k=top_k * 2,  # Get more results, then filter
+            action_filter=action_filter
+        )
+
+        if not faiss_results:
+            logger.warning("FAISS returned no results, falling back to keyword search")
+            fallback = self._fallback_keyword_search(query, tools, top_k)
+            return [
+                {"name": name, "score": 0.0, "schema": tools[name].to_openai_function()}
+                for name in fallback if name in filtered_tool_ids
+            ]
+
+        # =================================================================
+        # STEP 2: APPLY BOOSTS (without training_queries!)
+        # =================================================================
+        scored = [(result.score, result.tool_id) for result in faiss_results]
+
+        # Apply category boosting (from tool_categories.json)
+        scored = self._apply_category_boosting(query, scored, tools)
+
+        # Apply documentation boosting (from tool_documentation.json)
+        # NOTE: This does NOT use training_queries.json!
+        scored = self._apply_documentation_boosting_no_training(query, scored)
+
+        # Apply example query boosting (from tool_documentation.json)
+        scored = self._apply_example_query_boosting(query, scored)
+
+        # Sort by score
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # =================================================================
+        # STEP 3: FILTER BY INTENT (second pass)
+        # =================================================================
+        # Ensure results match detected intent
+        final_scored = []
+        for score, tool_id in scored:
+            if tool_id in filtered_tool_ids:
+                final_scored.append((score, tool_id))
+
+        # If nothing matches, use all scored results
+        if not final_scored:
+            final_scored = scored
+
+        # =================================================================
+        # STEP 4: APPLY DEPENDENCY BOOSTING
+        # =================================================================
+        base_tools = [op_id for _, op_id in final_scored[:top_k]]
+        boosted_tools = self._apply_dependency_boosting(base_tools, dependency_graph)
+        final_tools = boosted_tools[:self.MAX_TOOLS_PER_RESPONSE]
+
+        # =================================================================
+        # STEP 5: BUILD RESULT
+        # =================================================================
+        result = []
+        scored_dict = {op_id: score for score, op_id in final_scored}
+
+        for tool_id in final_tools:
+            if tool_id not in tools:
+                continue
+
+            schema = tools[tool_id].to_openai_function()
+            score = scored_dict.get(tool_id, 0.0)
+            origin_guide = self._get_origin_guide(tool_id)
+
+            result.append({
+                "name": tool_id,
+                "score": score,
+                "schema": schema,
+                "origin_guide": origin_guide
+            })
+
+        logger.info(
+            f"📦 FAISS returned {len(result)} tools "
+            f"(intent={intent_result.intent.value})"
+        )
+        return result
+
+    def _apply_documentation_boosting_no_training(
+        self,
+        query: str,
+        scored: List[Tuple[float, str]]
+    ) -> List[Tuple[float, str]]:
+        """
+        Boost tools based on documentation matches.
+
+        IMPORTANT: This version does NOT use training_queries.json!
+        Uses only tool_documentation.json (ACCURATE source).
+        """
+        if not self._tool_documentation:
+            return scored
+
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+
+        config = self.CATEGORY_CONFIG
+        doc_boost = config["documentation_boost"]
+
+        adjusted = []
+        for score, op_id in scored:
+            boost = 0.0
+            doc = self._tool_documentation.get(op_id, {})
+
+            # Match against example_queries
+            example_queries = doc.get("example_queries", [])
+            for example in example_queries:
+                example_lower = example.lower()
+                example_words = set(example_lower.split())
+                if query_words & example_words:
+                    boost += doc_boost * 0.5
+                    break
+
+            # Match against when_to_use
+            when_to_use = doc.get("when_to_use", [])
+            for use_case in when_to_use:
+                use_case_lower = use_case.lower()
+                if any(word in use_case_lower for word in query_words if len(word) >= 4):
+                    boost += doc_boost * 0.3
+                    break
+
+            # Match against purpose
+            purpose = doc.get("purpose", "").lower()
+            if any(word in purpose for word in query_words if len(word) >= 4):
+                boost += doc_boost * 0.2
+
+            adjusted.append((score + boost, op_id))
+
+        return adjusted

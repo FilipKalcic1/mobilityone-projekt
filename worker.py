@@ -449,10 +449,12 @@ class Worker:
 
             try:
                 response = await self._message_engine.process(sender, text, message_id)
-                
-                # DEBUG: Log response
-                print(f"\n🔷 RESPONSE ({len(response) if response else 0} chars): {response[:200] if response else 'NONE'}...\n", flush=True)
-                
+
+                log("debug", "response_generated", {
+                    "length": len(response) if response else 0,
+                    "preview": response[:100] if response else "NONE"
+                })
+
                 return response
             except Exception as e:
                 await db.rollback()

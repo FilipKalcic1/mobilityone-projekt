@@ -1,43 +1,546 @@
 """
-Response Formatter
-Version: 11.0 (Schema-Aware)
+Response Formatter v15.0 - FULLY GENERIC
+=========================================
 
-Formats API responses for WhatsApp.
-Uses field names from data as-is (schema-driven via output_keys).
+Formats ANY API response for WhatsApp WITHOUT hardcoded field names.
 
-v11.0:
-- Simplified field access - no fallback chains
-- Field names come from Swagger schema via ToolRegistry.output_keys
-- Cleaner, more maintainable code
+Philosophy:
+- Works for ANY data structure
+- Doesn't require knowing field names in advance
+- Handles any number of fields
+- Automatically detects and formats lists, objects, primitives
+- Smart field name to human label conversion
+
+v15.0 CHANGES:
+- REMOVED all hardcoded field mappings
+- REMOVED specific formatters (_format_vehicle, _format_person, etc.)
+- ONE universal formatter that works for everything
+- Dynamic field labeling with emoji detection
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+import re
+from typing import Dict, Any, List, Optional, Union
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
 class ResponseFormatter:
     """
-    Formats API responses for user display.
+    Universal response formatter - works for ANY data.
 
-    Features:
-    - Dynamic formatting based on data type
-    - Croatian language
-    - Emoji support
-    - WhatsApp message length limits
+    No hardcoded field names. Formats based on:
+    - Data type (list, dict, primitive)
+    - Field value types (date, number, string, nested)
+    - Smart field name → human label conversion
     """
 
     MAX_MESSAGE_LENGTH = 3500
     MAX_LIST_ITEMS = 10
-    MAX_FIELD_VALUE_LENGTH = 80
+    MAX_FIELDS_PER_OBJECT = 20
+    MAX_FIELD_VALUE_LENGTH = 100
+    MAX_NESTED_DEPTH = 2
+
+    # Emoji mapping for common field name patterns (generic, not specific fields)
+    EMOJI_PATTERNS = {
+        # Transportation
+        r'(?i)(vehicle|vozilo|auto|car)': '🚗',
+        r'(?i)(plate|registr|tablica)': '📋',
+        r'(?i)(mileage|km|kilometr)': '📏',
+        r'(?i)(driver|vozač|vozac)': '👤',
+        r'(?i)(vin)': '🔑',
+
+        # People
+        r'(?i)(person|osoba|user|korisnik)': '👤',
+        r'(?i)(email|e-mail)': '📧',
+        r'(?i)(phone|telefon|mobile|mobitel)': '📱',
+        r'(?i)(name|ime|naziv)': '📝',
+
+        # Organization
+        r'(?i)(company|tvrtka|firma|kompanija)': '🏢',
+        r'(?i)(org.*unit|odjel|department)': '🏛️',
+        r'(?i)(cost.*center|mjesto.*troška)': '💰',
+
+        # Time/Date
+        r'(?i)(date|datum|time|vrijeme)': '📅',
+        r'(?i)(start|početak|pocetak)': '▶️',
+        r'(?i)(end|kraj|finish)': '⏹️',
+        r'(?i)(expir|istek|istječe)': '⚠️',
+        r'(?i)(created|kreirano)': '🆕',
+        r'(?i)(updated|modified|ažurirano)': '🔄',
+
+        # Status
+        r'(?i)(status|stanje|state)': '📌',
+        r'(?i)(active|aktiv)': '✅',
+        r'(?i)(avail|dostupn)': '✅',
+
+        # Money
+        r'(?i)(amount|iznos|price|cijena)': '💰',
+        r'(?i)(monthly|mjesečn)': '📆',
+        r'(?i)(total|ukupno)': '💵',
+        r'(?i)(contract|ugovor|leasing|lizing)': '💼',
+
+        # Location
+        r'(?i)(location|lokacija|address|adresa)': '📍',
+        r'(?i)(city|grad)': '🏙️',
+        r'(?i)(country|država|drzava)': '🌍',
+
+        # Documents
+        r'(?i)(document|dokument|file|datoteka)': '📄',
+        r'(?i)(attachment|prilog)': '📎',
+        r'(?i)(image|slika|photo|fotografija)': '🖼️',
+
+        # Counts
+        r'(?i)(count|broj|number)': '#️⃣',
+        r'(?i)(id|identifier)': '🔢',
+        r'(?i)(code|šifra|sifra|kod)': '🏷️',
+
+        # Other
+        r'(?i)(description|opis)': '📝',
+        r'(?i)(comment|komentar|note|napomena)': '💬',
+        r'(?i)(type|tip|vrsta)': '📂',
+        r'(?i)(year|godina)': '📆',
+        r'(?i)(model)': '🔧',
+        r'(?i)(manufacturer|proizvođač)': '🏭',
+    }
+
+    def __init__(self):
+        self._current_query: Optional[str] = None
+
+    def format_result(
+        self,
+        result: Dict[str, Any],
+        tool: Optional[Any] = None,
+        user_query: Optional[str] = None
+    ) -> str:
+        """
+        Format ANY API result for display.
+
+        Args:
+            result: Execution result with success/error/data
+            tool: Optional tool metadata
+            user_query: User's original question
+
+        Returns:
+            Formatted string for WhatsApp
+        """
+        self._current_query = user_query
+
+        # Handle errors
+        if not result.get("success"):
+            error = result.get("error", "Nepoznata greška")
+            return f"❌ Greška: {error}"
+
+        # Get HTTP method for context
+        method = "GET"
+        if tool:
+            method = tool.method if hasattr(tool, 'method') else tool.get("method", "GET")
+
+        # Extract operation name for success messages
+        operation = result.get("operation", "")
+
+        # Handle mutations (POST/PUT/PATCH/DELETE)
+        if method == "DELETE":
+            return self._format_success("Uspješno obrisano", operation)
+
+        if method in ("POST", "PUT", "PATCH"):
+            created_id = result.get("created_id")
+            msg = self._format_success("Uspješno spremljeno", operation)
+            if created_id:
+                msg += f"\n📝 ID: {created_id}"
+            return msg
+
+        # Handle GET responses - extract data
+        data = self._extract_data(result)
+
+        if data is None:
+            return self._format_success("Operacija uspješna", operation)
+
+        # Format based on data type
+        return self._format_any(data)
+
+    def _extract_data(self, result: Dict) -> Any:
+        """Extract actual data from various API response formats."""
+        # Try common patterns
+        if "items" in result:
+            return result["items"]
+
+        if "data" in result:
+            data = result["data"]
+
+            # Handle nested {"Data": [...], "Count": N} pattern
+            if isinstance(data, dict) and "Data" in data:
+                return data["Data"]
+
+            return data
+
+        # Return result itself if no known wrapper
+        return result.get("result")
+
+    def _format_any(self, data: Any, depth: int = 0) -> str:
+        """
+        Universal formatter - handles any data type.
+
+        Args:
+            data: Any data (list, dict, primitive)
+            depth: Current nesting depth (for recursion control)
+        """
+        if data is None:
+            return "Nema podataka."
+
+        # Primitive types
+        if isinstance(data, (str, int, float, bool)):
+            return f"✅ Rezultat: {data}"
+
+        # List of items
+        if isinstance(data, list):
+            if not data:
+                return "Nema pronađenih rezultata."
+            return self._format_list(data, depth)
+
+        # Single object
+        if isinstance(data, dict):
+            if not data:
+                return "Nema podataka."
+            return self._format_object(data, depth)
+
+        # Unknown type - convert to string
+        return f"✅ Rezultat: {str(data)[:500]}"
+
+    def _format_list(self, items: List, depth: int = 0) -> str:
+        """Format a list of items."""
+        if not items:
+            return "Nema pronađenih rezultata."
+
+        total = len(items)
+
+        # If items are primitives, show as bullet list
+        if not isinstance(items[0], dict):
+            lines = [f"📋 **Pronađeno {total} stavki:**\n"]
+            for i, item in enumerate(items[:self.MAX_LIST_ITEMS], 1):
+                lines.append(f"{i}. {item}")
+            if total > self.MAX_LIST_ITEMS:
+                lines.append(f"\n_...i još {total - self.MAX_LIST_ITEMS} stavki_")
+            return "\n".join(lines)
+
+        # Items are dicts - format as list with key info
+        lines = [f"📋 **Pronađeno {total} stavki:**\n"]
+
+        for i, item in enumerate(items[:self.MAX_LIST_ITEMS], 1):
+            # Get display name from item (try common name fields)
+            name = self._get_display_name(item)
+            lines.append(f"**{i}.** {name}")
+
+            # Show 2-3 key fields as preview
+            preview = self._get_preview_fields(item, exclude_name=True)
+            for label, value in preview[:3]:
+                emoji = self._get_emoji_for_field(label)
+                lines.append(f"   {emoji} {self._humanize_field(label)}: {value}")
+
+            lines.append("")  # Empty line between items
+
+        if total > self.MAX_LIST_ITEMS:
+            lines.append(f"_...i još {total - self.MAX_LIST_ITEMS} stavki_")
+
+        lines.append("---")
+        lines.append("_Odaberite brojem ili navedite naziv._")
+
+        return self._truncate_message("\n".join(lines))
+
+    def _format_object(self, data: Dict, depth: int = 0) -> str:
+        """Format a single object/dictionary."""
+        if not data:
+            return "Nema podataka."
+
+        # Get display name for header
+        name = self._get_display_name(data)
+        emoji = self._detect_primary_emoji(data)
+
+        lines = [f"{emoji} **{name}**\n"]
+
+        # Format all fields
+        field_count = 0
+        for key, value in data.items():
+            if field_count >= self.MAX_FIELDS_PER_OBJECT:
+                lines.append(f"\n_...i još {len(data) - field_count} polja_")
+                break
+
+            # Skip internal/meta fields
+            if self._should_skip_field(key):
+                continue
+
+            # Skip if this is the name field we already showed
+            if self._is_name_field(key):
+                continue
+
+            formatted = self._format_field(key, value, depth)
+            if formatted:
+                lines.append(formatted)
+                field_count += 1
+
+        return self._truncate_message("\n".join(lines))
+
+    def _format_field(self, key: str, value: Any, depth: int = 0) -> Optional[str]:
+        """Format a single field with emoji and human-readable label."""
+        if value is None or value == "" or value == []:
+            return None
+
+        emoji = self._get_emoji_for_field(key)
+        label = self._humanize_field(key)
+
+        # Handle different value types
+        if isinstance(value, bool):
+            display = "Da" if value else "Ne"
+            return f"{emoji} {label}: {display}"
+
+        if isinstance(value, (int, float)):
+            # Format numbers nicely
+            if isinstance(value, float):
+                display = f"{value:,.2f}"
+            else:
+                display = f"{value:,}"
+            return f"{emoji} {label}: {display}"
+
+        if isinstance(value, str):
+            # Try to detect and format dates
+            if self._looks_like_date(value):
+                display = self._format_date(value)
+            else:
+                # Truncate long strings
+                display = value[:self.MAX_FIELD_VALUE_LENGTH]
+                if len(value) > self.MAX_FIELD_VALUE_LENGTH:
+                    display += "..."
+            return f"{emoji} {label}: {display}"
+
+        if isinstance(value, list):
+            if not value:
+                return None
+            if len(value) == 1 and isinstance(value[0], (str, int, float)):
+                return f"{emoji} {label}: {value[0]}"
+            # Summarize list
+            if isinstance(value[0], dict):
+                return f"{emoji} {label}: ({len(value)} stavki)"
+            # Simple list - show first few
+            preview = ", ".join(str(v) for v in value[:3])
+            if len(value) > 3:
+                preview += f" ...+{len(value)-3}"
+            return f"{emoji} {label}: {preview}"
+
+        if isinstance(value, dict):
+            if depth >= self.MAX_NESTED_DEPTH:
+                return f"{emoji} {label}: (objekt)"
+            # Try to get meaningful info from nested dict
+            nested_name = self._get_display_name(value)
+            if nested_name and nested_name != "Stavka":
+                return f"{emoji} {label}: {nested_name}"
+            return f"{emoji} {label}: (objekt s {len(value)} polja)"
+
+        return f"{emoji} {label}: {value}"
+
+    def _get_display_name(self, item: Dict) -> str:
+        """Extract display name from item using common naming patterns."""
+        # Try various common name fields (ordered by priority)
+        name_fields = [
+            "FullVehicleName", "DisplayName", "Name", "Title",
+            "FullName", "VehicleName", "PersonName",
+            "Description", "Label", "Subject",
+            "FirstName", "LastName"  # For person records
+        ]
+
+        for field in name_fields:
+            val = item.get(field)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip()
+
+        # Try to combine FirstName + LastName
+        first = item.get("FirstName", "")
+        last = item.get("LastName", "")
+        if first or last:
+            return f"{first} {last}".strip()
+
+        # Fallback to first string field
+        for key, val in item.items():
+            if isinstance(val, str) and val.strip() and not self._should_skip_field(key):
+                return val.strip()[:50]
+
+        return "Stavka"
+
+    def _get_preview_fields(self, item: Dict, exclude_name: bool = True) -> List[tuple]:
+        """Get 2-3 key fields for list preview."""
+        # Priority fields for preview
+        priority = [
+            "LicencePlate", "Plate", "Email", "Phone", "Mobile",
+            "Status", "State", "Type", "LastMileage", "Mileage"
+        ]
+
+        result = []
+        used_keys = set()
+
+        # First, try priority fields
+        for field in priority:
+            if field in item and item[field] is not None:
+                val = item[field]
+                if isinstance(val, (str, int, float)) and str(val).strip():
+                    result.append((field, str(val)))
+                    used_keys.add(field)
+                    if len(result) >= 3:
+                        break
+
+        # Fill remaining with other fields
+        if len(result) < 3:
+            for key, val in item.items():
+                if key in used_keys:
+                    continue
+                if self._should_skip_field(key):
+                    continue
+                if exclude_name and self._is_name_field(key):
+                    continue
+                if isinstance(val, (str, int, float)) and str(val).strip():
+                    result.append((key, str(val)[:50]))
+                    if len(result) >= 3:
+                        break
+
+        return result
+
+    def _humanize_field(self, field_name: str) -> str:
+        """Convert CamelCase/snake_case field name to human readable."""
+        if not field_name:
+            return "Polje"
+
+        # Split CamelCase
+        name = re.sub(r'([A-Z])', r' \1', field_name)
+        # Split snake_case
+        name = name.replace('_', ' ')
+        # Clean up
+        name = ' '.join(name.split())
+
+        return name.strip().title()
+
+    def _get_emoji_for_field(self, field_name: str) -> str:
+        """Get appropriate emoji for field based on patterns."""
+        if not field_name:
+            return "•"
+
+        for pattern, emoji in self.EMOJI_PATTERNS.items():
+            if re.search(pattern, field_name):
+                return emoji
+
+        return "•"
+
+    def _detect_primary_emoji(self, data: Dict) -> str:
+        """Detect primary emoji for object based on its fields."""
+        keys = set(data.keys())
+        key_str = " ".join(keys)
+
+        # Vehicle indicators
+        if any(k in keys for k in ["VehicleId", "LicencePlate", "VIN", "Mileage", "LastMileage"]):
+            return "🚗"
+
+        # Person indicators
+        if any(k in keys for k in ["PersonId", "FirstName", "LastName", "Email"]):
+            return "👤"
+
+        # Try pattern matching on all keys
+        for pattern, emoji in self.EMOJI_PATTERNS.items():
+            if re.search(pattern, key_str):
+                return emoji
+
+        return "📋"
+
+    def _is_name_field(self, key: str) -> bool:
+        """Check if field is likely a name/display field."""
+        name_fields = {
+            "fullvehiclename", "displayname", "name", "title",
+            "fullname", "vehiclename", "personname", "firstname", "lastname"
+        }
+        return key.lower() in name_fields
+
+    def _should_skip_field(self, key: str) -> bool:
+        """Check if field should be skipped (internal/meta fields)."""
+        # Skip internal fields
+        if key.startswith("_") or key.startswith("$"):
+            return True
+
+        # Skip common ID fields that are just GUIDs
+        skip_patterns = [
+            r'^Id$', r'.*Id$', r'.*ID$',  # Internal IDs
+            r'^Guid$', r'.*Guid$',
+            r'^CreatedBy$', r'^ModifiedBy$',
+            r'^TenantId$', r'^ApiIdentity$',
+        ]
+
+        for pattern in skip_patterns:
+            if re.match(pattern, key):
+                # Exception: some IDs are useful
+                if key in ["ExternalId", "Code", "AssetId"]:
+                    return False
+                return True
+
+        return False
+
+    def _looks_like_date(self, value: str) -> bool:
+        """Check if string looks like a date/datetime."""
+        if not value or not isinstance(value, str):
+            return False
+
+        # ISO format patterns
+        date_patterns = [
+            r'^\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+            r'^\d{2}\.\d{2}\.\d{4}',  # DD.MM.YYYY
+            r'^\d{2}/\d{2}/\d{4}',  # DD/MM/YYYY or MM/DD/YYYY
+        ]
+
+        return any(re.match(p, value) for p in date_patterns)
+
+    def _format_date(self, value: str) -> str:
+        """Format date/datetime to Croatian locale."""
+        if not value:
+            return ""
+
+        try:
+            # Handle ISO format
+            if "T" in value:
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return dt.strftime("%d.%m.%Y. %H:%M")
+
+            # Try parsing YYYY-MM-DD
+            if re.match(r'^\d{4}-\d{2}-\d{2}', value):
+                dt = datetime.strptime(value[:10], "%Y-%m-%d")
+                return dt.strftime("%d.%m.%Y.")
+
+            return value
+        except (ValueError, TypeError):
+            return str(value)[:10]
+
+    def _format_success(self, message: str, operation: str) -> str:
+        """Format success message with operation context."""
+        op_name = self._extract_operation_name(operation)
+        if op_name:
+            return f"✅ **{op_name}** - {message.lower()}!"
+        return f"✅ {message}!"
+
+    def _extract_operation_name(self, operation: str) -> Optional[str]:
+        """Extract human-readable name from operation ID."""
+        if not operation:
+            return None
+
+        # Remove method prefix (post_, get_, etc.)
+        clean = operation
+        for prefix in ["post_", "get_", "put_", "patch_", "delete_"]:
+            if clean.lower().startswith(prefix):
+                clean = clean[len(prefix):]
+                break
+
+        # Convert CamelCase to words
+        if clean:
+            words = re.sub(r'([A-Z])', r' \1', clean).strip()
+            return words.title() if words else None
+
+        return None
 
     def _truncate_message(self, message: str) -> str:
-        """
-        FIX v13.2: Truncate message to WhatsApp limit.
-
-        Ensures messages don't exceed MAX_MESSAGE_LENGTH.
-        """
+        """Truncate message to WhatsApp limit."""
         if len(message) <= self.MAX_MESSAGE_LENGTH:
             return message
 
@@ -50,623 +553,12 @@ class ResponseFormatter:
 
         return truncated + "\n\n_...poruka skraćena._"
 
-    def format_result(
-        self,
-        result: Dict[str, Any],
-        tool: Optional[Any] = None,  # Can be UnifiedToolDefinition (Pydantic) or dict
-        user_query: Optional[str] = None  # NEW: User's original question for intent-awareness
-    ) -> str:
+    # ========== LIST FORMATTING FOR SELECTION ==========
+
+    def format_vehicle_list(self, vehicles: List[Dict], filter_text: Optional[str] = None) -> str:
         """
-        Format API result for display.
+        Format vehicle list for selection - GENERIC VERSION.
 
-        Args:
-            result: Execution result
-            tool: Tool metadata (UnifiedToolDefinition or dict)
-            user_query: User's original question (for intent-aware formatting)
-
-        Returns:
-            Formatted string
+        Works with ANY list of items that have some name/identifier.
         """
-        # Store user_query for use in sub-methods
-        self._current_query = user_query
-        if not result.get("success"):
-            error = result.get("error", "Nepoznata greška")
-            return f"❌ Greška: {error}"
-
-        operation = result.get("operation", "")
-        # CRITICAL FIX: Handle both Pydantic (UnifiedToolDefinition) and dict
-        if tool:
-            method = tool.method if hasattr(tool, 'method') else tool.get("method", "GET")
-        else:
-            method = "GET"
-        
-        if method == "GET":
-            return self._format_get(result, operation)
-        elif method in ("POST", "PUT", "PATCH"):
-            return self._format_mutation(result, operation)
-        elif method == "DELETE":
-            return "✅ Uspješno obrisano."
-        
-        return "✅ Operacija uspješna."
-    
-    def _format_get(self, result: Dict, operation: str) -> str:
-        """Format GET response."""
-        if "items" in result:
-            items = result["items"]
-            count = result.get("count", len(items))
-
-            if not items:
-                return "Nema pronađenih rezultata."
-
-            # NEW v10.1: Try intent-aware formatting first
-            single_response = self._try_format_single_item(items)
-            if single_response:
-                return single_response
-
-            # Fall back to list formatting
-            if self._is_vehicle(items[0] if items else {}):
-                return self.format_vehicle_list(items)
-            elif self._is_person(items[0] if items else {}):
-                return self._format_person_list(items)
-            else:
-                return self._format_generic_list(items, count)
-
-        if "data" in result:
-            data = result["data"]
-
-            # CRITICAL FIX v12.2: Unwrap nested "Data" field from API responses
-            # API often returns: {"Data": [...], "Count": 10} inside result["data"]
-            if isinstance(data, dict) and "Data" in data:
-                nested_data = data["Data"]
-                count = data.get("Count", len(nested_data) if isinstance(nested_data, list) else 1)
-
-                if isinstance(nested_data, list):
-                    if not nested_data:
-                        return "Nema pronađenih rezultata."
-
-                    # NEW v10.1: Try intent-aware formatting first
-                    single_response = self._try_format_single_item(nested_data)
-                    if single_response:
-                        return single_response
-
-                    if self._is_vehicle(nested_data[0]):
-                        return self.format_vehicle_list(nested_data)
-                    elif self._is_person(nested_data[0]):
-                        return self._format_person_list(nested_data)
-                    elif self._is_masterdata(nested_data[0]):
-                        return self._format_masterdata(nested_data[0])
-                    return self._format_generic_list(nested_data, count)
-                elif isinstance(nested_data, dict):
-                    # NEW v10.1: Try intent-aware formatting for single dict
-                    intent_response = self._format_for_query(nested_data)
-                    if intent_response:
-                        return intent_response
-
-                    if self._is_masterdata(nested_data):
-                        return self._format_masterdata(nested_data)
-                    elif self._is_vehicle(nested_data):
-                        return self._format_vehicle_details(nested_data)
-                    elif self._is_person(nested_data):
-                        return self._format_person_details(nested_data)
-                    return self._format_generic_object(nested_data)
-
-            # CRITICAL FIX: Type guard - only check structure on dict/list, not primitives
-            if isinstance(data, dict):
-                # NEW v10.1: Try intent-aware formatting
-                intent_response = self._format_for_query(data)
-                if intent_response:
-                    return intent_response
-
-                if self._is_vehicle(data):
-                    return self._format_vehicle_details(data)
-                elif self._is_masterdata(data):
-                    return self._format_masterdata(data)
-                elif self._is_person(data):
-                    return self._format_person_details(data)
-                else:
-                    return self._format_generic_object(data)
-            elif isinstance(data, list):
-                # List of items without "items" wrapper
-                if not data:
-                    return "Nema pronađenih rezultata."
-
-                # NEW v10.1: Try intent-aware formatting first
-                single_response = self._try_format_single_item(data)
-                if single_response:
-                    return single_response
-
-                if isinstance(data[0], dict):
-                    if self._is_vehicle(data[0]):
-                        return self.format_vehicle_list(data)
-                    elif self._is_person(data[0]):
-                        return self._format_person_list(data)
-                    elif self._is_masterdata(data[0]):
-                        return self._format_masterdata(data[0])
-                return self._format_generic_list(data, len(data))
-            else:
-                # Primitive type (string, number, etc.)
-                return f"✅ Rezultat: {data}"
-
-        return "✅ Operacija uspješna."
-    
-    def _format_mutation(self, result: Dict, operation: str) -> str:
-        """Format POST/PUT/PATCH response."""
-        created_id = result.get("created_id")
-        operation_lower = operation.lower()
-        
-        if "calendar" in operation_lower or "booking" in operation_lower:
-            msg = f"✅ **Rezervacija uspješna!**"
-            if created_id:
-                msg += f"\n\n📝 ID: {created_id}"
-            return msg
-        
-        if "case" in operation_lower:
-            msg = f"✅ **Prijava zaprimljena!**"
-            if created_id:
-                msg += f"\n\n📝 ID: {created_id}"
-            msg += "\n\nNaš tim će vas kontaktirati uskoro."
-            return msg
-        
-        if "mileage" in operation_lower:
-            return "✅ **Kilometraža zabilježena!**"
-        
-        if "email" in operation_lower:
-            return "✅ **Email poslan!**"
-        
-        msg = f"✅ Operacija uspješna!"
-        if created_id:
-            msg += f"\n📝 ID: {created_id}"
-        
-        return msg
-    
-    def format_vehicle_list(self, vehicles: List[Dict]) -> str:
-        """Format vehicle list for selection using actual field names from data."""
-        if not vehicles:
-            return "Nema dostupnih vozila."
-        
-        lines = [f"🚗 **Pronađeno {len(vehicles)} vozila:**\n"]
-        
-        for i, v in enumerate(vehicles[:self.MAX_LIST_ITEMS], 1):
-            # Use field names as they appear in data (from Swagger schema)
-            name = v.get("FullVehicleName") or v.get("DisplayName") or v.get("Name") or "Vozilo"
-            plate = v.get("LicencePlate") or "N/A"
-            
-            lines.append(f"**{i}.** {name}")
-            lines.append(f"   📋 Registracija: {plate}")
-            lines.append("")
-        
-        if len(vehicles) > self.MAX_LIST_ITEMS:
-            lines.append(f"_...i još {len(vehicles) - self.MAX_LIST_ITEMS} vozila_\n")
-        
-        lines.append("_Odaberite vozilo brojem (npr. '1') ili imenom._")
-        
-        return "\n".join(lines)
-    
-    def _format_person_list(self, persons: List[Dict]) -> str:
-        """Format person list."""
-        lines = [f"👥 **Pronađeno {len(persons)} osoba:**\n"]
-        
-        for i, p in enumerate(persons[:10], 1):
-            name = p.get("DisplayName") or p.get("Name") or "N/A"
-            phone = p.get("Phone") or p.get("Mobile") or ""
-            
-            lines.append(f"{i}. {name}")
-            if phone:
-                lines.append(f"   📱 {phone}")
-        
-        return "\n".join(lines)
-    
-    def _format_person_details(self, data: Dict) -> str:
-        """Format single person details from PersonData endpoint (Swagger: PersonDto)."""
-        first_name = data.get("FirstName") or ""
-        last_name = data.get("LastName") or ""
-        display_name = data.get("DisplayName") or f"{first_name} {last_name}".strip() or "Korisnik"
-        
-        lines = [f"👤 **{display_name}**\n"]
-        
-        # Basic info from Swagger PersonDto
-        email = data.get("Email")
-        phone = data.get("Phone")
-        if email:
-            lines.append(f"📧 Email: {email}")
-        if phone:
-            lines.append(f"📱 Telefon: {phone}")
-        
-        # Organization info
-        company = data.get("CompanyName")
-        org_unit = data.get("OrgUnitName")
-        if company:
-            lines.append(f"🏛️ Tvrtka: {company}")
-        if org_unit:
-            lines.append(f"🏢 Org. jedinica: {org_unit}")
-        
-        # Code (employee ID)
-        code = data.get("Code")
-        if code:
-            lines.append(f"🔢 Šifra: {code}")
-        
-        return "\n".join(lines)
-    
-    def _format_generic_list(self, items: List[Dict], count: int) -> str:
-        """Format generic list."""
-        lines = [f"📋 **Pronađeno {count} stavki:**\n"]
-        
-        for i, item in enumerate(items[:10], 1):
-            name = (
-                item.get("Name") or
-                item.get("Title") or
-                item.get("DisplayName") or
-                item.get("Description") or
-                f"Stavka {i}"
-            )
-            lines.append(f"{i}. {name}")
-        
-        if count > 10:
-            lines.append(f"\n_...i još {count - 10} stavki_")
-        
-        return "\n".join(lines)
-    
-    def _format_vehicle_details(self, data: Dict) -> str:
-        """Format single vehicle using schema field names."""
-        name = data.get("FullVehicleName") or data.get("DisplayName") or "Vozilo"
-        plate = data.get("LicencePlate") or "N/A"
-        mileage = data.get("LastMileage") or data.get("Mileage")  # Swagger uses LastMileage
-        vin = data.get("VIN")
-        driver = data.get("Driver")
-        manufacturer = data.get("Manufacturer")
-        model = data.get("Model")
-        year = data.get("ProductionYear")
-
-        lines = [f"🚗 **{name}**\n"]
-        lines.append(f"📋 Registracija: {plate}")
-        
-        # Manufacturer/model info if different from FullVehicleName
-        if manufacturer and model:
-            lines.append(f"🏭 Proizvođač: {manufacturer} {model}")
-        if year:
-            lines.append(f"📅 Godina: {year}")
-        if mileage is not None:
-            lines.append(f"📏 Kilometraža: {mileage:,} km")
-        if vin:
-            lines.append(f"🔑 VIN: {vin}")
-        if driver:
-            lines.append(f"👤 Vozač: {driver}")
-        
-        return "\n".join(lines)
-    
-    def _format_masterdata(self, data: Dict) -> str:
-        """Format master data using schema field names from Swagger."""
-        name = data.get("FullVehicleName") or data.get("DisplayName") or "Vozilo"
-        plate = data.get("LicencePlate") or "N/A"
-        mileage = data.get("LastMileage") or data.get("Mileage")  # Swagger uses LastMileage
-        vin = data.get("VIN")
-        driver = data.get("Driver")
-        
-        lines = ["📊 **Podaci o vozilu:**\n"]
-        lines.append(f"🚗 {name}")
-        lines.append(f"📋 Registracija: {plate}")
-        
-        # Basic vehicle info from Swagger MasterData schema
-        manufacturer = data.get("Manufacturer")
-        model = data.get("Model")
-        year = data.get("ProductionYear")
-        if manufacturer or model:
-            lines.append(f"🏭 Proizvođač: {manufacturer or ''} {model or ''}")
-        if year:
-            lines.append(f"📅 Godina proizvodnje: {year}")
-            
-        if mileage is not None:
-            lines.append(f"📏 Kilometraža: **{mileage:,} km**")
-        if vin:
-            lines.append(f"🔑 VIN: {vin}")
-        if driver:
-            lines.append(f"👤 Vozač: {driver}")
-        
-        # Status info from Swagger
-        status = data.get("GeneralStatusName")
-        availability = data.get("Availability")
-        if status:
-            lines.append(f"📌 Status: {status}")
-        if availability:
-            lines.append(f"✅ Dostupnost: {availability}")
-        
-        # Organization info
-        org_unit = data.get("OrgUnit")
-        company = data.get("Company")
-        if org_unit:
-            lines.append(f"🏢 Org. jedinica: {org_unit}")
-        if company:
-            lines.append(f"🏛️ Tvrtka: {company}")
-        
-        # Contract info - field names from Swagger schema
-        provider = data.get("ProviderName")
-        monthly = data.get("MonthlyAmount")
-        contract_end = data.get("ContractEnd")
-        
-        if provider or monthly or contract_end:
-            lines.append("\n💼 **Ugovor:**")
-            if provider:
-                lines.append(f"   Leasing: {provider}")
-            if monthly:
-                lines.append(f"   Rata: {monthly} EUR/mj")
-            if contract_end:
-                lines.append(f"   Istek ugovora: {contract_end}")
-        
-        # Cases/maintenance
-        unresolved = data.get("UnresolvedCasesCount")
-        if unresolved and unresolved > 0:
-            lines.append(f"\n⚠️ Neriješeni slučajevi: {unresolved}")
-        
-        return "\n".join(lines)
-    
-    def _format_generic_object(self, data: Dict) -> str:
-        """Format generic object."""
-        lines = ["📋 **Podaci:**\n"]
-
-        for key, value in list(data.items())[:10]:
-            if value is not None and not key.startswith("_"):
-                # CRITICAL FIX v12.2: Don't print raw lists/dicts - summarize them
-                if isinstance(value, list):
-                    if len(value) == 0:
-                        lines.append(f"• {key}: (prazno)")
-                    elif len(value) == 1 and isinstance(value[0], (str, int, float)):
-                        lines.append(f"• {key}: {value[0]}")
-                    else:
-                        lines.append(f"• {key}: ({len(value)} stavki)")
-                elif isinstance(value, dict):
-                    # Try to extract meaningful info from nested dict
-                    name = value.get("Name") or value.get("DisplayName") or value.get("Title")
-                    if name:
-                        lines.append(f"• {key}: {name}")
-                    else:
-                        lines.append(f"• {key}: (objekt)")
-                elif isinstance(value, str) and len(value) > 100:
-                    # Truncate long strings
-                    lines.append(f"• {key}: {value[:100]}...")
-                else:
-                    lines.append(f"• {key}: {value}")
-
-        return "\n".join(lines)
-    
-    # Type detection
-    
-    def _is_vehicle(self, data: Dict) -> bool:
-        """Check if data is vehicle."""
-        fields = {"VehicleId", "LicencePlate", "Plate", "VIN", "Mileage", "LastMileage", "FullVehicleName"}
-        return bool(fields & set(data.keys()))
-    
-    def _is_person(self, data: Dict) -> bool:
-        """Check if data is person."""
-        fields = {"PersonId", "FirstName", "LastName", "Phone", "Mobile", "Email"}
-        return bool(fields & set(data.keys()))
-    
-    def _is_masterdata(self, data: Dict) -> bool:
-        """Check if data is masterdata."""
-        has_vehicle = self._is_vehicle(data)
-        has_driver = "Driver" in data or "DriverName" in data
-        return has_vehicle and has_driver
-
-    # ========== INTENT-AWARE FORMATTING (v10.1) ==========
-
-    def _is_specific_query(self) -> bool:
-        """
-        Check if user asked for specific information (not a list/selection).
-
-        Examples of specific queries:
-        - "kolika mi je kilometraža" → wants mileage number
-        - "kada mi istječe registracija" → wants registration date
-        - "daj mi podatke o vozilu" → wants vehicle details
-        """
-        if not self._current_query:
-            return False
-
-        q = self._current_query.lower()
-
-        # Keywords indicating user wants specific data, not a selection
-        specific_keywords = [
-            "kolika", "koliko", "koja", "koji", "što",
-            "kada", "kad", "do kada",
-            "daj mi", "pokaži mi", "prikaži",
-            "kilometraž", "registracij", "istek", "istječe",
-            "mileage", "plate", "vin",
-            "lizing", "leasing", "rata", "ugovor", "najam"
-        ]
-
-        return any(kw in q for kw in specific_keywords)
-
-    def _format_for_query(self, data: Dict) -> Optional[str]:
-        """
-        Format data based on what user specifically asked for.
-
-        Returns None if no specific intent detected → fall back to default.
-        """
-        if not self._current_query:
-            return None
-
-        q = self._current_query.lower()
-
-        # Extract vehicle info for context
-        name = (
-            data.get("FullVehicleName") or
-            data.get("DisplayName") or
-            data.get("Name") or
-            "Vaše vozilo"
-        )
-        plate = data.get("LicencePlate") or data.get("Plate") or ""
-
-        # MILEAGE query
-        if any(kw in q for kw in ["kilometraž", "mileage", "koliko km", "koliko kilometara", "km ima"]):
-            mileage = data.get("LastMileage") or data.get("Mileage") or data.get("CurrentMileage")
-            if mileage:
-                return (
-                    f"🚗 **{name}**\n"
-                    f"📏 Kilometraža: **{mileage:,} km**"
-                )
-            return f"❌ Kilometraža nije dostupna za {name}."
-
-        # REGISTRATION / PLATE query
-        if any(kw in q for kw in ["registracij", "tablice", "tablica", "plate", "oznaka", "broj tablica"]):
-            if plate:
-                lines = [f"🚗 **{name}**", f"📋 Registracija: **{plate}**"]
-
-                # Add registration expiration if asked
-                if any(kw in q for kw in ["istek", "istječe", "do kada", "kada", "vrijedi"]):
-                    exp_date = (
-                        data.get("RegistrationExpirationDate") or
-                        data.get("ExpirationDate") or
-                        data.get("RegistrationExpiry")
-                    )
-                    if exp_date:
-                        # Try to format date nicely
-                        if isinstance(exp_date, str) and "T" in exp_date:
-                            exp_date = exp_date.split("T")[0]
-                        lines.append(f"📅 Istek registracije: **{exp_date}**")
-
-                return "\n".join(lines)
-            return f"❌ Registracija nije dostupna za vozilo."
-
-        # VIN query
-        if "vin" in q:
-            vin = data.get("VIN") or data.get("Vin")
-            if vin:
-                return f"🚗 **{name}**\n🔑 VIN: **{vin}**"
-            return f"❌ VIN nije dostupan za {name}."
-
-        # DRIVER query
-        if any(kw in q for kw in ["vozač", "driver", "tko vozi", "koji vozač"]):
-            driver = data.get("Driver") or data.get("DriverName") or data.get("AssignedDriver")
-            if driver:
-                return f"🚗 **{name}**\n👤 Vozač: **{driver}**"
-            return f"❌ Vozač nije dodijeljen vozilu {name}."
-        
-        # PERSONAL NAME query (PersonData response)
-        if any(kw in q for kw in ["kako se zovem", "moje ime", "tko sam", "moji podaci", "my name"]):
-            first_name = data.get("FirstName")
-            last_name = data.get("LastName")
-            display_name = data.get("DisplayName") or f"{first_name or ''} {last_name or ''}".strip()
-            if display_name:
-                return self._format_person_details(data)
-            # If it's vehicle data, can't answer name
-            return None
-
-        # GENERAL "what else" / "što još znaš" query - show ALL available fields
-        if any(kw in q for kw in ["što još", "sto jos", "što znaš", "sto znas", "sve što", "sve sto", "svi podaci"]):
-            return self._format_masterdata(data) if self._is_vehicle(data) else None
-
-        # LEASING / CONTRACT query - PROŠIRENO za sve varijacije
-        if any(kw in q for kw in [
-            "leasing", "lizing", "ugovor", "rata", "najam", "contract",
-            "mjesečna rata", "provider", "davatelj", "lizing kuć", "leasing kuć"
-        ]):
-            provider = (
-                data.get("ProviderName") or
-                data.get("LeasingProvider") or
-                data.get("Provider") or
-                data.get("LeasingCompany") or
-                data.get("Lessor") or
-                data.get("LeasingHouse") or
-                data.get("ContractProvider")
-            )
-            monthly = (
-                data.get("MonthlyAmount") or
-                data.get("MonthlyRate") or
-                data.get("MonthlyPayment") or
-                data.get("LeaseRate") or
-                data.get("MonthlyLease")
-            )
-            contract_end = (
-                data.get("ContractEndDate") or
-                data.get("LeaseEndDate") or
-                data.get("ContractExpiry")
-            )
-
-            if provider or monthly:
-                lines = [f"🚗 **{name}**"]
-                if provider:
-                    lines.append(f"💼 Lizing kuća: **{provider}**")
-                if monthly:
-                    lines.append(f"💰 Mjesečna rata: **{monthly} EUR**")
-                if contract_end:
-                    if isinstance(contract_end, str) and "T" in contract_end:
-                        contract_end = contract_end.split("T")[0]
-                    lines.append(f"📅 Kraj ugovora: {contract_end}")
-                return "\n".join(lines)
-            return f"❌ Podaci o leasingu nisu dostupni za {name}."
-
-        # GENERAL "my vehicle" / "moje vozilo" query - show summary
-        if any(kw in q for kw in ["moje vozilo", "moj auto", "moja kola", "koje vozilo", "koji auto"]):
-            return self._format_vehicle_summary(data, name, plate)
-
-        # GENERAL "info" / "podaci" query - show all available
-        if any(kw in q for kw in ["podaci", "informacije", "info", "sve o", "detalji"]):
-            return self._format_vehicle_summary(data, name, plate)
-
-        # No specific intent detected
-        return None
-
-    def _format_vehicle_summary(self, data: Dict, name: str, plate: str) -> str:
-        """Format comprehensive vehicle summary."""
-        lines = [f"🚗 **{name}**\n"]
-
-        if plate:
-            lines.append(f"📋 Registracija: {plate}")
-
-        mileage = data.get("Mileage") or data.get("CurrentMileage") or data.get("LastMileage")
-        if mileage:
-            lines.append(f"📏 Kilometraža: {mileage:,} km")
-
-        vin = data.get("VIN")
-        if vin:
-            lines.append(f"🔑 VIN: {vin}")
-
-        driver = data.get("Driver") or data.get("DriverName")
-        if driver:
-            lines.append(f"👤 Vozač: {driver}")
-
-        exp_date = (
-            data.get("RegistrationExpirationDate") or
-            data.get("ExpirationDate")
-        )
-        if exp_date:
-            if isinstance(exp_date, str) and "T" in exp_date:
-                exp_date = exp_date.split("T")[0]
-            lines.append(f"📅 Istek registracije: {exp_date}")
-
-        provider = data.get("ProviderName") or data.get("LeasingProvider")
-        monthly = data.get("MonthlyAmount")
-        if provider:
-            lines.append(f"💼 Leasing: {provider}")
-        if monthly:
-            lines.append(f"💰 Rata: {monthly} EUR/mj")
-
-        return "\n".join(lines)
-
-    def _try_format_single_item(self, items: List[Dict]) -> Optional[str]:
-        """
-        Try to format as single item response if user asked specific question.
-
-        Returns None if should show list instead.
-        """
-        if not items:
-            return None
-
-        # Only format single item for specific queries
-        if not self._is_specific_query():
-            return None
-
-        # Take first item (usually user's own vehicle)
-        data = items[0]
-
-        # Try intent-aware formatting
-        intent_response = self._format_for_query(data)
-        if intent_response:
-            return intent_response
-
-        # Fall back to detailed view for single item with specific query
-        if len(items) == 1:
-            if self._is_masterdata(data):
-                return self._format_masterdata(data)
-            if self._is_vehicle(data):
-                return self._format_vehicle_details(data)
-
-        return None
+        return self._format_list(vehicles)

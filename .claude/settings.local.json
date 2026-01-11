@@ -38,7 +38,8 @@
       "Bash(docker container prune:*)",
       "Bash(docker rm:*)",
       "Bash(del /f \"tests\\\\test_anti_hallucination.py\")",
-      "Bash(del /f \"scripts\\\\test_direct_api.py\")"
+      "Bash(del /f \"scripts\\\\test_direct_api.py\")",
+      "Bash(dir:*)"
     ]
   }
 }

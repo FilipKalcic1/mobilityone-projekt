@@ -366,7 +366,7 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
                     parts = date_part.split("-")
                     if len(parts) == 3:
                         return f"{parts[2]}.{parts[1]}.{parts[0]}"
-                except:
+                except (ValueError, AttributeError, IndexError):
                     pass
             return str(value)
 

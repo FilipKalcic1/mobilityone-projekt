@@ -284,33 +284,37 @@ class IntelligentRouter:
         intent = detect_intent(query)
         logger.info(f"ROUTER: Intent detected: {intent.value} for '{query[:40]}...'")
 
-        # Step 3: Find relevant categories
+        # Step 3: Find relevant categories (RANK DON'T FILTER)
         matched_categories = await self._find_relevant_categories(query, top_k=3)
 
-        if not matched_categories:
-            logger.warning(f"No categories matched for: {query[:50]}")
-            return self._fallback_decision(query, "No categories matched", intent)
-
         # Step 4: Get candidate tools from matched categories
-        candidate_tools = self._get_tools_from_categories(matched_categories)
+        # RANK DON'T FILTER: If no categories match, use ALL tools instead of failing
+        if matched_categories:
+            candidate_tools = self._get_tools_from_categories(matched_categories)
+        else:
+            logger.info(f"No categories matched for: {query[:50]} - using ALL tools")
+            candidate_tools = self._get_all_registered_tools()
+            matched_categories = ["_all_tools"]  # Mark that we're using all tools
 
+        # Ensure we have at least SOME tools to work with
         if not candidate_tools:
-            logger.warning(f"No tools found in categories: {matched_categories}")
-            return self._fallback_decision(query, "No tools in matched categories", intent)
+            logger.warning(f"No tools found - falling back to all tools")
+            candidate_tools = self._get_all_registered_tools()
 
-        # Step 5: INTELLIGENT FILTERING by intent
-        # Filter tools based on detected intent (READ → get_, WRITE → post_, DELETE → delete_)
-        filtered_tools = self._filter_tools_by_intent(candidate_tools, intent)
+        # Step 5: PRIORITIZE by intent (RANK DON'T FILTER)
+        # No filtering - just reorder tools so intent-matching ones are first
+        prioritized_tools = self._filter_tools_by_intent(candidate_tools, intent)
 
         logger.info(
             f"ROUTER: Query '{query[:30]}...' → Intent: {intent.value} "
-            f"→ Categories: {matched_categories} → {len(filtered_tools)}/{len(candidate_tools)} tools"
+            f"→ Categories: {matched_categories} → {len(prioritized_tools)} tools (prioritized)"
         )
 
-        # Step 6: Select best tool from filtered candidates using LLM
+        # Step 6: Select best tool from prioritized candidates using LLM
+        # RANK DON'T FILTER: All tools are passed, LLM sees prioritized list
         tool_selection = await self._llm_select_tool(
             query=query,
-            candidate_tools=filtered_tools if filtered_tools else candidate_tools,
+            candidate_tools=prioritized_tools,  # All tools, prioritized by intent
             user_context=user_context,
             intent=intent,
             matched_categories=matched_categories
@@ -600,41 +604,99 @@ class IntelligentRouter:
 
         return list(tools)
 
+    def _get_all_registered_tools(self) -> List[str]:
+        """
+        Get ALL registered tools from the registry.
+
+        This is used as a fallback when category matching fails.
+        RANK DON'T FILTER: We never want to fail just because
+        no category matched - there might still be a good tool.
+
+        Returns:
+            List of all tool IDs in the registry
+        """
+        all_tools = set()
+
+        # Get tools from all categories
+        for cat_name, cat_data in self._category_data.items():
+            tools = cat_data.get("tools", [])
+            all_tools.update(tools)
+
+        # Also check category embeddings (might have different tools)
+        for cat_name, cat_info in self._category_embeddings.items():
+            tools = cat_info.get("tools", [])
+            all_tools.update(tools)
+
+        logger.info(f"📦 Returning ALL {len(all_tools)} registered tools")
+        return list(all_tools)
+
     def _filter_tools_by_intent(
         self,
         tools: List[str],
         intent: QueryIntent
     ) -> List[str]:
         """
-        INTELLIGENT filtering: Filter tools based on detected intent.
+        RANK DON'T FILTER: Prioritize tools by intent, but return ALL tools.
 
-        READ intent → prefer get_ tools
-        WRITE intent → prefer post_ tools
-        DELETE intent → prefer delete_ tools
+        This is the "Rank Don't Filter" architecture:
+        - No tools are removed from consideration
+        - Tools matching intent are prioritized (moved to front)
+        - LLM sees all candidates but intent-matching ones first
+
+        Args:
+            tools: List of candidate tool IDs
+            intent: Detected query intent
+
+        Returns:
+            ALL tools, sorted with intent-matching tools first
         """
-        if intent == QueryIntent.READ:
-            # For READ, prefer GET tools but also include some POST for lookup
-            filtered = [t for t in tools if t.startswith("get_")]
-            if filtered:
-                return filtered
+        if not tools:
+            return tools
 
-        elif intent == QueryIntent.WRITE:
-            # For WRITE, prefer POST and PUT tools
-            filtered = [t for t in tools if t.startswith("post_") or t.startswith("put_")]
-            if filtered:
-                return filtered
+        # Score each tool based on intent match
+        def intent_score(tool: str) -> int:
+            """Higher score = better match with intent."""
+            if intent == QueryIntent.READ:
+                if tool.startswith("get_"):
+                    return 3  # Best match
+                elif "search" in tool.lower() or "find" in tool.lower():
+                    return 2  # POST but search-like
+                elif tool.startswith(("post_", "put_", "delete_")):
+                    return 0  # Penalty for mutations
+                return 1
 
-        elif intent == QueryIntent.DELETE:
-            # For DELETE, prefer DELETE tools, fallback to POST with "cancel"
-            filtered = [t for t in tools if t.startswith("delete_")]
-            if not filtered:
-                # Some cancel operations are POST
-                filtered = [t for t in tools if "cancel" in t.lower() or "delete" in t.lower()]
-            if filtered:
-                return filtered
+            elif intent == QueryIntent.WRITE:
+                if tool.startswith("post_"):
+                    return 3  # Best match
+                elif tool.startswith("put_"):
+                    return 2  # Also good
+                elif tool.startswith("get_"):
+                    return 0  # Penalty for reads
+                return 1
 
-        # No filtering if intent is UNKNOWN or no matches found
-        return tools
+            elif intent == QueryIntent.DELETE:
+                if tool.startswith("delete_"):
+                    return 3  # Best match
+                elif "cancel" in tool.lower() or "remove" in tool.lower():
+                    return 2  # POST cancel operations
+                elif tool.startswith("get_"):
+                    return 0  # Penalty for reads
+                return 1
+
+            # UNKNOWN intent - no prioritization
+            return 1
+
+        # Sort by score (descending) but return ALL tools
+        sorted_tools = sorted(tools, key=intent_score, reverse=True)
+
+        # Log the prioritization
+        matching_count = sum(1 for t in sorted_tools[:10] if intent_score(t) >= 2)
+        logger.debug(
+            f"🎯 Intent prioritization ({intent.value}): "
+            f"{matching_count}/10 top tools match intent"
+        )
+
+        return sorted_tools
 
     async def _llm_select_tool(
         self,

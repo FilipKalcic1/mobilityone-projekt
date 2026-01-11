@@ -410,7 +410,31 @@ class ToolHandler:
 
         return None
 
-    def requires_confirmation(self, tool_name: str) -> bool:
-        """Check if tool requires user confirmation."""
-        confirm_patterns = ["calendar", "booking", "case", "delete", "create", "update"]
-        return any(p in tool_name.lower() for p in confirm_patterns)
+    def requires_confirmation(self, tool_name: str, method: Optional[str] = None) -> bool:
+        """
+        Check if tool requires user confirmation.
+
+        NEW: ALL mutation operations (POST/PUT/PATCH/DELETE) require confirmation.
+        This ensures user explicitly approves any data-changing operation.
+        """
+        # Method 1: Check HTTP method (most reliable)
+        MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+        if method and method.upper() in MUTATION_METHODS:
+            return True
+
+        # Method 2: Try to get method from registry
+        if self.registry:
+            tool = self.registry.get_tool(tool_name)
+            if tool and hasattr(tool, 'method'):
+                if tool.method.upper() in MUTATION_METHODS:
+                    return True
+
+        # Method 3: Infer from tool name prefix (fallback)
+        tool_lower = tool_name.lower()
+        if tool_lower.startswith(('post_', 'put_', 'patch_', 'delete_')):
+            return True
+
+        # Method 4: Pattern matching for known mutation tools (legacy support)
+        confirm_patterns = ["calendar", "booking", "case", "addmileage", "addcase"]
+        return any(p in tool_lower for p in confirm_patterns)

@@ -24,8 +24,13 @@ except ImportError:
 
 
 # Token budgeting constants
-SINGLE_TOOL_THRESHOLD = 0.98
+# FIXED: Raised threshold from 0.98 to 0.995 to be more conservative
+# Only use single-tool mode when we're VERY confident (99.5%+)
+SINGLE_TOOL_THRESHOLD = 0.995
 MAX_TOOLS_FOR_LLM = 10
+# FIXED: Always show at least 3 tools to LLM even with high scores
+# This prevents blind spots when embedding scoring is slightly wrong
+MIN_TOOLS_FOR_LLM = 3
 MAX_HISTORY_MESSAGES = 20
 MAX_TOKEN_LIMIT = 8000
 
@@ -274,8 +279,13 @@ class AIOrchestrator:
         return exponential_delay + jitter
 
     async def _handle_rate_limit(self, attempt: int, error_type: str) -> Optional[Dict[str, Any]]:
-        """Handle rate limit errors with retry logic."""
+        """
+        Handle rate limit errors with retry logic.
+
+        P1 FIX: Now includes retry_status in return for caller visibility.
+        """
         self._rate_limit_hits += 1
+        self._current_retry_status = f"⏳ Provjeravam dostupnost... (pokušaj {attempt + 1}/{self.MAX_RETRIES})"
 
         if attempt < self.MAX_RETRIES - 1:
             delay = self._calculate_backoff(attempt)
@@ -288,10 +298,17 @@ class AIOrchestrator:
             return None
 
         logger.error(f"Rate limit exceeded after {self.MAX_RETRIES} retries")
+        self._current_retry_status = None
         return {"type": "error", "content": RATE_LIMIT_ERROR_MSG}
 
     async def _handle_timeout(self, attempt: int) -> Optional[Dict[str, Any]]:
-        """Handle timeout errors with retry logic."""
+        """
+        Handle timeout errors with retry logic.
+
+        P1 FIX: Now includes retry_status for caller visibility.
+        """
+        self._current_retry_status = f"⏳ Sustav je zauzet... (pokušaj {attempt + 1}/{self.MAX_RETRIES})"
+
         if attempt < self.MAX_RETRIES - 1:
             delay = self._calculate_backoff(attempt)
             logger.warning(f"API timeout. Retry {attempt + 1}/{self.MAX_RETRIES} after {delay:.2f}s")
@@ -299,7 +316,12 @@ class AIOrchestrator:
             return None
 
         logger.error(f"API timeout after {self.MAX_RETRIES} retries")
+        self._current_retry_status = None
         return {"type": "error", "content": TIMEOUT_ERROR_MSG}
+
+    def get_retry_status(self) -> Optional[str]:
+        """Get current retry status message (P1 FIX for user feedback)."""
+        return getattr(self, '_current_retry_status', None)
 
     def _apply_token_budgeting(
         self,
@@ -360,24 +382,33 @@ class AIOrchestrator:
             # CRITICAL FIX v15.1: Check if forced_tool conflicts with best match
             if forced_tool and forced_tool != best_name:
                 logger.info(
-                    f" Token budget: Skipping SINGLE TOOL MODE - forced_tool '{forced_tool}' "
+                    f" Token budget: Skipping HIGH CONFIDENCE MODE - forced_tool '{forced_tool}' "
                     f"differs from best_match '{best_name}' (score={best.get('score'):.3f})"
                 )
-                # Don't apply SINGLE TOOL MODE - let it fall through to normal trimming
+                # Don't apply HIGH CONFIDENCE MODE - let it fall through to normal trimming
             else:
-                # Excellent match - send only this tool
-                # (or forced_tool matches best, so it's safe)
-                single_tool = next(
-                    (t for t in tools if t.get("function", {}).get("name") == best_name),
-                    None
-                )
+                # FIXED: Even with excellent match, include MIN_TOOLS_FOR_LLM alternatives
+                # This prevents blind spots when embedding scoring is slightly wrong
+                # The LLM can correct if the top match isn't actually the best choice
+                top_tools = []
+                best_tool = None
 
-                if single_tool:
+                for t in tools:
+                    tool_name = t.get("function", {}).get("name")
+                    if tool_name == best_name:
+                        best_tool = t
+                    elif len(top_tools) < MIN_TOOLS_FOR_LLM - 1:  # Reserve 1 slot for best
+                        top_tools.append(t)
+
+                if best_tool:
+                    # Put best tool first, then alternatives
+                    result_tools = [best_tool] + top_tools
                     logger.info(
-                        f" Token budget: SINGLE TOOL MODE - "
-                        f"{best_name} (score={best.get('score'):.3f} >= {SINGLE_TOOL_THRESHOLD})"
+                        f" Token budget: HIGH CONFIDENCE MODE - "
+                        f"{best_name} (score={best.get('score'):.3f} >= {SINGLE_TOOL_THRESHOLD}) "
+                        f"+ {len(top_tools)} alternatives"
                     )
-                    return [single_tool]
+                    return result_tools
                 else:
                     logger.error(
                         f" Token budgeting: Best tool '{best_name}' not found in tools list! "
@@ -646,35 +677,55 @@ Vrati SAMO JSON, bez drugog teksta."""
         if context:
             system += f"\n\nDodatni kontekst: {context}"
         
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_input}
-                ],
-                temperature=0.1,
-                max_tokens=300
-            )
-            
-            content = response.choices[0].message.content or "{}"
-            
-            # Clean markdown
-            content = content.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
+        # Retry loop with backoff for rate limits
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_input}
+                    ],
+                    temperature=0.1,
+                    max_tokens=300
+                )
+
+                content = response.choices[0].message.content or "{}"
+
+                # Clean markdown
                 content = content.strip()
-            
-            return json.loads(content)
-            
-        except json.JSONDecodeError:
-            logger.warning("Parameter extraction JSON error")
-            return {}
-        except Exception as e:
-            logger.error(f"Parameter extraction error: {e}")
-            return {}
+                if content.startswith("```"):
+                    content = content.split("```")[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                    content = content.strip()
+
+                return json.loads(content)
+
+            except json.JSONDecodeError:
+                logger.warning("Parameter extraction JSON error")
+                return {}
+            except RateLimitError:
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self._calculate_backoff(attempt)
+                    logger.warning(f"Rate limit in extract_parameters. Retry {attempt + 1}/{self.MAX_RETRIES} after {delay:.2f}s")
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Rate limit exceeded in extract_parameters")
+                return {}
+            except APITimeoutError:
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self._calculate_backoff(attempt)
+                    logger.warning(f"Timeout in extract_parameters. Retry {attempt + 1}/{self.MAX_RETRIES} after {delay:.2f}s")
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Timeout exceeded in extract_parameters")
+                return {}
+            except Exception as e:
+                logger.error(f"Parameter extraction error: {e}")
+                return {}
+
+        return {}
     
     def build_system_prompt(
         self,
@@ -718,21 +769,52 @@ Vrati SAMO JSON, bez drugog teksta."""
         MOGUĆNOSTI I ODABIR ALATA
         ═══════════════════════════════════════════════
         Imaš pristup API funkcijama. Sustav koristi semantičku
-        pretragu i SORTIRA alate po relevantnosti.
+        pretragu i vraća kandidate sortirane po sličnosti.
 
-        KRITIČNO - ODABIR ALATA:
-        - Alati su sortirani po RELEVANTNOSTI za korisnikov upit
-        - PRVI alat u listi je NAJBOLJI match - koristi ga!
-        - Ako nisi siguran, UVIJEK odaberi PRVI alat
-        - NE koristi POST/PUT/DELETE ako korisnik pita za podatke (koristi GET)
-        - "moje vozilo" → koristi get_MasterData, NE get_Vehicles
-        - "koja je kilometraža" → koristi alat koji vraća podatke, NE calendar
+        KRITIČNO - ODABIR PRAVOG ALATA:
+        Alati su sortirani po sličnosti, ALI ti MORAŠ ANALIZIRATI
+        i odabrati TOČAN alat prema korisnikovom upitu!
+
+        PRAVILA ZA RAZLIKOVANJE SLIČNIH ALATA:
+
+        1. METODA je KRITIČNA:
+           - Korisnik PITA/TRAŽI/PRIKAŽI → GET (dohvat podataka)
+           - Korisnik DODAJ/KREIRAJ/UNESI → POST (kreiranje)
+           - Korisnik AŽURIRAJ/PROMIJENI → PATCH ili PUT (izmjena)
+           - Korisnik OBRIŠI/UKLONI → DELETE (brisanje)
+
+        2. SUFIKS određuje VRSTU operacije:
+           - _id → operacija nad JEDNIM entitetom (s ID-om)
+           - _documents → rad s DOKUMENTIMA entiteta
+           - _metadata → dohvat METAPODATAKA/strukture
+           - _multipatch → GRUPNO ažuriranje više stavki
+           - _Agg → agregacije (suma, prosjek, statistika)
+           - _GroupBy → grupiranje po polju
+           - _tree → hijerarhijska struktura
+           - BEZ sufiksa → lista svih entiteta ili kreiranje novog
+
+        3. ENTITET u upitu:
+           - "vozilo/vehicle" → alati s "Vehicle" u imenu
+           - "osoba/person" → alati s "Person" u imenu
+           - "kompanija/firma" → alati s "Company" u imenu
+           - "rezervacija/booking" → alati s "Booking" ili "Calendar"
+           - "dokument" → alati s "_documents" u imenu
+
+        4. KLJUČNE RIJEČI:
+           - "najnovije/latest" → alat s "Latest" u imenu
+           - "jedno/specifično/s ID-om" → alat s "_id" sufiksom
+           - "sve/lista/popis" → alat BEZ "_id" sufiksa
+           - "više stavki/grupno/bulk" → alat s "_multipatch"
 
         TVOJ POSAO:
-        1. RAZUMJETI što korisnik želi
-        2. ODABRATI PRVI alat ako odgovara upitu
+        1. RAZUMJETI što korisnik želi (akcija + entitet)
+        2. ANALIZIRATI kandidate i odabrati TOČAN alat
         3. IZVUĆI parametre iz poruke
         4. POZVATI alat s ispravnim parametrima
+
+        NE koristi POST/PUT/DELETE ako korisnik pita za podatke (koristi GET)
+        "moje vozilo" → koristi get_MasterData, NE get_Vehicles
+        "koja je kilometraža" → koristi alat koji vraća podatke, NE calendar
 
         ═══════════════════════════════════════════════
         PRAVILA ZA DATUME

@@ -287,34 +287,17 @@ class UserService:
             )
             
             if not response.success:
-                print(f"❌ MasterData API failed: {response}", flush=True)
+                logger.warning(f"MasterData API failed for person_id={person_id[:8]}...")
                 return {}
-            
-            print(f"✅ MasterData API success - extracting data...", flush=True)
-            
-            # DEBUG: Log raw MasterData response
-            print(f"🔍 RAW MasterData response keys: {list(response.data.keys()) if isinstance(response.data, dict) else type(response.data)}", flush=True)
-            if isinstance(response.data, dict):
-                raw_plate = response.data.get("LicencePlate", "N/A")
-                raw_id = response.data.get("Id", "N/A")
-                print(f"🔍 RAW MasterData - LicencePlate: {raw_plate}, ID: {str(raw_id)[:8]}...", flush=True)
-            
+
             # Use SchemaExtractor - returns ALL fields, no filtering
             extractor = get_schema_extractor()
             vehicle_data = extractor.extract_all(response.data, "get_MasterData")
             
-            # DEBUG: Log after extraction
-            print(f"🔍 AFTER extraction - LicencePlate: {vehicle_data.get('LicencePlate', 'N/A')}, ID: {str(vehicle_data.get('Id', 'N/A'))[:8]}...", flush=True)
-            
-            print(f"✅ Extracted vehicle data: {list(vehicle_data.keys())[:10]}...", flush=True)
-            
             # Get vehicle ID from MasterData response for matching
             master_vehicle_id = vehicle_data.get("Id")
             if not master_vehicle_id:
-                print("⚠️ No vehicle ID in MasterData, skipping PeriodicActivities update", flush=True)
                 return vehicle_data
-            
-            print(f"🔧 Fetching FRESH PeriodicActivities for vehicle {master_vehicle_id[:8]}...", flush=True)
             
             # WORKAROUND: Use /vehiclemgt/Vehicles endpoint which WORKS with 'vehicles' scope!
             # This has fresh PeriodicActivities data (unlike automation/MasterData)
@@ -329,54 +312,31 @@ class UserService:
                     }
                 )
                 
-                print(f"📌 /vehiclemgt/Vehicles response: success={vehicles_response.success}", flush=True)
-                
                 if vehicles_response.success and vehicles_response.data:
                     # Extract vehicles from response
                     vehicles = vehicles_response.data.get("Data", []) if isinstance(vehicles_response.data, dict) else vehicles_response.data
-                    
-                    print(f"📌 Found {len(vehicles)} total vehicles for driver", flush=True)
-                    
+
                     if vehicles:
                         # CRITICAL: Match by vehicle ID, don't just take first!
                         matching_vehicle = None
                         for vehicle in vehicles:
                             if vehicle.get("Id") == master_vehicle_id:
                                 matching_vehicle = vehicle
-                                print(f"✅ Found MATCHING vehicle by ID: {master_vehicle_id[:8]}...", flush=True)
                                 break
-                        
+
                         if not matching_vehicle and len(vehicles) > 0:
-                            # Fallback: If no match, use first vehicle but warn
+                            # Fallback: If no match, use first vehicle
                             matching_vehicle = vehicles[0]
-                            print(f"⚠️ No ID match! Using first vehicle {matching_vehicle.get('Id', 'unknown')[:8]}...", flush=True)
                         
                         if matching_vehicle:
                             # Extract FRESH PeriodicActivities
                             if "PeriodicActivities" in matching_vehicle and matching_vehicle["PeriodicActivities"]:
                                 fresh_activities = matching_vehicle["PeriodicActivities"]
-                                print(f"✅ FRESH PeriodicActivities found with {len(fresh_activities)} activities", flush=True)
-                                
                                 # OVERRIDE stale data with FRESH data
                                 vehicle_data["PeriodicActivities"] = fresh_activities
-                                
-                                # Log dates for verification
-                                for name, data in fresh_activities.items():
-                                    if isinstance(data, dict) and "ExpiryDate" in data:
-                                        print(f"  • {name}: {data['ExpiryDate']}", flush=True)
-                            else:
-                                print("⚠️ No PeriodicActivities in matched vehicle", flush=True)
-                        else:
-                            print("⚠️ No vehicles available to match", flush=True)
-                    else:
-                        print("⚠️ Empty vehicles list returned", flush=True)
-                else:
-                    print(f"⚠️ /vehiclemgt/Vehicles call failed or empty", flush=True)
-                        
+
             except Exception as e:
-                print(f"❌ Could not fetch from /vehiclemgt/Vehicles: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
+                logger.debug(f"Could not fetch from /vehiclemgt/Vehicles: {e}")
             
             return vehicle_data
             

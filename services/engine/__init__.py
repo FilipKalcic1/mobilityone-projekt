@@ -278,9 +278,6 @@ class MessageEngine:
         try:
             # 1. Identify user
             user_context = await self._identify_user(sender)
-            logger.error(f"🔍 TRACE: user_context keys={list(user_context.keys()) if user_context else None}")
-            logger.warning(f"[TRACE] handle_request: user_context keys={list(user_context.keys()) if user_context else None}")
-            print(f"[DEBUG] handle_request: user_context={user_context}", flush=True)
 
             if not user_context:
                 return (
@@ -343,9 +340,7 @@ class MessageEngine:
         user = await user_service.get_active_identity(phone)
 
         if user:
-            print(f"[DEBUG] User found: api_identity={user.api_identity}, display_name={user.display_name}", flush=True)
             ctx = await user_service.build_context(user.api_identity, phone)
-            print(f"[DEBUG] Context built: keys={list(ctx.keys())}, person_id={ctx.get('person_id')}", flush=True)
             ctx["display_name"] = user.display_name
             ctx["is_new"] = False
             return ctx
@@ -443,12 +438,17 @@ class MessageEngine:
                 return None
 
             # Record the hallucination
+            # Collect tool context for debugging
+            retrieved_chunks = []
+            if conv_manager.context.current_tool:
+                retrieved_chunks.append(conv_manager.context.current_tool)
+
             result = await self.error_learning.record_hallucination(
                 user_query=last_user_query or "[Unknown query]",
                 bot_response=last_bot_response,
                 user_feedback=text,
-                retrieved_chunks=[],  # TODO: Track RAG chunks
-                model="gpt-4o",  # TODO: Get actual model used
+                retrieved_chunks=retrieved_chunks,
+                model=self.ai.model,
                 conversation_id=sender,
                 tenant_id=user_context.get("tenant_id")
             )
@@ -632,9 +632,20 @@ class MessageEngine:
                     sender, text, user_context, conv_manager, self._handle_new_request
                 )
             if state == ConversationState.CONFIRMING:
-                return await self._flow_handler.handle_confirmation(
+                result = await self._flow_handler.handle_confirmation(
                     sender, text, user_context, conv_manager
                 )
+                # P1 FIX: Handle mid-flow questions
+                if isinstance(result, dict) and result.get("mid_flow_question"):
+                    # User asked a question during confirmation - answer it
+                    # but preserve the confirmation state
+                    question = result.get("question", text)
+                    logger.info(f"P1: Handling mid-flow question: '{question[:50]}'")
+                    # Process the question through normal flow (but don't reset state)
+                    answer = await self._handle_new_request(sender, question, user_context, conv_manager)
+                    # Remind user about pending confirmation
+                    return f"{answer}\n\n---\n_Čeka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
+                return result
             if state == ConversationState.GATHERING_PARAMS:
                 return await self._flow_handler.handle_gathering(
                     sender, text, user_context, conv_manager, self._handle_new_request
@@ -686,59 +697,18 @@ class MessageEngine:
         # === v16.1: DETERMINISTIC ROUTING - Try rules FIRST ===
         # This guarantees correct responses for known patterns WITHOUT LLM
         route = self.query_router.route(text, user_context)
-        
-        # FILE DEBUG - bypass logging completely
-        with open('/tmp/routing_debug.txt', 'a') as f:
-            f.write(f"=== ROUTING CALLED ===\n")
-            f.write(f"Query: {text}\n")
-            f.write(f"Matched: {route.matched}\n")
-            f.write(f"Flow: {route.flow_type if route.matched else None}\n")
-            f.write(f"Template: {route.response_template[:100] if route.response_template else None}\n")
-            f.write(f"Context keys: {list(user_context.keys())}\n")
-            f.write(f"person_id in context: {user_context.get('person_id', 'MISSING')}\n")
-            f.write("\n")
-        
-        logger.error(f"🔍 TRACE ROUTING: matched={route.matched}, flow={route.flow_type if route.matched else None}")
-        logger.warning(f"[TRACE] ROUTING: matched={route.matched}, flow={route.flow_type if route.matched else None}")
-        print(f"[DEBUG] ROUTING: route.matched={route.matched}, route.flow_type={route.flow_type if route.matched else None}", flush=True)
 
         if route.matched:
             logger.info(f"ROUTER: Deterministic match → {route.tool_name or route.flow_type}")
-            
-            # FILE DEBUG
-            with open('/tmp/routing_debug.txt', 'a') as f:
-                f.write(f"=== MATCHED ===\n")
-                f.write(f"flow_type: {route.flow_type}\n")
-                f.write(f"template: {route.response_template}\n\n")
-            
-            logger.error(f"🔍 TRACE MATCHED: flow={route.flow_type}, template={route.response_template[:30] if route.response_template else None}")
-            logger.warning(f"[TRACE] ROUTING MATCHED: flow={route.flow_type}, template={route.response_template[:30] if route.response_template else None}")
-            print(f"[DEBUG] ROUTING MATCHED: flow_type={route.flow_type}, template={route.response_template[:50] if route.response_template else None}", flush=True)
 
             # Direct response (greetings, thanks, help, context queries)
             if route.flow_type == "direct_response":
-                # FILE DEBUG
-                with open('/tmp/routing_debug.txt', 'a') as f:
-                    f.write(f"=== DIRECT_RESPONSE BRANCH ===\n")
-                    f.write(f"Has template: {bool(route.response_template)}\n")
-                
                 # Format template with user context
                 if route.response_template:
-                    with open('/tmp/routing_debug.txt', 'a') as f:
-                        f.write(f"Template contains person_id: {'person_id' in route.response_template}\n")
-                    
-                    print(f"[DEBUG] ROUTER: template={route.response_template[:50]}, context_keys={list(user_context.keys())}", flush=True)
-                    print(f"[DEBUG] ROUTER: user_context full={user_context}", flush=True)
                     # DIRECT EXTRACTION - bypass format() completely for context queries
                     if 'person_id' in route.response_template:
                         val = user_context.get('person_id', 'N/A')
-                        with open('/tmp/routing_debug.txt', 'a') as f:
-                            f.write(f"person_id extracted: {val}\n")
-                        print(f"[DEBUG] ROUTER: person_id extraction -> '{val}'", flush=True)
                         result = f"👤 **Person ID:** {val}"
-                        print(f"[DEBUG] ROUTER: returning result='{result}'", flush=True)
-                        with open('/tmp/routing_debug.txt', 'a') as f:
-                            f.write(f"RETURNING: {result}\n\n")
                         return result
                     elif 'phone' in route.response_template:
                         val = user_context.get('phone', 'N/A')
@@ -1356,6 +1326,21 @@ class MessageEngine:
             tool_outputs=conv_manager.context.tool_outputs if hasattr(conv_manager.context, 'tool_outputs') else {},
             conversation_state={}
         )
+
+        # NEW: Check if mutation tool requires confirmation
+        is_mutation = tool.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        state = conv_manager.get_state()
+
+        if is_mutation and state != ConversationState.CONFIRMING:
+            # Mutation tool needs confirmation - show confirmation dialog
+            logger.info(f"DETERMINISTIC: Mutation {route.tool_name} requires confirmation")
+            result = await self._flow_handler.request_confirmation(
+                tool_name=route.tool_name,
+                parameters=params,
+                user_context=user_context,
+                conv_manager=conv_manager
+            )
+            return result.get("prompt", "Potvrdite operaciju s 'Da' ili odustanite s 'Ne'.")
 
         # Execute tool
         logger.info(f"DETERMINISTIC: Executing {route.tool_name} with {list(params.keys())}")

@@ -46,6 +46,8 @@ class ResolutionResult:
     # NEW: User-facing feedback about what was resolved
     # Used for confirmations like "Razumijem: Golf (ZG-123-AB)"
     feedback: Optional[Dict[str, Any]] = None
+    # NEW v2.1: Flag to indicate user selection is needed (e.g., no default vehicle)
+    needs_user_selection: bool = False
 
 
 @dataclass
@@ -685,16 +687,26 @@ class DependencyResolver:
                     }
                 )
             else:
-                # No default vehicle - try to fetch user's vehicles
-                logger.info("User has no default vehicle, fetching list...")
-                reference = EntityReference(
-                    entity_type="vehicle",
-                    reference_type="ordinal",
-                    value=reference.value,
-                    ordinal_index=0,  # First vehicle
-                    is_possessive=False
+                # CRITICAL FIX v2.1: No default vehicle - DO NOT silently pick first!
+                # Instead, return a "needs_selection" result to ask the user
+                logger.warning(
+                    f"⚠️ User said '{reference.value}' but has NO default vehicle! "
+                    f"Requesting clarification instead of guessing."
                 )
-                # Fall through to ordinal resolution
+                return ResolutionResult(
+                    success=False,
+                    needs_user_selection=True,
+                    error_message=(
+                        f"Rekli ste '{reference.value}', ali nemate postavljeno glavno vozilo. "
+                        f"Molim odaberite vozilo po imenu ili registraciji."
+                    ),
+                    feedback={
+                        "entity_type": "vehicle",
+                        "reference": reference.value,
+                        "reason": "no_default_vehicle",
+                        "suggestion": "Navedite registraciju (npr. 'ZG-1234-AB') ili naziv vozila."
+                    }
+                )
 
         # STRATEGY 2: Ordinal - fetch list and pick by index
         if reference.reference_type == "ordinal":
@@ -954,11 +966,48 @@ class DependencyResolver:
                     error_message=result.error_message
                 )
 
-            # Search in results
+            # Search in results - P1 FIX: Use new method that returns ALL matches
             vehicles = self._extract_vehicle_list(result.data)
-            matched_vehicle = self._fuzzy_match_vehicle(vehicles, search_value)
+            matched_vehicles = self._fuzzy_match_vehicles(vehicles, search_value)
 
-            if matched_vehicle:
+            # P1 FIX: If multiple matches, ask user to be more specific
+            if len(matched_vehicles) > 1:
+                logger.warning(
+                    f"⚠️ Ambiguous match: '{search_value}' matches {len(matched_vehicles)} vehicles"
+                )
+                # Build list of options
+                options = []
+                for i, v in enumerate(matched_vehicles[:5], 1):  # Max 5 options
+                    name = v.get("FullVehicleName") or v.get("Name") or "Vozilo"
+                    plate = v.get("LicencePlate") or ""
+                    options.append(f"{i}. {name} ({plate})" if plate else f"{i}. {name}")
+
+                return ResolutionResult(
+                    success=False,
+                    needs_user_selection=True,
+                    error_message=(
+                        f"Pronašao sam {len(matched_vehicles)} vozila za '{search_value}':\n\n"
+                        + "\n".join(options) +
+                        "\n\nKoje vozilo želite? Navedite broj ili registraciju."
+                    ),
+                    feedback={
+                        "entity_type": "vehicle",
+                        "reference": search_value,
+                        "reason": "ambiguous_match",
+                        "matched_count": len(matched_vehicles),
+                        "matched_vehicles": [
+                            {
+                                "Id": v.get("Id"),
+                                "Name": v.get("FullVehicleName") or v.get("Name"),
+                                "Plate": v.get("LicencePlate")
+                            }
+                            for v in matched_vehicles[:5]
+                        ]
+                    }
+                )
+
+            if matched_vehicles:
+                matched_vehicle = matched_vehicles[0]
                 vehicle_id = self._extract_id_from_result(matched_vehicle, "VehicleId")
 
                 if vehicle_id:
@@ -1028,22 +1077,25 @@ class DependencyResolver:
 
         return []
 
-    def _fuzzy_match_vehicle(
+    def _fuzzy_match_vehicles(
         self,
         vehicles: List[Dict[str, Any]],
         search_term: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> List[Dict[str, Any]]:
         """
-        Fuzzy match vehicle by name/description.
+        P1 FIX: Fuzzy match ALL vehicles by name/description.
+
+        Returns ALL matches so caller can ask user if ambiguous.
 
         Searches in: Name, FullVehicleName, DisplayName, Description, LicencePlate
         """
         if not vehicles or not search_term:
-            return None
+            return []
 
         search_lower = search_term.lower()
+        matches = []
 
-        # First pass: exact match in name
+        # First pass: exact match in name - return all that match
         for vehicle in vehicles:
             name = (
                 vehicle.get("FullVehicleName") or
@@ -1053,7 +1105,11 @@ class DependencyResolver:
             ).lower()
 
             if search_lower in name:
-                return vehicle
+                matches.append(vehicle)
+
+        # If we found exact matches, return those
+        if matches:
+            return matches
 
         # Second pass: partial match in any field
         for vehicle in vehicles:
@@ -1067,12 +1123,14 @@ class DependencyResolver:
             ]).lower()
 
             if search_lower in searchable:
-                return vehicle
+                matches.append(vehicle)
 
-        # Third pass: word-level matching
+        if matches:
+            return matches
+
+        # Third pass: word-level matching - return all with score > 0
         search_words = set(search_lower.split())
-        best_match = None
-        best_score = 0
+        scored_matches = []
 
         for vehicle in vehicles:
             searchable = " ".join([
@@ -1083,8 +1141,23 @@ class DependencyResolver:
             vehicle_words = set(searchable.split())
             overlap = len(search_words & vehicle_words)
 
-            if overlap > best_score:
-                best_score = overlap
-                best_match = vehicle
+            if overlap > 0:
+                scored_matches.append((overlap, vehicle))
 
-        return best_match if best_score > 0 else None
+        # Sort by score descending and return vehicles
+        scored_matches.sort(key=lambda x: x[0], reverse=True)
+        return [v for _, v in scored_matches]
+
+    def _fuzzy_match_vehicle(
+        self,
+        vehicles: List[Dict[str, Any]],
+        search_term: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fuzzy match vehicle by name/description.
+
+        Legacy method - returns first match only.
+        Use _fuzzy_match_vehicles for ambiguity detection.
+        """
+        matches = self._fuzzy_match_vehicles(vehicles, search_term)
+        return matches[0] if matches else None

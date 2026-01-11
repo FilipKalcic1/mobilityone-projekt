@@ -1,15 +1,19 @@
 """
 LLM Tool Selector - True intelligent tool selection using LLM.
-Version: 1.0
+Version: 2.0
 
-This module provides 100% accurate tool selection by using LLM
-to make the final decision, with few-shot examples from training data.
+CHANGELOG v2.0:
+- REMOVED: training_queries.json (unreliable, caused confusion)
+- ADDED: Uses tool_documentation.json for few-shot examples
+- ADDED: Query type classification for better suffix handling
+- IMPROVED: More accurate tool selection
 
 Architecture:
-1. Load training examples for relevant categories
-2. Build few-shot prompt with similar examples
-3. Ask LLM to select the best tool
-4. Return tool with real confidence
+1. Load examples from tool_documentation.json (ACCURATE source)
+2. Use Query Type Classifier for suffix filtering
+3. Build few-shot prompt with documentation examples
+4. Ask LLM to select the best tool
+5. Return tool with real confidence
 """
 
 import json
@@ -39,8 +43,8 @@ class LLMToolSelector:
     """
     Selects the best tool using LLM with few-shot examples.
 
-    This is the INTELLIGENT part - LLM makes the decision,
-    not keywords or embeddings.
+    V2.0: Uses tool_documentation.json instead of training_queries.json
+    for more reliable examples.
     """
 
     def __init__(self):
@@ -54,118 +58,129 @@ class LLMToolSelector:
         )
         self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
 
-        # Load training data
-        self._training_examples: List[Dict] = []
-        self._examples_by_category: Dict[str, List[Dict]] = {}
-        self._examples_by_tool: Dict[str, List[Dict]] = {}
+        # Tool documentation (ACCURATE source for examples)
+        self._tool_documentation: Optional[Dict] = None
+        self._examples_by_tool: Dict[str, List[str]] = {}  # tool_id -> example_queries_hr
         self._initialized = False
 
     async def initialize(self):
-        """Load training data."""
+        """Load tool documentation."""
         if self._initialized:
             return
 
         try:
-            training_path = Path(__file__).parent.parent / "data" / "training_queries.json"
+            # Load from tool_documentation.json (NOT training_queries.json!)
+            doc_path = Path(__file__).parent.parent / "config" / "tool_documentation.json"
 
-            if training_path.exists():
-                with open(training_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+            if doc_path.exists():
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    self._tool_documentation = json.load(f)
 
-                self._training_examples = data.get("examples", [])
-
-                # Index by category
-                for ex in self._training_examples:
-                    cat = ex.get("category", "unknown")
-                    if cat not in self._examples_by_category:
-                        self._examples_by_category[cat] = []
-                    self._examples_by_category[cat].append(ex)
-
-                    # Index by tool
-                    tool = ex.get("primary_tool")
-                    if tool:
-                        if tool not in self._examples_by_tool:
-                            self._examples_by_tool[tool] = []
-                        self._examples_by_tool[tool].append(ex)
+                # Index example queries by tool
+                for tool_id, doc in self._tool_documentation.items():
+                    examples = doc.get("example_queries_hr", [])
+                    if examples:
+                        self._examples_by_tool[tool_id] = examples
 
                 logger.info(
-                    f"Loaded {len(self._training_examples)} training examples "
-                    f"across {len(self._examples_by_category)} categories"
+                    f"LLMToolSelector v2.0: Loaded {len(self._tool_documentation)} tool docs, "
+                    f"{len(self._examples_by_tool)} tools with examples"
                 )
             else:
-                logger.warning(f"Training data not found: {training_path}")
+                logger.warning(f"Tool documentation not found: {doc_path}")
+                self._tool_documentation = {}
 
             self._initialized = True
 
         except Exception as e:
-            logger.error(f"Failed to load training data: {e}")
-            self._initialized = True  # Mark as initialized to avoid retry loop
+            logger.error(f"Failed to load tool documentation: {e}")
+            self._tool_documentation = {}
+            self._initialized = True
 
     def _get_few_shot_examples(
         self,
         query: str,
         categories: List[str],
         candidate_tools: List[str],
-        max_examples: int = 10
+        max_examples: int = 12
     ) -> List[Dict]:
         """
-        Get relevant few-shot examples for the prompt.
+        Get relevant few-shot examples from tool_documentation.json.
 
-        INTELLIGENT SELECTION:
-        1. Find examples with similar keywords to the query
-        2. Prioritize examples for common tools (AddCase, AddMileage, etc.)
-        3. Include diverse examples across different intents
+        V2.0: Uses example_queries_hr from documentation instead of training data.
+        This is more reliable because documentation is curated.
         """
         examples = []
-        seen_intents = set()
+        seen_tools = set()
         query_lower = query.lower()
 
-        # Priority tools - ensure we have examples for these
+        # Priority tools with keywords for quick matching
         priority_tools_map = {
-            "post_AddCase": ["stet", "kvar", "udari", "ogreb", "prijav", "slomio"],
-            "post_AddMileage": ["kilometr", "km", "unesi", "upisi"],
-            "get_MasterData": ["registracij", "tablica", "podaci", "vozilo"],
-            "get_AvailableVehicles": ["slobodn", "dostupn"],
-            "post_VehicleCalendar": ["rezerv", "booking"],
-            "get_VehicleCalendar": ["moje rezerv", "booking"],
-            "get_Expenses": ["troskov", "expense"],
-            "get_Trips": ["trip", "putovanj"],
+            "post_AddCase": ["štet", "kvar", "udari", "ogreb", "prijav", "slomio", "oštećen"],
+            "post_AddMileage": ["kilometr", "km", "unesi", "upiši", "prijeđen"],
+            "get_MasterData": ["registracij", "tablic", "podaci o vozil", "info o vozil"],
+            "get_AvailableVehicles": ["slobodn", "dostupn", "koje je slobodno"],
+            "post_VehicleCalendar": ["rezervir", "booking", "zauzmi"],
+            "get_VehicleCalendar": ["moje rezerv", "moji booking", "kalendar vozil"],
+            "get_Expenses": ["troškov", "troška", "expense", "račun"],
+            "get_Trips": ["trip", "putovanj", "putni nalog"],
         }
 
-        # Step 1: Add examples for priority tools if query matches
-        for tool, keywords in priority_tools_map.items():
+        # Step 1: Add examples for priority tools if query matches keywords
+        for tool_id, keywords in priority_tools_map.items():
             if any(kw in query_lower for kw in keywords):
-                tool_examples = self._examples_by_tool.get(tool, [])
-                for ex in tool_examples[:3]:  # Up to 3 examples per priority tool
-                    if len(examples) >= max_examples:
-                        break
-                    intent = ex.get("intent")
-                    if intent not in seen_intents:
-                        examples.append(ex)
-                        seen_intents.add(intent)
+                if tool_id in self._examples_by_tool and tool_id not in seen_tools:
+                    example_queries = self._examples_by_tool[tool_id]
+                    doc = self._tool_documentation.get(tool_id, {})
 
-        # Step 2: Add examples from matched categories
-        for cat in categories:
-            cat_examples = self._examples_by_category.get(cat, [])
-            for ex in cat_examples:
+                    examples.append({
+                        "query": example_queries[0] if example_queries else "",
+                        "tool": tool_id,
+                        "reason": doc.get("purpose", "")[:100]
+                    })
+                    seen_tools.add(tool_id)
+
+        # Step 2: Add examples from candidate tools
+        for tool_id in candidate_tools:
+            if len(examples) >= max_examples:
+                break
+
+            if tool_id in seen_tools:
+                continue
+
+            if tool_id in self._examples_by_tool:
+                example_queries = self._examples_by_tool[tool_id]
+                doc = self._tool_documentation.get(tool_id, {})
+
+                examples.append({
+                    "query": example_queries[0] if example_queries else "",
+                    "tool": tool_id,
+                    "reason": doc.get("purpose", "")[:100]
+                })
+                seen_tools.add(tool_id)
+
+        # Step 3: Add variety from other tools with examples
+        if len(examples) < max_examples:
+            for tool_id, example_queries in self._examples_by_tool.items():
                 if len(examples) >= max_examples:
                     break
-                intent = ex.get("intent")
-                if intent not in seen_intents:
-                    examples.append(ex)
-                    seen_intents.add(intent)
 
-        # Step 3: Add examples for candidate tools
-        if len(examples) < max_examples:
-            for tool in candidate_tools[:15]:  # Check first 15 tools
-                tool_examples = self._examples_by_tool.get(tool, [])
-                for ex in tool_examples:
-                    if len(examples) >= max_examples:
-                        break
-                    intent = ex.get("intent")
-                    if intent not in seen_intents:
-                        examples.append(ex)
-                        seen_intents.add(intent)
+                if tool_id in seen_tools:
+                    continue
+
+                # Only add if example has keyword overlap with query
+                if example_queries:
+                    example_words = set(example_queries[0].lower().split())
+                    query_words = set(query_lower.split())
+
+                    if len(example_words & query_words) >= 1:
+                        doc = self._tool_documentation.get(tool_id, {})
+                        examples.append({
+                            "query": example_queries[0],
+                            "tool": tool_id,
+                            "reason": doc.get("purpose", "")[:100]
+                        })
+                        seen_tools.add(tool_id)
 
         return examples[:max_examples]
 
@@ -176,27 +191,55 @@ class LLMToolSelector:
         # Load tool documentation for origin guides
         tool_documentation = self._load_tool_documentation()
 
-        for tool_name in tools[:30]:  # Limit to 30 tools for token efficiency
+        # FIXED: Increased from 30 to 50 tools for better coverage
+        for tool_name in tools[:50]:
             tool = registry.get_tool(tool_name)
             if tool:
-                desc = tool.description[:100] if tool.description else "No description"
+                # FIXED: Increased from 100 to 250 chars for more context
+                desc = tool.description[:250] if tool.description else "No description"
 
-                # PILLAR 3: Include origin guide if available
-                origin_hint = ""
-                if tool_documentation and tool_name in tool_documentation:
-                    origin_guide = tool_documentation[tool_name].get("parameter_origin_guide", {})
-                    if origin_guide:
-                        # Summarize context params (don't fill these!)
-                        context_params = [k for k, v in origin_guide.items() if "CONTEXT" in str(v).upper()]
-                        if context_params:
-                            origin_hint = f" [AUTO: {', '.join(context_params[:3])}]"
+                # FIXED: Include BOTH AUTO and USER params for complete origin guide
+                origin_hint = self._build_origin_hint(tool_name, tool_documentation)
 
                 descriptions.append(f"- {tool_name}: {desc}{origin_hint}")
 
-        if len(tools) > 30:
-            descriptions.append(f"... and {len(tools) - 30} more tools")
+        if len(tools) > 50:
+            descriptions.append(f"... and {len(tools) - 50} more tools")
 
         return "\n".join(descriptions)
+
+    def _build_origin_hint(self, tool_name: str, tool_documentation: Optional[Dict]) -> str:
+        """
+        Build complete origin hint with both AUTO and USER params.
+
+        FIXED: Now includes USER params so LLM knows what to ask for.
+        """
+        if not tool_documentation or tool_name not in tool_documentation:
+            return ""
+
+        origin_guide = tool_documentation[tool_name].get("parameter_origin_guide", {})
+        if not origin_guide:
+            return ""
+
+        # Collect AUTO (CONTEXT) params - system fills these
+        auto_params = [
+            k for k, v in origin_guide.items()
+            if "CONTEXT" in str(v).upper() or "SUSTAV" in str(v).upper()
+        ]
+
+        # Collect USER params - user must provide these
+        user_params = [
+            k for k, v in origin_guide.items()
+            if "USER" in str(v).upper() or "PITAJ" in str(v).upper() or "KORISNIK" in str(v).upper()
+        ]
+
+        hints = []
+        if auto_params:
+            hints.append(f"AUTO: {', '.join(auto_params[:5])}")  # Show up to 5
+        if user_params:
+            hints.append(f"USER: {', '.join(user_params[:5])}")  # Show up to 5
+
+        return f" [{'; '.join(hints)}]" if hints else ""
 
     def _load_tool_documentation(self) -> Optional[Dict]:
         """Load tool documentation from config file."""

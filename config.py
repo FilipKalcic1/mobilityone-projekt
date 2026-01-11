@@ -109,9 +109,13 @@ class Settings(BaseSettings):
     CACHE_TTL_CONVERSATION: int = Field(default=1800)
     
     # =========================================================================
-    # MONITORING
+    # MONITORING & LOGGING
     # =========================================================================
     SENTRY_DSN: Optional[str] = Field(default=None)
+
+    # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    # In production, set to WARNING or ERROR to reduce noise
+    LOG_LEVEL: str = Field(default="INFO", description="Logging level (DEBUG/INFO/WARNING/ERROR)")
 
     # =========================================================================
     # CONFIGURATION (Pydantic V2 Style)

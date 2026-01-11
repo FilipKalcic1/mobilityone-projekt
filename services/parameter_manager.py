@@ -590,28 +590,89 @@ class ParameterManager:
 
         return value
 
-    def _parse_datetime(self, value: Any) -> str:
-        """Parse datetime to ISO 8601 format."""
+    def _parse_datetime(self, value: Any, timezone_offset: str = "+01:00") -> str:
+        """
+        Parse datetime to ISO 8601 format WITH TIMEZONE.
+
+        TIMEZONE FIX v2.1:
+        - Handles Croatian natural language dates (sutra, danas, prekosutra)
+        - Adds timezone offset to prevent UTC/CET confusion
+        - Default timezone is CET (+01:00) for Croatian users
+
+        Args:
+            value: DateTime value (string, datetime object, or natural language)
+            timezone_offset: Timezone offset string (default: "+01:00" for CET)
+
+        Returns:
+            ISO 8601 datetime string with timezone
+        """
+        import re
+        from datetime import timedelta
+
         if isinstance(value, datetime):
+            # Add timezone if missing
+            if value.tzinfo is None:
+                return value.isoformat() + timezone_offset
             return value.isoformat()
 
         if isinstance(value, str):
-            # Already ISO format
-            if "T" in value and len(value) >= 19:
-                return value
+            value_lower = value.lower().strip()
 
-            # Try common formats
+            # STEP 1: Handle Croatian natural language dates
+            today = datetime.now()
+            time_part = None
+
+            # Extract time if present (e.g., "sutra u 9:00" or "sutra 9h")
+            time_match = re.search(r'(\d{1,2})[:\.]?(\d{0,2})\s*(h|sati)?', value_lower)
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = int(time_match.group(2)) if time_match.group(2) else 0
+                time_part = (hour, minute)
+
+            # Parse Croatian date words
+            if "sutra" in value_lower:
+                base_date = today + timedelta(days=1)
+            elif "prekosutra" in value_lower:
+                base_date = today + timedelta(days=2)
+            elif "danas" in value_lower:
+                base_date = today
+            elif "jučer" in value_lower or "jucer" in value_lower:
+                base_date = today - timedelta(days=1)
+            else:
+                base_date = None
+
+            # If we parsed a Croatian date word
+            if base_date is not None:
+                if time_part:
+                    hour, minute = time_part
+                    dt = base_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                else:
+                    # Default to 9:00 AM if no time specified
+                    dt = base_date.replace(hour=9, minute=0, second=0, microsecond=0)
+
+                logger.debug(f"Parsed Croatian date: '{value}' -> {dt.isoformat()}{timezone_offset}")
+                return dt.isoformat() + timezone_offset
+
+            # STEP 2: Already ISO format - ensure timezone
+            if "T" in value and len(value) >= 19:
+                # Check if already has timezone
+                if "+" in value[-6:] or "Z" in value:
+                    return value
+                return value + timezone_offset
+
+            # STEP 3: Try common formats
             formats = [
                 "%Y-%m-%d %H:%M:%S",
                 "%Y-%m-%d %H:%M",
                 "%d.%m.%Y %H:%M",
+                "%d.%m.%Y",
                 "%Y-%m-%d"
             ]
 
             for fmt in formats:
                 try:
                     dt = datetime.strptime(value, fmt)
-                    return dt.isoformat()
+                    return dt.isoformat() + timezone_offset
                 except ValueError:
                     continue
 

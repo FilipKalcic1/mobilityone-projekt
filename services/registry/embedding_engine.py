@@ -71,11 +71,12 @@ class EmbeddingEngine:
         purpose = self._generate_purpose(method, parameters, output_keys)
 
         # 2. Build embedding text
+        # FIXED: Removed operation_id (English) from embedding text
+        # to ensure pure Croatian embeddings that match user queries
         parts = [
-            operation_id,
-            purpose,
+            purpose,  # Croatian auto-generated purpose
             description if description else "",
-            f"{method} {path}"
+            # Removed: f"{method} {path}" - English, not helpful for Croatian queries
         ]
 
         # 3. Add output fields (human-readable)

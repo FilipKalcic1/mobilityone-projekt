@@ -1,25 +1,64 @@
 """
 Schema Sanitizer - OpenAI JSON Schema Validation & Auto-Fix
-Version: 2.0
+Version: 2.1
 
 FIX #13: Ensures all tool schemas are valid before sending to OpenAI.
+FIX #14: Croatian tool descriptions for better LLM selection.
 
 Key Fixes:
 1. Arrays without items → Auto-add {type: "object"}
 2. Invalid types → Map to valid JSON Schema types
 3. Missing required → Ensure empty array if none
 4. Deep validation → Catch all OpenAI validation errors
+5. Croatian descriptions from tool_documentation.json
 
 Domain-agnostic. NO business logic.
 """
 
+import json
 import logging
-from typing import Dict, Any, TYPE_CHECKING
+from pathlib import Path
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.tool_contracts import UnifiedToolDefinition, ParameterDefinition, DependencySource
 
 logger = logging.getLogger(__name__)
+
+# Cache for tool documentation
+_tool_documentation_cache: Optional[Dict[str, Any]] = None
+
+
+def get_tool_documentation() -> Dict[str, Any]:
+    """Load and cache tool documentation with Croatian descriptions."""
+    global _tool_documentation_cache
+
+    if _tool_documentation_cache is not None:
+        return _tool_documentation_cache
+
+    try:
+        # Try multiple possible paths
+        possible_paths = [
+            Path(__file__).parent.parent / "config" / "tool_documentation.json",
+            Path("config") / "tool_documentation.json",
+            Path("nova-verzija") / "config" / "tool_documentation.json",
+        ]
+
+        for doc_path in possible_paths:
+            if doc_path.exists():
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    _tool_documentation_cache = json.load(f)
+                    logger.info(f"Loaded {len(_tool_documentation_cache)} Croatian tool descriptions")
+                    return _tool_documentation_cache
+
+        logger.warning("tool_documentation.json not found, using English descriptions")
+        _tool_documentation_cache = {}
+
+    except Exception as e:
+        logger.warning(f"Failed to load tool documentation: {e}")
+        _tool_documentation_cache = {}
+
+    return _tool_documentation_cache
 
 
 class SchemaSanitizer:
@@ -67,12 +106,34 @@ class SchemaSanitizer:
             if param_def.required:
                 required.append(param_name)
 
+        # FIX #14: Use Croatian description from tool_documentation.json if available
+        description = tool.description[:1024] if tool.description else tool.operation_id
+
+        tool_docs = get_tool_documentation()
+        if tool.operation_id in tool_docs:
+            doc = tool_docs[tool.operation_id]
+            # Build rich Croatian description for LLM
+            hr_parts = []
+
+            # Purpose is the main description
+            purpose = doc.get("purpose", "")
+            if purpose:
+                hr_parts.append(purpose)
+
+            # When to use hints
+            when_to_use = doc.get("when_to_use", [])
+            if when_to_use and len(when_to_use) > 0:
+                hr_parts.append(f"Koristi kada: {when_to_use[0]}")
+
+            if hr_parts:
+                description = " ".join(hr_parts)[:1024]
+
         # Build OpenAI function schema
         function_schema = {
             "type": "function",
             "function": {
                 "name": tool.operation_id,
-                "description": tool.description[:1024] if tool.description else tool.operation_id,
+                "description": description,
                 "parameters": {
                     "type": "object",
                     "properties": visible_params,
