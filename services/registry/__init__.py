@@ -609,3 +609,111 @@ class ToolRegistry:
         origin_guide = self.get_parameter_origin_guide(operation_id)
         origin = origin_guide.get(param_name, "USER")  # Default to USER if not specified
         return "USER" in origin.upper()
+
+    # ═══════════════════════════════════════════════
+    # CJELINA 2: HIDDEN DEFAULTS INJECTION
+    # ═══════════════════════════════════════════════
+
+    # Hidden defaults that should be auto-injected (user doesn't see these)
+    # Format: { operation_id: { param_name: default_value } }
+    _HIDDEN_DEFAULTS: Dict[str, Dict[str, Any]] = {
+        # VehicleCalendar booking defaults
+        "post_VehicleCalendar": {
+            "EntryType": 0,       # 0 = BOOKING (not absence, holiday, etc.)
+            "AssigneeType": 1,    # 1 = PERSON (not department, vehicle pool, etc.)
+        },
+        # Case/Ticket creation defaults (WhatsApp source)
+        "post_AddCase": {
+            "EntryType": "WhatsApp",  # Source channel
+        },
+        # Add more tool defaults here as needed
+    }
+
+    def get_hidden_defaults(self, operation_id: str) -> Dict[str, Any]:
+        """
+        Get hidden default values for a tool.
+
+        These are values that should be auto-injected without asking the user.
+        Examples: EntryType for bookings, source channel for tickets.
+
+        Args:
+            operation_id: Tool operation ID
+
+        Returns:
+            Dict of param_name -> default_value
+        """
+        return self._HIDDEN_DEFAULTS.get(operation_id, {})
+
+    def inject_defaults(
+        self,
+        operation_id: str,
+        params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Inject hidden defaults into parameters if not already present.
+
+        CJELINA 2 FIX: Moves business logic from ToolExecutor to Registry.
+        The Executor should be "dumb" - just make HTTP calls.
+        All smart logic (defaults, validation) belongs here.
+
+        Args:
+            operation_id: Tool operation ID
+            params: Current parameters dict (will be modified in place)
+
+        Returns:
+            Modified params dict with defaults injected
+        """
+        defaults = self.get_hidden_defaults(operation_id)
+
+        for param_name, default_value in defaults.items():
+            if param_name not in params or params[param_name] is None:
+                params[param_name] = default_value
+                logger.debug(
+                    f"REGISTRY: Injected default {param_name}={default_value} "
+                    f"for {operation_id}"
+                )
+
+        return params
+
+    def get_merged_params(
+        self,
+        operation_id: str,
+        user_params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Get parameters with hidden defaults merged in.
+
+        PHASE 3: Copy semantics - does NOT modify original user_params.
+
+        Logic:
+        1. Start with copy of hidden defaults
+        2. Update with user params (user overrides defaults)
+        3. Return merged dict
+
+        Args:
+            operation_id: Tool operation ID
+            user_params: Parameters from user/LLM
+
+        Returns:
+            New dict with defaults + user params merged
+        """
+        # Start with hidden defaults
+        merged = self.get_hidden_defaults(operation_id).copy()
+
+        # User params override defaults
+        if user_params:
+            # Filter out None values from user params
+            clean_user_params = {
+                k: v for k, v in user_params.items()
+                if v is not None
+            }
+            merged.update(clean_user_params)
+
+        if merged:
+            logger.debug(
+                f"REGISTRY: Merged params for {operation_id}: "
+                f"defaults={list(self.get_hidden_defaults(operation_id).keys())}, "
+                f"user={list((user_params or {}).keys())}"
+            )
+
+        return merged

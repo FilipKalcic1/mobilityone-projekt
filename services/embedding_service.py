@@ -1,11 +1,8 @@
 """
 Embedding Service - Shared embedding generation.
-Version: 1.0
 
 Provides a simple interface for getting embeddings for any text.
-Used by:
-- SearchEngine for query embeddings
-- IntelligentRouter for category embeddings
+Used by SearchEngine for query embeddings.
 """
 
 import logging

@@ -190,10 +190,12 @@ class UnifiedSearch:
 
         # Get MORE results to allow boosting to bring correct tools to top
         # FAISS embeddings may not have correct tool in top 10, but boost can fix it
+        # V3.0: Enable auto_detect_entity for better entity-based filtering
         faiss_results = await faiss_store.search(
             query=query,
             top_k=max(top_k * 4, 80),  # Get at least 80 results for proper boosting
-            action_filter=action_filter
+            action_filter=action_filter,
+            auto_detect_entity=True  # V3.0: Enable entity detection for search space reduction
         )
 
         total_candidates = len(faiss_results)
@@ -258,6 +260,65 @@ class UnifiedSearch:
             total_candidates=total_candidates
         )
 
+    # V3.0: Primary action tools - these are the most common user-facing endpoints
+    # They get a significant boost when their keywords are detected
+    PRIMARY_ACTION_TOOLS = {
+        "get_masterdata": {
+            "keywords": [
+                "kilometr", "koliko km", "koliko imam", "stanje km", "moja km",
+                "registracij", "tablic", "lizing", "leasing",
+                "podaci o vozil", "podaci vozil", "informacij", "moje vozilo",
+                "koji auto", "servis", "do servisa"
+            ],
+            "boost": 2.0  # Increased from 1.8
+        },
+        "post_addmileage": {
+            "keywords": [
+                "unesi km", "upiši km", "dodaj km", "dodaj kilometr",
+                "unesi kilometr", "upiši kilometr", "nova km", "prijeđen",
+                "prijavi km", "prijavi kilometr"
+            ],
+            "boost": 1.8
+        },
+        "post_addcase": {
+            "keywords": [
+                "šteta", "steta", "prijavi kvar", "prijavi štetu",
+                "udario", "ogrebao", "oštetio", "oštećenj",
+                "incident", "nesreća", "ima kvar", "imam kvar",
+                "nova šteta", "novi kvar"
+            ],
+            "boost": 2.0  # Increased from 1.8
+        },
+        "post_vehiclecalendar": {
+            "keywords": [
+                "rezerviraj", "rezervacija", "nova rezervacija",
+                "booking", "zauzmi", "trebam auto", "trebam vozilo",
+                "želim rezerv", "hoću rezerv", "napravi rezerv"
+            ],
+            "boost": 1.8
+        },
+        "get_vehiclecalendar": {
+            "keywords": ["moje rezervacij", "moji booking", "kalendar vozil"],
+            "boost": 1.5
+        },
+        "get_availablevehicles": {
+            "keywords": ["slobodn", "dostupn", "raspoloživ", "available", "ima li slobodn"],
+            "boost": 1.5
+        },
+        "get_trips": {
+            "keywords": ["putovanj", "trip", "vožnj", "putni nalog"],
+            "boost": 1.5
+        },
+        "get_expenses": {
+            "keywords": ["troškov", "troška", "izdatak", "račun", "potrošio"],
+            "boost": 1.5
+        },
+        "get_persondata_personidoremail": {
+            "keywords": ["moji podaci", "moj profil", "moje ime", "tko sam"],
+            "boost": 1.5
+        },
+    }
+
     def _apply_boosts(
         self,
         query: str,
@@ -278,6 +339,30 @@ class UnifiedSearch:
         for result in results:
             boosts = []
             tool_lower = result.tool_id.lower()
+
+            # V3.0: PRIMARY ACTION TOOL BOOST
+            # Apply significant boost if query matches keywords for primary user-facing tools
+            if tool_lower in self.PRIMARY_ACTION_TOOLS:
+                tool_config = self.PRIMARY_ACTION_TOOLS[tool_lower]
+                if any(kw in query_lower for kw in tool_config["keywords"]):
+                    result.score *= tool_config["boost"]
+                    boosts.append("primary_action")
+
+            # V3.0: GENERIC CRUD PENALTY
+            # Penalize generic CRUD endpoints when specific action tools are more appropriate
+            generic_crud_penalty = {
+                "post_cases": {"penalty_if": ["šteta", "steta", "kvar", "udario", "ogrebao"], "factor": 0.3},
+                "post_vehicles": {"penalty_if": ["rezerv", "booking", "trebam"], "factor": 0.4},
+                "post_vehicleshistoricalentries": {"penalty_if": ["rezerv", "booking", "trebam"], "factor": 0.3},
+                "delete_triptypes_deletebycriteria": {"penalty_if": ["booking", "rezerv"], "factor": 0.3},
+                "get_monthlymileages_agg": {"penalty_if": ["koliko", "stanje", "imam"], "factor": 0.4},
+                "get_monthlymileagesassigned": {"penalty_if": ["koliko", "moja"], "factor": 0.4},
+            }
+            if tool_lower in generic_crud_penalty:
+                penalty_config = generic_crud_penalty[tool_lower]
+                if any(kw in query_lower for kw in penalty_config["penalty_if"]):
+                    result.score *= penalty_config["factor"]
+                    boosts.append("generic_crud_penalty")
 
             # Category boost
             if matched_categories:
@@ -341,9 +426,15 @@ class UnifiedSearch:
                     else:
                         result.score *= self.BASE_ENTITY_BOOST
                         boosts.append("base_list")
-                # Penalize Lookup, Helper, and filter-type tools for generic list queries
-                if any(x in tool_lower for x in ['lookup', 'helper', 'input', 'available', 'latest', 'monthly', 'dashboard', 'stats']):
-                    result.score *= 0.5  # 50% penalty
+                # Penalize Lookup, Helper, Aggregate, and filter-type tools for generic list queries
+                # V3.0: Extended penalty list to catch more false positives
+                penalty_patterns = [
+                    'lookup', 'helper', 'input', 'available', 'latest', 'monthly',
+                    'dashboard', 'stats', '_agg', '_groupby', '_projectto',
+                    'historicalentries', 'assigned', 'fileids', 'distinctbrands'
+                ]
+                if any(x in tool_lower for x in penalty_patterns):
+                    result.score *= 0.4  # 60% penalty (increased from 50%)
                     boosts.append("helper_penalty")
 
             elif query_type_result.query_type == QueryType.SINGLE_ENTITY:

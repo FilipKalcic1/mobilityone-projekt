@@ -33,8 +33,8 @@ USAGE:
     )
 
     if result.has_conflict:
-        # Show conflict to user
-        print(result.conflict_diff)
+        # Log conflict for debugging
+        logger.warning(f"Conflict detected: {result.conflict_diff}")
 """
 
 import os

@@ -1,8 +1,13 @@
 """
 Background Worker
-Version: 13.0
+Version: 15.0 - Redis Reconnection
 
 Processes messages from Redis queue.
+
+CHANGES v15.0:
+- Added automatic Redis reconnection on connection loss
+- Added socket_keepalive and health_check_interval
+- Fixed crash when Redis closes connection
 """
 
 import asyncio
@@ -11,6 +16,8 @@ import time
 import json
 import sys
 import hashlib
+import traceback
+import os
 from datetime import datetime
 from typing import Optional, Set, Dict
 from contextlib import suppress
@@ -29,17 +36,57 @@ REDIS_MAX_RETRIES = 30          # 30 x 2s = 60s max čekanja na Redis
 REDIS_RETRY_DELAY = 2
 HEALTH_REPORT_INTERVAL = 60     # Svake minute
 STREAM_BLOCK_MS = 1000          # 1s blocking read
+MEMORY_WARNING_MB = 800         # Warn when memory exceeds this
+
+
+def get_memory_usage_mb() -> float:
+    """Get current process memory usage in MB."""
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        return process.memory_info().rss / 1024 / 1024
+    except ImportError:
+        # psutil not installed, try /proc/self/status on Linux
+        try:
+            with open('/proc/self/status', 'r') as f:
+                for line in f:
+                    if line.startswith('VmRSS:'):
+                        return int(line.split()[1]) / 1024  # Convert KB to MB
+        except:
+            pass
+    except:
+        pass
+    return 0.0
 
 
 def log(level: str, event: str, data: dict = None):
-    """JSON structured logging."""
-    print(json.dumps({
+    """JSON structured logging for container orchestrators."""
+    log_entry = {
         "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
         "level": level,
         "event": event,
         "worker": "worker",
         **(data or {})
-    }), flush=True)
+    }
+
+    # Add memory usage for warnings and errors
+    if level in ("warn", "error"):
+        log_entry["memory_mb"] = round(get_memory_usage_mb(), 1)
+
+    sys.stdout.write(json.dumps(log_entry) + "\n")
+    sys.stdout.flush()
+
+
+def log_exception(event: str, e: Exception, context: dict = None):
+    """Log exception with full stack trace."""
+    error_data = {
+        "error_type": type(e).__name__,
+        "error_message": str(e),
+        "stack_trace": traceback.format_exc(),
+        "memory_mb": round(get_memory_usage_mb(), 1),
+        **(context or {})
+    }
+    log("error", event, error_data)
 
 
 class GracefulShutdown:
@@ -192,28 +239,61 @@ class Worker:
 
         log("info", "worker_stopped")
 
+    async def _connect_redis(self) -> bool:
+        """Create Redis connection. Returns True if successful."""
+        try:
+            if self.redis:
+                await self.redis.aclose()
+        except Exception:
+            pass
+
+        try:
+            self.redis = aioredis.from_url(
+                settings.REDIS_URL,
+                encoding="utf-8",
+                decode_responses=True,
+                max_connections=20,
+                socket_keepalive=True,
+                health_check_interval=30
+            )
+            await self.redis.ping()
+            return True
+        except Exception:
+            return False
+
+    async def _reconnect_redis(self):
+        """Reconnect to Redis with backoff."""
+        log("warn", "redis_reconnecting")
+        for attempt in range(5):
+            if self.shutdown.is_shutting_down():
+                return
+            if await self._connect_redis():
+                log("info", "redis_reconnected", {"attempt": attempt + 1})
+                # Update services with new connection
+                if self._queue:
+                    self._queue.redis = self.redis
+                if self._cache:
+                    self._cache.redis = self.redis
+                if self._context:
+                    self._context.redis = self.redis
+                return
+            await asyncio.sleep(REDIS_RETRY_DELAY * (attempt + 1))
+        log("error", "redis_reconnect_failed")
+
     async def _wait_for_redis(self):
         for attempt in range(REDIS_MAX_RETRIES):
             if self.shutdown.is_shutting_down():
                 raise asyncio.CancelledError()
 
-            try:
-                self.redis = aioredis.from_url(
-                    settings.REDIS_URL,
-                    encoding="utf-8",
-                    decode_responses=True,
-                    max_connections=20
-                )
-                await self.redis.ping()
+            if await self._connect_redis():
                 log("info", "redis_connected")
                 return
-            except Exception as e:
-                log("warn", "redis_retry", {
-                    "attempt": attempt + 1,
-                    "max": REDIS_MAX_RETRIES,
-                    "error": str(e)
-                })
-                await asyncio.sleep(REDIS_RETRY_DELAY)
+
+            log("warn", "redis_retry", {
+                "attempt": attempt + 1,
+                "max": REDIS_MAX_RETRIES
+            })
+            await asyncio.sleep(REDIS_RETRY_DELAY)
 
         raise RuntimeError("Could not connect to Redis")
 
@@ -272,7 +352,11 @@ class Worker:
             success = await self._registry.initialize(swagger_sources)
 
             if success:
-                log("info", "registry_ready", {"tools": len(self._registry.tools)})
+                tools_count = len(self._registry.tools)
+                log("info", "registry_ready", {"tools": tools_count})
+
+                # Publish tools count to Redis for API metrics endpoint
+                await self.redis.set(settings.REDIS_STATS_KEY_TOOLS, tools_count)
 
                 from services.api_capabilities import initialize_capability_registry
                 capability_registry = await initialize_capability_registry(self._registry)
@@ -321,25 +405,22 @@ class Worker:
 
         while not self.shutdown.is_shutting_down():
             try:
-                streams = await self.redis.xreadgroup(
-                    groupname=self.group_name,
-                    consumername=self.consumer_name,
-                    streams={"whatsapp_stream_inbound": ">"},
+                messages = await self._queue.read_stream(
+                    group=self.group_name,
+                    consumer=self.consumer_name,
                     count=MAX_CONCURRENT,
                     block=STREAM_BLOCK_MS
                 )
 
-                if not streams:
+                if not messages:
                     continue
 
-                tasks = []
-                for stream_name, messages in streams:
-                    for msg_id, data in messages:
-                        task = asyncio.create_task(
-                            self._handle_message_safe(msg_id, data)
-                        )
-                        self.shutdown.track_task(task)
-                        tasks.append(task)
+                tasks = [
+                    asyncio.create_task(self._handle_message_safe(msg_id, data))
+                    for msg_id, data in messages
+                ]
+                for task in tasks:
+                    self.shutdown.track_task(task)
 
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
@@ -347,7 +428,12 @@ class Worker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log("error", "inbound_loop_error", {"error": str(e)})
+                err_str = str(e).lower()
+                if "closed" in err_str or "connection" in err_str:
+                    log("warn", "redis_connection_lost_inbound")
+                    await self._reconnect_redis()
+                else:
+                    log("error", "inbound_loop_error", {"error": str(e)})
                 await asyncio.sleep(2)
 
     async def _handle_message_safe(self, msg_id: str, data: dict):
@@ -430,7 +516,11 @@ class Worker:
             self._messages_processed += 1
 
         except Exception as e:
-            log("error", "processing_error", {"error": str(e)})
+            log_exception("processing_error", e, {
+                "sender": sender[-4:] if sender else "",
+                "text_preview": text[:50] if text else "",
+                "message_id": message_id[:20] if message_id else ""
+            })
             self._messages_failed += 1
             await self._store_dlq(data, str(e))
 
@@ -458,7 +548,10 @@ class Worker:
                 return response
             except Exception as e:
                 await db.rollback()
-                log("error", "engine_error_rollback", {"error": str(e)})
+                log_exception("engine_error_rollback", e, {
+                    "sender": sender[-4:] if sender else "",
+                    "text_preview": text[:50] if text else ""
+                })
                 raise
 
     async def _process_outbound_loop(self):
@@ -467,22 +560,22 @@ class Worker:
         while not self.shutdown.is_shutting_down():
             try:
                 result = await self.redis.blpop("whatsapp_outbound", timeout=1)
-
                 if not result:
                     continue
 
                 _, data = result
                 payload = json.loads(data)
-
-                await self._send_whatsapp(
-                    to=payload.get("to"),
-                    text=payload.get("text")
-                )
+                await self._send_whatsapp(to=payload.get("to"), text=payload.get("text"))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log("error", "outbound_error", {"error": str(e)})
+                err_str = str(e).lower()
+                if "closed" in err_str or "connection" in err_str:
+                    log("warn", "redis_connection_lost_outbound")
+                    await self._reconnect_redis()
+                else:
+                    log("error", "outbound_error", {"error": str(e)})
                 await asyncio.sleep(1)
 
     async def _health_reporter(self):
@@ -494,20 +587,35 @@ class Worker:
                     break
 
                 active = len(self.shutdown.active_tasks)
+                memory_mb = get_memory_usage_mb()
 
                 whatsapp_stats = {}
                 if self._whatsapp_service:
                     whatsapp_stats = self._whatsapp_service.get_stats()
 
-                log("info", "health", {
+                # Calculate uptime
+                uptime_sec = 0
+                if self._start_time:
+                    uptime_sec = int((datetime.utcnow() - self._start_time).total_seconds())
+
+                health_data = {
                     "processed": self._messages_processed,
                     "failed": self._messages_failed,
                     "duplicates": self._duplicates_skipped,
                     "active_tasks": active,
                     "tools": len(self._registry.tools) if self._registry else 0,
                     "wa_sent": whatsapp_stats.get("messages_sent", 0),
-                    "wa_retries": whatsapp_stats.get("total_retries", 0)
-                })
+                    "wa_retries": whatsapp_stats.get("total_retries", 0),
+                    "memory_mb": round(memory_mb, 1),
+                    "uptime_sec": uptime_sec
+                }
+
+                # Warn if memory is high
+                if memory_mb > MEMORY_WARNING_MB:
+                    log("warn", "high_memory_usage", health_data)
+                else:
+                    log("info", "health", health_data)
+
             except asyncio.CancelledError:
                 break
 
@@ -610,7 +718,7 @@ async def main():
     except asyncio.CancelledError:
         log("info", "worker_cancelled")
     except Exception as e:
-        log("error", "worker_fatal", {"error": str(e)})
+        log_exception("worker_fatal", e)
         sys.exit(1)
 
 

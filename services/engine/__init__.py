@@ -1,45 +1,11 @@
 """
 Message Engine - Public API facade.
-Version: 19.2 (Full Observability Stack)
 
-This module provides backward-compatible interface to the refactored engine.
-All existing imports from services.message_engine should work unchanged.
-
-New in v19.2:
-- COST TRACKING - Token usage and budget monitoring
-- CostTracker integrated in _instrumented_ai_call
-- /admin/cost-stats endpoint for cost visibility
-
-New in v19.1:
-- MODEL DRIFT DETECTION - Closed feedback loop
-- ErrorLearningService connected to ModelDriftDetector
-- Automatic metrics collection for every LLM interaction
-- Drift alerts via /admin/drift-status endpoint
-
-New in v19.0:
-- UNIFIED LLM ROUTER - Single decision point for ALL routing
-- Handles flow exit detection ("ne želim", "odustani")
-- Correctly distinguishes READ vs WRITE intent
-- Uses training data for few-shot examples
-- 100% pass rate on production scenarios
-
-New in v17.0:
-- FILTER-THEN-SEARCH architecture for semantic search
-- Intent detection (READ vs WRITE) filters by HTTP method first
-- Category detection narrows search space from 900+ to ~20-50 tools
-
-New in v16.2:
-- Full flow support: simple, booking, mileage_input, list, case_creation
-- Graceful fallback to LLM when deterministic path fails
-
-New in v16.1:
-- QueryRouter for deterministic pattern-based routing
-- Direct response for greetings, thanks, help
-
-New in v16.0:
-- ChainPlanner for multi-step execution plans with fallbacks
-- ExecutorWithFallback for automatic retry and alternative tools
-- LLMResponseExtractor for intelligent data extraction
+Coordinates message processing through:
+- User identification and context
+- Conversation state management (Redis-backed)
+- AI routing and tool execution
+- Cost tracking and observability
 """
 
 import json
@@ -59,18 +25,10 @@ from services.model_drift_detector import ModelDriftDetector, get_drift_detector
 from services.cost_tracker import CostTracker, get_cost_tracker
 from services.reasoning import Planner, ExecutionPlan, PlanStep
 
-# NEW v16.0: Advanced components for 100% reliability
 from services.chain_planner import ChainPlanner, get_chain_planner
 from services.executor_fallback import ExecutorWithFallback, get_executor_with_fallback
 from services.response_extractor import LLMResponseExtractor, get_response_extractor
-
-# NEW v16.1: Deterministic query routing - NO LLM guessing for known patterns
 from services.query_router import QueryRouter, get_query_router, RouteResult
-
-# NEW v18.0: Intelligent category-based routing for unmatched queries
-from services.intelligent_router import IntelligentRouter, FlowType, RoutingDecision
-
-# NEW v19.0: Unified LLM router - single decision point
 from services.unified_router import UnifiedRouter, RouterDecision, get_unified_router
 
 from .tool_handler import ToolHandler
@@ -109,7 +67,8 @@ class MessageEngine:
         """Initialize engine with all services."""
         self.gateway = gateway
         self.registry = registry
-        self.executor = ToolExecutor(gateway)
+        # CJELINA 2: Pass registry to executor for hidden defaults injection
+        self.executor = ToolExecutor(gateway, registry=registry)
         self.context = context_service
         self.queue = queue_service
         self.cache = cache_service
@@ -141,19 +100,15 @@ class MessageEngine:
         self.formatter = ResponseFormatter()
         self.planner = Planner()
 
-        # NEW v16.0: Advanced components
+        # Advanced planning and response extraction
         self.chain_planner = get_chain_planner()
         self.response_extractor = get_response_extractor()
         # Note: executor_fallback initialized lazily when search_engine is available
 
-        # NEW v16.1: Deterministic query router
+        # Deterministic query router
         self.query_router = get_query_router()
 
-        # NEW v18.0: Intelligent category-based router (for unmatched queries)
-        self.intelligent_router = IntelligentRouter(registry)
-        self._intelligent_router_initialized = False
-
-        # NEW v19.0: Unified LLM router - makes ALL routing decisions
+        # Unified LLM router - makes ALL routing decisions
         self.unified_router: Optional[UnifiedRouter] = None
         self._unified_router_initialized = False
 
@@ -248,10 +203,7 @@ class MessageEngine:
                     await self.cost_tracker.record_usage(
                         prompt_tokens=usage_data.get("prompt_tokens", 0),
                         completion_tokens=usage_data.get("completion_tokens", 0),
-                        model=self.ai.model,
-                        tenant_id=tenant_id,
-                        latency_ms=latency_ms,
-                        success=success
+                        tenant_id=tenant_id
                     )
                 except Exception as e:
                     logger.warning(f"Failed to record cost metrics: {e}")
@@ -585,6 +537,11 @@ class MessageEngine:
         if decision.action == "direct_response":
             return decision.response or "Kako vam mogu pomoći?"
 
+        # 1.5. Clarify - query is ambiguous, need user clarification (v2.0)
+        if decision.action == "clarify":
+            logger.info(f"UNIFIED ROUTER v2.0: Clarification needed - '{decision.clarification}'")
+            return decision.clarification or "Možete li mi reći više detalja o tome što tražite?"
+
         # 2. Exit flow - user wants something different
         if decision.action == "exit_flow":
             # CRITICAL FIX: Only exit if actually in a flow, prevent infinite loop
@@ -600,11 +557,11 @@ class MessageEngine:
                     return new_decision.response or "Kako vam mogu pomoći?"
                 if new_decision.action == "start_flow":
                     if new_decision.flow_type == "booking":
-                        return await self._handle_booking_flow(text, user_context, conv_manager)
+                        return await self._handle_booking_flow(text, user_context, conv_manager, new_decision.params)
                     if new_decision.flow_type == "mileage":
-                        return await self._handle_mileage_input_flow(text, user_context, conv_manager)
+                        return await self._handle_mileage_input_flow(text, user_context, conv_manager, new_decision.params)
                     if new_decision.flow_type == "case":
-                        return await self._handle_case_creation_flow(text, user_context, conv_manager)
+                        return await self._handle_case_creation_flow(text, user_context, conv_manager, new_decision.params)
                 if new_decision.action == "simple_api" and new_decision.tool:
                     route = RouteResult(
                         matched=True,
@@ -617,12 +574,12 @@ class MessageEngine:
                     )
                     if result:
                         return result
-                # Fallback to new request handling
-                return await self._handle_new_request(sender, text, user_context, conv_manager)
+                # INFINITE LOOP FIX: Return static fallback instead of recursive call
+                return "Nisam siguran što tražite. Možete pitati za:\n• Rezervaciju vozila\n• Kilometražu\n• Prijavu štete\n• Informacije o vozilu"
             else:
-                # Not in flow but got exit_flow - treat as simple_api or new request
+                # Not in flow but got exit_flow - treat as direct response
                 logger.warning(f"UNIFIED ROUTER: exit_flow received but not in flow - ignoring")
-                return await self._handle_new_request(sender, text, user_context, conv_manager)
+                return "Kako vam mogu pomoći?"
 
         # 3. Continue flow - user is providing requested info
         if decision.action == "continue_flow":
@@ -656,13 +613,14 @@ class MessageEngine:
                 # Fall through to new request handling
 
         # 4. Start flow - begin a multi-step flow
+        # SINGLE-PASS FIX: Pass decision.params to avoid double LLM calls
         if decision.action == "start_flow":
             if decision.flow_type == "booking":
-                return await self._handle_booking_flow(text, user_context, conv_manager)
+                return await self._handle_booking_flow(text, user_context, conv_manager, decision.params)
             if decision.flow_type == "mileage":
-                return await self._handle_mileage_input_flow(text, user_context, conv_manager)
+                return await self._handle_mileage_input_flow(text, user_context, conv_manager, decision.params)
             if decision.flow_type == "case":
-                return await self._handle_case_creation_flow(text, user_context, conv_manager)
+                return await self._handle_case_creation_flow(text, user_context, conv_manager, decision.params)
 
         # 5. Simple API - direct tool call
         if decision.action == "simple_api" and decision.tool:
@@ -735,11 +693,11 @@ class MessageEngine:
 
             # Booking flow
             if route.flow_type == "booking":
-                return await self._handle_booking_flow(text, user_context, conv_manager)
+                return await self._handle_booking_flow(text, user_context, conv_manager, {})
 
             # Mileage input flow
             if route.flow_type == "mileage_input":
-                return await self._handle_mileage_input_flow(text, user_context, conv_manager)
+                return await self._handle_mileage_input_flow(text, user_context, conv_manager, {})
 
             # Simple query - execute tool deterministically
             if route.flow_type == "simple" and route.tool_name:
@@ -762,72 +720,7 @@ class MessageEngine:
 
             # Case creation flow (report damage, etc.)
             if route.flow_type == "case_creation" and route.tool_name:
-                return await self._handle_case_creation_flow(text, user_context, conv_manager)
-
-        # No pattern match - try intelligent category-based routing
-        if not route.matched:
-            logger.info(f"ROUTER: No pattern match - trying intelligent routing")
-
-            # Initialize intelligent router lazily
-            if not self._intelligent_router_initialized:
-                await self.intelligent_router.initialize()
-                self._intelligent_router_initialized = True
-
-            # Get intelligent routing decision
-            intelligent_decision = await self.intelligent_router.route(
-                query=text,
-                user_context=user_context,
-                conversation_state=conv_manager.to_dict() if conv_manager.is_in_flow() else None
-            )
-
-            # Handle intelligent routing results
-            if intelligent_decision.flow_type == FlowType.DIRECT_RESPONSE:
-                return intelligent_decision.direct_response
-
-            if intelligent_decision.tool_name and intelligent_decision.confidence >= 0.4:
-                logger.info(
-                    f"INTELLIGENT ROUTER: {intelligent_decision.tool_name} "
-                    f"(conf={intelligent_decision.confidence:.2f}, flow={intelligent_decision.flow_type.value})"
-                )
-
-                # Handle flows based on intelligent routing
-                if intelligent_decision.flow_type == FlowType.BOOKING:
-                    return await self._handle_booking_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.AVAILABILITY:
-                    return await self._handle_booking_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.CASE_CREATION:
-                    return await self._handle_case_creation_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.MILEAGE_INPUT:
-                    return await self._handle_mileage_input_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.LIST:
-                    # For list queries, create a route result and use deterministic execution
-                    list_route = RouteResult(
-                        matched=True,
-                        tool_name=intelligent_decision.tool_name,
-                        extract_fields=[],
-                        flow_type="list"
-                    )
-                    result = await self._execute_deterministic(
-                        list_route, user_context, conv_manager, sender, text
-                    )
-                    if result:
-                        return result
-
-                # For SIMPLE flow type, continue to LLM path but with the selected tool
-                if intelligent_decision.flow_type == FlowType.SIMPLE:
-                    # Store the intelligent decision for later use
-                    route = RouteResult(
-                        matched=True,
-                        tool_name=intelligent_decision.tool_name,
-                        confidence=intelligent_decision.confidence,
-                        flow_type="simple"
-                    )
-
-        # === END DETERMINISTIC AND INTELLIGENT ROUTING ===
+                return await self._handle_case_creation_flow(text, user_context, conv_manager, {})
 
         # Pre-resolve entity references
         pre_resolved = await self._pre_resolve_entity_references(
@@ -1039,7 +932,7 @@ class MessageEngine:
                         to_time = params.get("ToTime") or params.get("to")
                         
                         # Redirect to proper booking flow
-                        return await self._handle_booking_flow(text, user_context, conv_manager)
+                        return await self._handle_booking_flow(text, user_context, conv_manager, {})
                     
                     # Even if VehicleId is validated, ensure we're in confirmation state
                     state = conv_manager.get_state()
@@ -1386,25 +1279,27 @@ class MessageEngine:
         self,
         text: str,
         user_context: Dict[str, Any],
-        conv_manager: ConversationManager
+        conv_manager: ConversationManager,
+        router_params: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Handle booking flow deterministically."""
-        # Extract time parameters from text
-        time_params = await self.ai.extract_parameters(
-            text,
-            [
-                {"name": "from", "type": "string", "description": "Početno vrijeme"},
-                {"name": "to", "type": "string", "description": "Završno vrijeme"}
-            ]
-        )
+        """Handle booking flow deterministically.
+
+        SINGLE-PASS FIX: Uses router_params from UnifiedRouter instead of
+        calling extract_parameters (which was a second LLM call).
+        """
+        # Use params from router if available (single-pass)
+        router_params = router_params or {}
 
         params = {}
-        if time_params.get("from"):
-            params["FromTime"] = time_params["from"]
-            params["from"] = time_params["from"]
-        if time_params.get("to"):
-            params["ToTime"] = time_params["to"]
-            params["to"] = time_params["to"]
+        # Check router params first (already extracted by UnifiedRouter)
+        if router_params.get("from") or router_params.get("FromTime"):
+            from_time = router_params.get("from") or router_params.get("FromTime")
+            params["FromTime"] = from_time
+            params["from"] = from_time
+        if router_params.get("to") or router_params.get("ToTime"):
+            to_time = router_params.get("to") or router_params.get("ToTime")
+            params["ToTime"] = to_time
+            params["to"] = to_time
 
         # Start availability flow
         result = {
@@ -1419,16 +1314,17 @@ class MessageEngine:
         self,
         text: str,
         user_context: Dict[str, Any],
-        conv_manager: ConversationManager
+        conv_manager: ConversationManager,
+        router_params: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Handle mileage input flow deterministically."""
-        # Extract mileage value from text
-        mileage_params = await self.ai.extract_parameters(
-            text,
-            [
-                {"name": "Value", "type": "number", "description": "Kilometraža u km"}
-            ]
-        )
+        """Handle mileage input flow deterministically.
+
+        SINGLE-PASS FIX: Uses router_params from UnifiedRouter instead of
+        calling extract_parameters (which was a second LLM call).
+        """
+        # Use params from router if available (single-pass)
+        router_params = router_params or {}
+        mileage_params = {"Value": router_params.get("Value") or router_params.get("value") or router_params.get("mileage")}
 
         # Try to get vehicle from multiple sources - use Swagger field names
         vehicle = user_context.get("vehicle", {})
@@ -1537,17 +1433,20 @@ class MessageEngine:
         self,
         text: str,
         user_context: Dict[str, Any],
-        conv_manager: ConversationManager
+        conv_manager: ConversationManager,
+        router_params: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Handle support case/damage report creation deterministically."""
-        # Extract description from text
-        case_params = await self.ai.extract_parameters(
-            text,
-            [
-                {"name": "Description", "type": "string", "description": "Opis problema ili kvara"},
-                {"name": "Subject", "type": "string", "description": "Naslov slučaja"}
-            ]
-        )
+        """Handle support case/damage report creation deterministically.
+
+        SINGLE-PASS FIX: Uses router_params from UnifiedRouter instead of
+        calling extract_parameters (which was a second LLM call).
+        """
+        # Use params from router if available (single-pass)
+        router_params = router_params or {}
+        case_params = {
+            "Description": router_params.get("Description") or router_params.get("description"),
+            "Subject": router_params.get("Subject") or router_params.get("subject")
+        }
 
         vehicle = user_context.get("vehicle", {})
         vehicle_id = vehicle.get("Id")

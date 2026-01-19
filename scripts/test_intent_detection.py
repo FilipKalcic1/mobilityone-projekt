@@ -21,7 +21,7 @@ if sys.platform == 'win32':
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.intelligent_router import detect_intent, QueryIntent
+from services.patterns import detect_intent, QueryIntent
 
 
 # Test cases: (query, expected_intent)

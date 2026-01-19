@@ -1,16 +1,15 @@
 """
 Simple webhook endpoint for WhatsApp messages.
 Receives messages and pushes to Redis queue for worker processing.
-
-Version: 2.1
-NEW v2.1: Async Redis to avoid blocking FastAPI event loop
-NEW v2.0: Validates sender field is not empty (prevents 400 errors downstream)
 """
 
 from fastapi import APIRouter, Request, HTTPException
 import redis.asyncio as aioredis
 import logging
 
+from config import get_settings
+
+settings = get_settings()
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -24,7 +23,7 @@ async def get_redis():
     global _redis_client
     if _redis_client is None:
         _redis_client = await aioredis.from_url(
-            "redis://redis:6379/0",
+            settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True
         )

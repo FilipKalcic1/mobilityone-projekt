@@ -3,7 +3,7 @@
 ## Pregled
 
 Routing odlucuje koji API alat pozvati za korisnicki upit.
-Sustav koristi 3 routera u fallback lancu.
+Sustav koristi 2 routera u fallback lancu.
 
 ## Tok odlucivanja
 
@@ -33,11 +33,10 @@ Poruka: "Mogu li dobiti troskove"
               | no match
               v
 +---------------------------+
-|   INTELLIGENT ROUTER      |  <-- FALLBACK
-|  (services/intelligent_router.py)
+|      FAISS + LLM          |  <-- SEMANTIC SEARCH
 |                           |
-|  1. Keyword matching      |
-|  2. Embedding similarity  |
+|  1. Embedding similarity  |
+|  2. ChainPlanner          |
 |  3. LLM tool selection    |
 +---------------------------+
 ```
@@ -87,33 +86,32 @@ keywords_map = {
 # -> direktno vrati get_MasterData bez LLM-a
 ```
 
-## 3. Intelligent Router
+## 3. FAISS Semantic Search
 
-**Lokacija:** `services/intelligent_router.py`
+**Lokacija:** `services/faiss_vector_store.py`
 
-**Uloga:** Zadnji fallback kad ostali ne znaju
+**Uloga:** Zadnji fallback kad pattern matching ne uspije
 
 **Kako radi:**
-1. **Keyword matching** - brzo, po kategorijama
-2. **Embedding similarity** - semanticka slicnost
+1. **Embedding similarity** - semanticka slicnost s Croatian dokumentacijom
+2. **ChainPlanner** - LLM planira korake
 3. **LLM tool selection** - finalna odluka
 
 **Embedding matching:**
 ```
 Query: "Mogu li vidjeti putovanja"
    -> embedding vektor [0.23, -0.15, ...]
-   -> usporedi s category embeddings
-   -> trips_category = 0.85 similarity
-   -> tools iz te kategorije
+   -> usporedi s tool embeddings (tool_documentation.json)
+   -> get_Trips = 0.85 similarity
 ```
 
-## Zasto 3 routera?
+## Zasto ovakva arhitektura?
 
 | Router | Brzina | Tocnost | Token cost |
 |--------|--------|---------|------------|
 | Unified | Spora | Visoka | Visok |
 | Query | Brza | Srednja | Nula |
-| Intelligent | Srednja | Visoka | Srednji |
+| FAISS | Brza | Visoka | Srednji |
 
 Fallback osigurava da uvijek imamo odgovor.
 
@@ -127,4 +125,4 @@ UNIFIED ROUTER: action=simple_api, tool=get_Expenses, conf=0.90
 Ako vidis krivi tool - problem je u:
 1. PRIMARY_TOOLS opisi (unified_router.py)
 2. keywords_map (unified_router.py)
-3. training_queries.json primjeri
+3. tool_documentation.json primjeri

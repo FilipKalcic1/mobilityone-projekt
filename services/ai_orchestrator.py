@@ -766,55 +766,12 @@ Vrati SAMO JSON, bez drugog teksta."""
 
         prompt += """
         ═══════════════════════════════════════════════
-        MOGUĆNOSTI I ODABIR ALATA
+        TVOJ POSAO
         ═══════════════════════════════════════════════
-        Imaš pristup API funkcijama. Sustav koristi semantičku
-        pretragu i vraća kandidate sortirane po sličnosti.
-
-        KRITIČNO - ODABIR PRAVOG ALATA:
-        Alati su sortirani po sličnosti, ALI ti MORAŠ ANALIZIRATI
-        i odabrati TOČAN alat prema korisnikovom upitu!
-
-        PRAVILA ZA RAZLIKOVANJE SLIČNIH ALATA:
-
-        1. METODA je KRITIČNA:
-           - Korisnik PITA/TRAŽI/PRIKAŽI → GET (dohvat podataka)
-           - Korisnik DODAJ/KREIRAJ/UNESI → POST (kreiranje)
-           - Korisnik AŽURIRAJ/PROMIJENI → PATCH ili PUT (izmjena)
-           - Korisnik OBRIŠI/UKLONI → DELETE (brisanje)
-
-        2. SUFIKS određuje VRSTU operacije:
-           - _id → operacija nad JEDNIM entitetom (s ID-om)
-           - _documents → rad s DOKUMENTIMA entiteta
-           - _metadata → dohvat METAPODATAKA/strukture
-           - _multipatch → GRUPNO ažuriranje više stavki
-           - _Agg → agregacije (suma, prosjek, statistika)
-           - _GroupBy → grupiranje po polju
-           - _tree → hijerarhijska struktura
-           - BEZ sufiksa → lista svih entiteta ili kreiranje novog
-
-        3. ENTITET u upitu:
-           - "vozilo/vehicle" → alati s "Vehicle" u imenu
-           - "osoba/person" → alati s "Person" u imenu
-           - "kompanija/firma" → alati s "Company" u imenu
-           - "rezervacija/booking" → alati s "Booking" ili "Calendar"
-           - "dokument" → alati s "_documents" u imenu
-
-        4. KLJUČNE RIJEČI:
-           - "najnovije/latest" → alat s "Latest" u imenu
-           - "jedno/specifično/s ID-om" → alat s "_id" sufiksom
-           - "sve/lista/popis" → alat BEZ "_id" sufiksa
-           - "više stavki/grupno/bulk" → alat s "_multipatch"
-
-        TVOJ POSAO:
-        1. RAZUMJETI što korisnik želi (akcija + entitet)
-        2. ANALIZIRATI kandidate i odabrati TOČAN alat
-        3. IZVUĆI parametre iz poruke
-        4. POZVATI alat s ispravnim parametrima
-
-        NE koristi POST/PUT/DELETE ako korisnik pita za podatke (koristi GET)
-        "moje vozilo" → koristi get_MasterData, NE get_Vehicles
-        "koja je kilometraža" → koristi alat koji vraća podatke, NE calendar
+        Sustav automatski odabire pravi alat. Tvoj posao je:
+        1. IZVUĆI parametre iz korisnikove poruke
+        2. POZVATI alat s ispravnim parametrima
+        3. FORMATIRATI odgovor korisniku
 
         ═══════════════════════════════════════════════
         PRAVILA ZA DATUME

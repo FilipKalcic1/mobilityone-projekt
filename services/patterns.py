@@ -501,3 +501,55 @@ def get_injectable_context(user_context: Dict[str, Any]) -> Dict[str, Any]:
             result[canonical] = value
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+# QUERY INTENT DETECTION
+# ═══════════════════════════════════════════════════════════════
+
+from enum import Enum
+
+class QueryIntent(Enum):
+    """Detected intent of user query."""
+    READ = "read"           # Getting data: show, list, what is
+    WRITE = "write"         # Creating/updating: add, create, report
+    DELETE = "delete"       # Removing: delete, cancel, remove
+    UNKNOWN = "unknown"     # Cannot determine
+
+
+def detect_intent(query: str) -> QueryIntent:
+    """
+    Detect user intent using centralized patterns.
+
+    Uses comprehensive regex patterns for Croatian and English.
+    """
+    query_lower = query.lower().strip()
+
+    # Check for DELETE patterns first (subset of MUTATION)
+    delete_patterns = [
+        r'obri[sš]i', r'izbri[sš]i', r'ukloni', r'makni',
+        r'otka[zž]i', r'poni[sš]ti',
+        r'delete', r'remove', r'cancel'
+    ]
+    for pattern in delete_patterns:
+        if re.search(pattern, query_lower):
+            return QueryIntent.DELETE
+
+    # Check for WRITE/MUTATION patterns
+    for pattern in MUTATION_INTENT_PATTERNS:
+        try:
+            if re.search(pattern, query_lower):
+                return QueryIntent.WRITE
+        except re.error:
+            continue
+
+    # Check for READ patterns
+    for pattern in READ_INTENT_PATTERNS:
+        try:
+            if re.search(pattern, query_lower):
+                return QueryIntent.READ
+        except re.error:
+            continue
+
+    # Default to READ for unknown (safer - read doesn't modify data)
+    return QueryIntent.READ

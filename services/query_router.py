@@ -122,7 +122,11 @@ class QueryRouter:
                 "patterns": [
                     r"koliko.*(km|kilometra)",
                     r"kolika.*(km|kilometra)",
+                    r"koliko.*imam.*km",          # V3.0: "koliko imam kilometara"
+                    r"koliko.*imam.*kilometar",   # V3.0: "koliko imam kilometara"
+                    r"moja.*kilometra[zž]",       # V3.0: "moja kilometraža"
                     r"stanje.*(km|kilometra)",
+                    r"stanje.*kilometar.*sat",    # V3.0: "stanje kilometar sata"
                     r"\bkm\b.*vozil",
                     r"mileage",
                     r"koja.*kilometra[zž]",
@@ -138,6 +142,22 @@ class QueryRouter:
                 "extract_fields": ["LastMileage", "Mileage", "CurrentMileage"],
                 "response_template": "📏 **Kilometraža:** {value} km",
                 "flow_type": "simple",
+            },
+            # === TRIPS / PUTOVANJA ===
+            {
+                "patterns": [
+                    r"putni.*(nalog|naloz)",     # V3.0: putni nalog/nalozi (g→z u množini)
+                    r"putovanje",                # putovanje/putovanja
+                    r"moj[ae]?.*putovanj",       # moja putovanja
+                    r"povijest.*vo[zž]nj",       # povijest vožnji
+                    r"moj[ae]?.*vo[zž]nj",       # moje vožnje
+                    r"trip",                     # trip/tripovi
+                ],
+                "intent": "GET_TRIPS",
+                "tool": "get_Trips",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "list",
             },
             # === REGISTRATION EXPIRY ===
             {
@@ -386,6 +406,25 @@ class QueryRouter:
                 "response_template": None,
                 "flow_type": "booking",
             },
+            # === CASES LIST (must be BEFORE REPORT DAMAGE to catch "prijavljene štete") ===
+            {
+                "patterns": [
+                    r"prijavljene.*[sš]tet",     # V3.0: prijavljene štete (existing cases)
+                    r"popis.*[sš]tet",           # popis šteta
+                    r"lista.*[sš]tet",           # lista šteta
+                    r"pregled.*[sš]tet",         # pregled šteta
+                    r"povijest.*[sš]tet",        # povijest šteta
+                    r"prika[zž]i.*[sš]tet",      # prikaži štete
+                    r"poka[zž]i.*[sš]tet",       # pokaži štete
+                    r"svi.*slu[cč]ajev",         # svi slučajevi
+                    r"lista.*slu[cč]aj",         # lista slučajeva
+                ],
+                "intent": "GET_CASES",
+                "tool": "get_Cases",
+                "extract_fields": [],
+                "response_template": None,
+                "flow_type": "list",
+            },
             # === REPORT DAMAGE ===
             {
                 "patterns": [
@@ -393,20 +432,19 @@ class QueryRouter:
                     r"prijava.*kvar",
                     r"prijavi.*[sš]tet",    # prijavi štetu, prijavi stetu (with/without diacritics)
                     r"prijava.*[sš]tet",    # prijava štete, prijava stete
-                    r"[sš]tet[aeu]",        # šteta/steta, štetu/stetu, štete/stete
+                    r"nova.*[sš]tet",       # V3.0: nova šteta (create, not list)
                     r"o[sš]te[cć]enj",      # oštećenje, ostecenje
                     r"ne[sš]to.*ne.*radi",
                     r"problem.*vozil",
                     r"problem.*auto",       # Phase 3: "problem s autom"
                     r"imam.*problem.*auto", # Phase 3: "imam problem s autom"
-                    r"kvar",
                     r"imam.*kvar",          # imam kvar
                     r"imam.*[sš]tet",       # imam štetu/stetu
-                    r"ima.*[sš]tet",        # ima štete/stete
                     r"dogodila.*nesre[cć]", # dogodila se nesreća/nesreca
                     r"nesre[cć]",           # nesreća/nesreca
                     r"sudar",               # sudar
-                    r"udar",                # udar
+                    r"udari",               # udario/udarila
+                    r"ogreba",              # V3.0: ogrebao/ogrebala
                 ],
                 "intent": "REPORT_DAMAGE",
                 "tool": "post_AddCase",

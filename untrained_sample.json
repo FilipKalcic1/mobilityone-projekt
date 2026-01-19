@@ -1,0 +1,102 @@
+[
+  {
+    "tool": "get_Partners_id_documents_documentId",
+    "examples": [
+      "Daj mi informacije o dokumentu s ID-om 789 za partnera 123",
+      "Koje su informacije dostupne za dokument 456?"
+    ]
+  },
+  {
+    "tool": "put_PeriodicActivityTypes_id_documents_documentId_SetAsDefault",
+    "examples": [
+      "Postavi dokument s ID-om 'doc123' kao zadani za aktivnost s ID-om 123."
+    ]
+  },
+  {
+    "tool": "get_MileageReports_id_documents_documentId",
+    "examples": [
+      "Dohvati dokument s ID-om 456 za izvještaj o kilometraži s ID-om 123"
+    ]
+  },
+  {
+    "tool": "get_MileageReports_id_documents",
+    "examples": [
+      "Dohvati dokumente za izvještaj o kilometraži s ID-om 123"
+    ]
+  },
+  {
+    "tool": "post_Tags_id_documents",
+    "examples": [
+      "Dodaj dokument tagu s ID-om 1.",
+      "Poveži dokument s tagom s ID-om 2."
+    ]
+  },
+  {
+    "tool": "post_PeriodicActivities_id_documents",
+    "examples": [
+      "Dodaj dokument za periodičku aktivnost s ID-om 1."
+    ]
+  },
+  {
+    "tool": "get_PeriodicActivityTypes_ProjectTo",
+    "examples": [
+      "Dohvati aktivnosti s ID-om, nazivom i statusom."
+    ]
+  },
+  {
+    "tool": "get_EquipmentTypes_id",
+    "examples": [
+      "Daj mi tip opreme s ID-om 5.",
+      "Koje informacije imam za tip opreme s ID-om 10?"
+    ]
+  },
+  {
+    "tool": "get_EquipmentTypes_id_metadata",
+    "examples": [
+      "Daj mi metapodatke za opremu s ID-om 123.",
+      "Koji su metapodaci za opremu s ID-om 456?"
+    ]
+  },
+  {
+    "tool": "get_Lookup_VehiclePoolId",
+    "examples": [
+      "Daj mi listu bazena vozila.",
+      "Koji su bazeni vozila dostupni?"
+    ]
+  },
+  {
+    "tool": "delete_VehicleCalendar",
+    "examples": [
+      "Kako mogu obrisati stavke iz kalendara vozila?",
+      "Što se događa kada pokušam obrisati nepostojeće stavke?"
+    ]
+  },
+  {
+    "tool": "get_Metadata_id_documents_documentId_thumb",
+    "examples": [
+      "Kako dobiti sličicu dokumenta s id 123 za entitet 456?",
+      "Mogu li pregledati sličicu dokumenta?"
+    ]
+  },
+  {
+    "tool": "get_Lookup_PersonId_id",
+    "examples": [
+      "Prikaži osobu s ID-om '123'",
+      "Daj mi informacije o osobi s ID-om '456'"
+    ]
+  },
+  {
+    "tool": "get_Lookup_ActivityStatusId",
+    "examples": [
+      "Daj mi sve statuse aktivnosti.",
+      "Koji su dostupni statusi aktivnosti?"
+    ]
+  },
+  {
+    "tool": "put_SchedulingModels_id_documents_documentId",
+    "examples": [
+      "Ažuriraj informacije o dokumentu s ID-om 'doc123' za model s ID-om 123.",
+      "Ažuriraj dokument s ID-om 'doc456' za model s ID-om 456."
+    ]
+  }
+]

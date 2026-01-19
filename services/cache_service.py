@@ -1,16 +1,49 @@
 """
 Cache Service
-Version: 10.0
+Version: 11.0
 
-Redis caching layer.
+Redis caching layer with resilience.
 NO DEPENDENCIES on other services.
+
+Phase 4 (v11.0):
+- Custom JSON serializer for datetime/UUID
+- set_json() with explicit JSON handling
+- invalidate() method for cache busting
+- Fail-Open design (returns None/False, never crashes)
 """
 
 import json
 import logging
-from typing import Any, Optional, Callable, Awaitable
+from datetime import datetime, date
+from typing import Any, Optional, Callable, Awaitable, List
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
+
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """
+    Custom JSON encoder for datetime and UUID objects.
+
+    Handles:
+    - datetime -> ISO format string
+    - date -> ISO format string
+    - UUID -> string
+    - Other objects -> str() fallback
+    """
+
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, UUID):
+            return str(obj)
+        # Fallback for unknown types
+        try:
+            return str(obj)
+        except Exception:
+            return super().default(obj)
 
 
 class CacheService:
@@ -47,22 +80,44 @@ class CacheService:
     async def set(self, key: str, value: Any, ttl: int = 300) -> bool:
         """
         Set value with TTL.
-        
+
         Args:
             key: Cache key
             value: Value to store (will be JSON encoded if not string)
             ttl: Time to live in seconds
-            
+
         Returns:
             True if successful
         """
         try:
             if not isinstance(value, (str, bytes)):
-                value = json.dumps(value)
+                value = json.dumps(value, cls=SafeJSONEncoder)
             await self.redis.setex(key, ttl, value)
             return True
         except Exception as e:
             logger.warning(f"Cache set failed: {e}")
+            return False
+
+    async def set_json(self, key: str, value: Any, ttl: int = 300) -> bool:
+        """
+        Set JSON value with TTL and safe serialization.
+
+        Uses SafeJSONEncoder to handle datetime/UUID objects.
+
+        Args:
+            key: Cache key
+            value: Value to store (will be JSON encoded)
+            ttl: Time to live in seconds
+
+        Returns:
+            True if successful
+        """
+        try:
+            serialized = json.dumps(value, cls=SafeJSONEncoder)
+            await self.redis.setex(key, ttl, serialized)
+            return True
+        except Exception as e:
+            logger.warning(f"Cache set_json failed: {e}")
             return False
     
     async def delete(self, key: str) -> bool:
@@ -73,7 +128,45 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache delete failed: {e}")
             return False
-    
+
+    async def invalidate(self, key: str) -> bool:
+        """
+        Invalidate cache key.
+
+        Alias for delete() - semantic naming for cache busting.
+
+        Args:
+            key: Cache key to invalidate
+
+        Returns:
+            True if successful
+        """
+        return await self.delete(key)
+
+    async def invalidate_pattern(self, pattern: str) -> int:
+        """
+        Invalidate all keys matching pattern.
+
+        CAUTION: Use sparingly - SCAN can be slow on large datasets.
+
+        Args:
+            pattern: Redis key pattern (e.g., "user:*", "context:*")
+
+        Returns:
+            Number of keys deleted
+        """
+        try:
+            deleted = 0
+            async for key in self.redis.scan_iter(match=pattern, count=100):
+                await self.redis.delete(key)
+                deleted += 1
+            if deleted > 0:
+                logger.info(f"Invalidated {deleted} keys matching '{pattern}'")
+            return deleted
+        except Exception as e:
+            logger.warning(f"Cache invalidate_pattern failed: {e}")
+            return 0
+
     async def exists(self, key: str) -> bool:
         """Check if key exists."""
         try:

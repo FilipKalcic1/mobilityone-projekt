@@ -1,12 +1,7 @@
 import os
 import pytest
-import os
-import pytest
 from unittest.mock import patch, AsyncMock
-from services.intelligent_router import (
-    detect_intent,
-    QueryIntent,
-)
+from services.patterns import detect_intent, QueryIntent
 from services.tool_registry import ToolRegistry
 
 

@@ -13,12 +13,11 @@ from typing import List, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Logger za debugging konfiguracije
 logger = logging.getLogger("configuration")
 
 class Settings(BaseSettings):
     
-    VERIFY_WHATSAPP_SIGNATURE: bool = False  # ✅ Ovo je ispravno
+    VERIFY_WHATSAPP_SIGNATURE: bool = False
     # =========================================================================
     # APPLICATION
     # =========================================================================
@@ -40,13 +39,16 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = Field(default=3600)
     
     # =========================================================================
+    # SERVICE ROLE (bot or admin - determines database permissions)
+    # =========================================================================
+    SERVICE_ROLE: str = Field(default="bot")
+
+    # =========================================================================
     # REDIS
     # =========================================================================
-    REDIS_URL: str = Field(
-        default="redis://localhost:6379/0",
-        description="Redis connection string"
-    )
+    REDIS_URL: str = Field(default="redis://localhost:6379/0")
     REDIS_MAX_CONNECTIONS: int = Field(default=50)
+    REDIS_STATS_KEY_TOOLS: str = Field(default="stats:tools_loaded")
     
     # =========================================================================
     # INFOBIP (WhatsApp) - Ostavio sam Optional ako nije nužan za start
@@ -196,5 +198,5 @@ def get_settings() -> Settings:
         return Settings()
     except Exception as e:
         # Ovo će ti se ispisati u Docker logovima ako nešto fali
-        print(f"🔥 FATAL CONFIG ERROR: Could not load settings. Missing env vars? Error: {e}")
+        logger.critical(f"FATAL CONFIG ERROR: Could not load settings. Missing env vars? Error: {e}")
         raise e

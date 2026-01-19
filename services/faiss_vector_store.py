@@ -239,20 +239,30 @@ class FAISSVectorStore:
         """
         Build text for embedding from tool documentation.
 
-        V2.0: Added explicit keywords for base CRUD tools to improve ranking.
+        V3.0: Added synonyms_hr support for improved semantic matching.
 
-        Uses:
-        1. BASE TOOL KEYWORDS (NEW) - explicit phrases for primary entities
-        2. Structural info (method, entity, suffix) - AUTO-GENERATED CROATIAN
-        3. purpose (what it does) - CROATIAN
-        4. when_to_use (use cases) - CROATIAN
-        5. example_queries_hr (Croatian example queries) - CROATIAN
+        Priority order (highest weight first):
+        1. SYNONYMS_HR (5x) - User-provided Croatian synonyms (HIGHEST WEIGHT)
+        2. BASE TOOL KEYWORDS (3x) - explicit phrases for primary entities
+        3. Structural info (method, entity, suffix) - AUTO-GENERATED CROATIAN
+        4. purpose (what it does) - CROATIAN
+        5. when_to_use (use cases) - CROATIAN
+        6. example_queries_hr (Croatian example queries) - CROATIAN
 
         Does NOT use training_queries.json!
         """
         parts = []
 
-        # NEW V2.0: Add explicit keywords for BASE CRUD tools
+        # V3.0: SYNONYMS_HR - highest priority (5x repetition)
+        # These are curated Croatian phrases that users actually use
+        synonyms = doc.get("synonyms_hr", [])
+        if synonyms:
+            synonym_text = " ".join(synonyms)
+            # Repeat 5x to heavily weight user synonyms
+            for _ in range(5):
+                parts.append(synonym_text)
+
+        # V2.0: Add explicit keywords for BASE CRUD tools
         # These ensure primary entities rank higher than helpers/lookups
         base_keywords = self._get_base_tool_keywords(tool_id)
         if base_keywords:

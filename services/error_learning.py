@@ -1154,9 +1154,9 @@ Vrati SAMO ispravljeni JSON objekt, bez objašnjenja.
             report = await self._drift_detector.check_drift()
             return {
                 "has_drift": report.has_drift,
-                "severity": report.overall_severity,
-                "alerts": len(report.alerts),
-                "recommendations": report.recommendations
+                "severity": report.severity,
+                "alerts": report.alerts,
+                "sample_count": report.sample_count
             }
         return None
 

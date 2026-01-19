@@ -15,7 +15,7 @@ ARHITEKTURA (v2.0):
 - Audit log se sprema u admin_audit_logs tablicu
 
 Korištenje:
-- Samo iz admin dashboard-a (interni API)
+- Samo iz Admin API-ja (interni HTTP API)
 - Samo s autentificiranim admin korisnikom
 - Network isolation (VPN/Intranet)
 """
@@ -603,28 +603,47 @@ class AdminReviewService:
             "audit_entries": audit_count
         }
 
+    # System prompt for fine-tuning
+    FINE_TUNING_SYSTEM_PROMPT = """Ti si MobilityOne AI asistent za upravljanje flotom vozila.
+Pomaži korisnicima s informacijama o vozilima, rezervacijama, troškovima, putovanjima i prijavi šteta.
+Odgovaraj na hrvatskom jeziku, kratko i precizno.
+Koristi samo podatke iz dostupnih API-ja, ne izmišljaj informacije."""
+
     async def export_for_training(
         self,
         admin_id: str,
         reviewed_only: bool = True,
-        limit: int = MAX_EXPORT_LIMIT
+        limit: int = MAX_EXPORT_LIMIT,
+        format: str = "openai_chat"
     ) -> List[Dict[str, Any]]:
         """
         Exportaj podatke za fine-tuning modela IZ BAZE PODATAKA.
 
-        Vraća parove (user_query, correct_response) za training.
+        FORMATS:
+        - "openai_chat": OpenAI Chat format (default) - za gpt-3.5-turbo, gpt-4 fine-tuning
+        - "openai_completion": OpenAI Completion format - za davinci fine-tuning (legacy)
+        - "raw": Raw format s svim podacima
+
+        OpenAI Chat format (JSONL):
+        {"messages": [
+            {"role": "system", "content": "..."},
+            {"role": "user", "content": "user_query"},
+            {"role": "assistant", "content": "correct_output"}
+        ]}
 
         Args:
             admin_id: Admin user ID for audit
             reviewed_only: Only export reviewed records
             limit: Maximum records to export (default: 10000)
+            format: Export format ("openai_chat", "openai_completion", "raw")
         """
         # Validate limit to prevent memory issues
         validated_limit = self._validate_limit(limit, max_limit=MAX_EXPORT_LIMIT)
 
         await self._audit("EXPORT_TRAINING_DATA", admin_id, {
             "reviewed_only": reviewed_only,
-            "limit": validated_limit
+            "limit": validated_limit,
+            "format": format
         })
 
         query = select(HallucinationReport).where(
@@ -638,22 +657,79 @@ class AdminReviewService:
         result = await self.db.execute(query)
         reports = result.scalars().all()
 
-        training_data = [
-            {
-                "instruction": r.user_query,
-                "wrong_output": r.bot_response,
-                "correct_output": r.correction,
-                "category": r.category,
-                "model": r.model
-            }
-            for r in reports
-        ]
+        # Format based on requested type
+        if format == "openai_chat":
+            # OpenAI Chat Completion fine-tuning format
+            training_data = [
+                {
+                    "messages": [
+                        {"role": "system", "content": self.FINE_TUNING_SYSTEM_PROMPT},
+                        {"role": "user", "content": r.user_query},
+                        {"role": "assistant", "content": r.correction}
+                    ]
+                }
+                for r in reports
+            ]
+        elif format == "openai_completion":
+            # Legacy OpenAI Completion format (for davinci)
+            training_data = [
+                {
+                    "prompt": f"User: {r.user_query}\nAssistant:",
+                    "completion": f" {r.correction}"
+                }
+                for r in reports
+            ]
+        else:
+            # Raw format with all data (for debugging/analysis)
+            training_data = [
+                {
+                    "id": str(r.id),
+                    "user_query": r.user_query,
+                    "wrong_output": r.bot_response,
+                    "correct_output": r.correction,
+                    "category": r.category,
+                    "model": r.model,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None
+                }
+                for r in reports
+            ]
 
         logger.info(
-            f"Exported {len(training_data)} training examples for {admin_id}"
+            f"Exported {len(training_data)} training examples for {admin_id} (format={format})"
         )
 
         return training_data
+
+    async def export_for_training_jsonl(
+        self,
+        admin_id: str,
+        reviewed_only: bool = True,
+        limit: int = MAX_EXPORT_LIMIT
+    ) -> str:
+        """
+        Export training data as JSONL string (ready for OpenAI fine-tuning upload).
+
+        Returns a string where each line is a valid JSON object.
+        Save this to a .jsonl file and upload to OpenAI.
+
+        Usage:
+            jsonl_content = await service.export_for_training_jsonl(admin_id)
+            with open("training_data.jsonl", "w") as f:
+                f.write(jsonl_content)
+        """
+        import json
+
+        data = await self.export_for_training(
+            admin_id=admin_id,
+            reviewed_only=reviewed_only,
+            limit=limit,
+            format="openai_chat"
+        )
+
+        # Convert to JSONL (one JSON object per line)
+        lines = [json.dumps(item, ensure_ascii=False) for item in data]
+        return "\n".join(lines)
 
     async def get_report_detail(
         self,

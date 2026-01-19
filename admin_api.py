@@ -48,7 +48,10 @@ env_path = Path(__file__).parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
-# Import database
+# CRITICAL SECURITY: Set admin service type BEFORE importing database
+# This ensures database.py uses admin connection string with full privileges
+os.environ["SERVICE_TYPE"] = "admin"
+
 from database import AsyncSessionLocal, engine
 from services.admin_review import AdminReviewService, SecurityError
 from services.model_drift_detector import get_drift_detector
@@ -420,7 +423,7 @@ async def list_hallucinations(
     admin_id: str = Depends(check_rate_limit),
     service: AdminReviewService = Depends(get_admin_service)
 ):
-    """Dohvaća halucinacije za admin dashboard IZ BAZE PODATAKA."""
+    """Dohvaća halucinacije za admin pregled IZ BAZE PODATAKA."""
     try:
         reports = await service.get_hallucinations_for_review(
             admin_id=admin_id,
@@ -645,23 +648,84 @@ async def get_audit_log(
 )
 async def export_training_data(
     reviewed_only: bool = True,
+    format: str = "openai_chat",
     admin_id: str = Depends(check_rate_limit),
     service: AdminReviewService = Depends(get_admin_service)
 ):
-    """Exportaj podatke za fine-tuning modela IZ BAZE PODATAKA."""
+    """
+    Exportaj podatke za fine-tuning modela IZ BAZE PODATAKA.
+
+    Formats:
+    - openai_chat: OpenAI Chat format (default) - za gpt-3.5-turbo, gpt-4 fine-tuning
+    - openai_completion: OpenAI Completion format - za davinci (legacy)
+    - raw: Raw format s svim podacima
+    """
     try:
+        # Validate format
+        valid_formats = ["openai_chat", "openai_completion", "raw"]
+        if format not in valid_formats:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid format. Must be one of: {valid_formats}"
+            )
+
         data = await service.export_for_training(
             admin_id=admin_id,
-            reviewed_only=reviewed_only
+            reviewed_only=reviewed_only,
+            format=format
         )
         return {
             "count": len(data),
+            "format": format,
             "data": data,
             "exported_at": datetime.utcnow().isoformat(),
             "exported_by": admin_id
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error exporting training data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/admin/export/training-data.jsonl",
+    summary="Download training data as JSONL file",
+    description="Download reviewed hallucinations as JSONL file ready for OpenAI fine-tuning upload"
+)
+async def download_training_data_jsonl(
+    reviewed_only: bool = True,
+    admin_id: str = Depends(check_rate_limit),
+    service: AdminReviewService = Depends(get_admin_service)
+):
+    """
+    Download training data as JSONL file.
+
+    This file can be directly uploaded to OpenAI for fine-tuning:
+    openai api fine_tunes.create -t training_data.jsonl -m gpt-3.5-turbo
+
+    Or via Python SDK:
+    openai.File.create(file=open("training_data.jsonl", "rb"), purpose="fine-tune")
+    """
+    from fastapi.responses import Response
+
+    try:
+        jsonl_content = await service.export_for_training_jsonl(
+            admin_id=admin_id,
+            reviewed_only=reviewed_only
+        )
+
+        # Return as downloadable file
+        filename = f"training_data_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jsonl"
+        return Response(
+            content=jsonl_content,
+            media_type="application/x-ndjson",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error downloading training data JSONL: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -700,19 +764,17 @@ async def get_cost_stats(
         return {
             "daily": {
                 "date": daily.date,
-                "total_requests": daily.total_requests,
-                "prompt_tokens": daily.total_prompt_tokens,
-                "completion_tokens": daily.total_completion_tokens,
-                "total_tokens": daily.total_tokens,
-                "estimated_cost_usd": round(daily.estimated_cost_usd, 4),
-                "by_model": daily.by_model,
-                "by_tenant": daily.by_tenant
+                "requests": daily.requests,
+                "prompt_tokens": daily.prompt_tokens,
+                "completion_tokens": daily.completion_tokens,
+                "total_tokens": daily.prompt_tokens + daily.completion_tokens,
+                "cost_usd": round(daily.cost_usd, 4)
             },
             "total": total,
             "session": session,
             "budget": {
                 "daily_limit_usd": tracker.daily_budget,
-                "remaining_usd": round(tracker.daily_budget - daily.estimated_cost_usd, 2)
+                "remaining_usd": round(tracker.daily_budget - daily.cost_usd, 2)
             }
         }
     except HTTPException:
@@ -746,36 +808,27 @@ async def get_drift_status(
         DriftReport s alertima i preporukama
     """
     try:
-        # Use drift detector from app state (initialized in lifespan)
         detector = request.app.state.drift_detector
         if not detector:
-            raise HTTPException(
-                status_code=503,
-                detail="Drift detector not initialized"
-            )
+            raise HTTPException(status_code=503, detail="Drift detector not initialized")
 
-        report = await detector.check_drift(force_refresh=force_refresh)
+        report = await detector.check_drift()
 
         return {
-            "report_id": report.report_id,
-            "generated_at": report.generated_at,
-            "model_version": report.model_version,
             "has_drift": report.has_drift,
-            "severity": report.overall_severity,
-            "alerts": [
-                {
-                    "type": a.drift_type,
-                    "severity": a.severity,
-                    "message": a.message,
-                    "current_value": a.current_value,
-                    "baseline_value": a.baseline_value,
-                    "deviation_percent": a.deviation_percent,
-                    "recommended_action": a.recommended_action
-                }
-                for a in report.alerts
-            ],
-            "metrics_summary": report.metrics_summary,
-            "recommendations": report.recommendations
+            "severity": report.severity,
+            "sample_count": report.sample_count,
+            "alerts": report.alerts,
+            "current": {
+                "error_rate": round(report.error_rate, 4),
+                "latency_ms": round(report.latency_ms, 1),
+                "hallucination_rate": round(report.hallucination_rate, 4)
+            },
+            "baseline": {
+                "error_rate": round(report.baseline_error_rate, 4),
+                "latency_ms": round(report.baseline_latency_ms, 1),
+                "hallucination_rate": round(report.baseline_hallucination_rate, 4)
+            }
         }
     except HTTPException:
         raise
@@ -796,13 +849,13 @@ if __name__ == "__main__":
         format="%(asctime)s [ADMIN-API] %(levelname)s: %(message)s"
     )
 
-    print("\n" + "=" * 60)
-    print("MOBILITYONE ADMIN API v2.1")
-    print("=" * 60)
-    print("Port: 8080")
-    print("Docs: http://localhost:8080/admin/docs")
-    print("Database: PostgreSQL (admin_user)")
-    print("=" * 60 + "\n")
+    logger.info("=" * 60)
+    logger.info("MOBILITYONE ADMIN API v2.1")
+    logger.info("=" * 60)
+    logger.info("Port: 8080")
+    logger.info("Docs: http://localhost:8080/admin/docs")
+    logger.info("Database: PostgreSQL (admin_user)")
+    logger.info("=" * 60)
 
     uvicorn.run(
         "admin_api:app",

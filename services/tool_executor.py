@@ -1,23 +1,29 @@
 """
 Tool Executor - Production-Ready Execution Engine
-Version: 2.0
+Version: 3.0 (PHASE 3 - DUMB CLIENT)
 
 GATE 1: INVISIBLE INJECTION (Merge) - Auto-inject context params
 GATE 2: TYPE VALIDATION & CASTING - Strict type checking
 GATE 3: CIRCUIT BREAKER - Prevent cascading failures
+GATE 4: PARAM MERGING - get_merged_params from Registry (copy semantics)
 
 Features:
-- Domain-agnostic execution
+- Domain-agnostic execution (NO tool-specific if/else)
 - Parameter resolution from multiple sources
 - Circuit breaker protection
 - Detailed error feedback for AI
+- Fail-fast on missing tools
 
-NO business logic.
+PHASE 3: This is a DUMB HTTP CLIENT.
+- NO business logic here
+- NO if tool_name == "..."
+- All defaults come from ToolRegistry._HIDDEN_DEFAULTS
+- All params merged via registry.get_merged_params()
 """
 
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from services.api_gateway import APIGateway, HttpMethod, APIResponse
 from services.tool_contracts import (
@@ -30,6 +36,8 @@ from services.circuit_breaker import CircuitBreaker, CircuitOpenError
 from services.error_parser import ErrorParser
 from services.patterns import should_skip_person_id_injection
 
+if TYPE_CHECKING:
+    from services.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +57,8 @@ class ToolExecutor:
     def __init__(
         self,
         gateway: APIGateway,
-        circuit_breaker: Optional[CircuitBreaker] = None
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        registry: Optional["ToolRegistry"] = None
     ):
         """
         Initialize executor.
@@ -57,12 +66,14 @@ class ToolExecutor:
         Args:
             gateway: API Gateway for HTTP calls
             circuit_breaker: Optional circuit breaker
+            registry: Optional ToolRegistry for hidden defaults injection
         """
         self.gateway = gateway
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self.param_manager = ParameterManager()
+        self.registry = registry  # CJELINA 2: Used for inject_defaults
 
-        logger.info("ToolExecutor initialized (v2.0)")
+        logger.info("ToolExecutor initialized (v3.0 - PHASE 3 DUMB CLIENT)")
 
     async def execute(
         self,
@@ -85,6 +96,13 @@ class ToolExecutor:
         operation_id = tool.operation_id
 
         logger.info(f"🔧 Executing: {operation_id}")
+
+        # PHASE 3: Fail-fast if tool not in registry
+        if self.registry and not self.registry.get_tool(operation_id):
+            raise ValueError(
+                f"Tool '{operation_id}' not found in registry. "
+                f"Available tools: {len(self.registry.tools)}"
+            )
 
         try:
             # GATE 1 & 2: Parameter resolution and validation
@@ -174,15 +192,16 @@ class ToolExecutor:
                                     )
                                     break
 
-            # FIX v13.3: Inject EntryType and AssigneeType for VehicleCalendar booking
-            # These params have incorrect context_key in Swagger metadata
-            if tool.operation_id == "post_VehicleCalendar" and body:
-                if "EntryType" not in body:
-                    body["EntryType"] = 0  # BOOKING
-                    logger.debug("Injected EntryType=0 (BOOKING) for VehicleCalendar")
-                if "AssigneeType" not in body:
-                    body["AssigneeType"] = 1  # PERSON
-                    logger.debug("Injected AssigneeType=1 (PERSON) for VehicleCalendar")
+            # GATE 4: PHASE 3 - Merge hidden defaults from Registry (copy semantics)
+            # All business logic (EntryType, AssigneeType, etc.) is defined in
+            # ToolRegistry._HIDDEN_DEFAULTS, not here. Executor is "dumb".
+            if self.registry:
+                # Use get_merged_params for body (POST/PUT/PATCH)
+                if body:
+                    body = self.registry.get_merged_params(operation_id, body)
+                # Also merge for query params if needed
+                if query_params:
+                    query_params = self.registry.get_merged_params(operation_id, query_params)
 
             # Build full URL using STRICT Master Prompt v3.1 formula
             # FIX v21.4: Pass resolved path (with PATH params substituted) to _build_url

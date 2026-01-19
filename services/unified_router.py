@@ -1,40 +1,50 @@
 """
 Unified Router - Single LLM makes ALL routing decisions.
-Version: 1.0
+Version: 2.0
 
 This replaces the complex multi-layer routing with a single, reliable LLM decision.
 
+v2.0 CHANGELOG:
+- ADDED: AmbiguityDetector for disambiguation of generic queries
+- ADDED: Disambiguation hints in LLM prompt when ambiguity detected
+- ADDED: Clarification question fallback for highly ambiguous queries
+
 Architecture:
 1. Gather context (current state, user info, tools)
-2. Single LLM call decides everything
-3. Execute based on decision
+2. Detect ambiguity in search results (NEW)
+3. Single LLM call decides everything (with disambiguation hints if needed)
+4. Execute based on decision OR ask clarification
 
 The LLM receives:
 - User query
 - Current conversation state (flow, missing params)
 - User context (vehicle, person)
 - Available primary tools (30 most common)
-- Few-shot examples from training data
+- Disambiguation hints (NEW - when ambiguity detected)
 
 The LLM outputs:
-- action: "continue_flow" | "exit_flow" | "start_flow" | "simple_api" | "direct_response"
+- action: "continue_flow" | "exit_flow" | "start_flow" | "simple_api" | "direct_response" | "clarify"
 - tool: tool name or null
 - params: extracted parameters
 - flow_type: booking | mileage | case | None
 - response: direct response text (for direct_response action)
+- clarification: question to ask user (for clarify action)
 - reasoning: explanation
 """
 
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from pathlib import Path
 
 from openai import AsyncAzureOpenAI
 
 from config import get_settings
 from services.query_router import QueryRouter, RouteResult
+from services.ambiguity_detector import (
+    AmbiguityDetector, AmbiguityResult, get_ambiguity_detector
+)
 
 if TYPE_CHECKING:
     from services.registry import ToolRegistry
@@ -46,13 +56,15 @@ settings = get_settings()
 @dataclass
 class RouterDecision:
     """Result of unified routing decision."""
-    action: str  # continue_flow, exit_flow, start_flow, simple_api, direct_response
+    action: str  # continue_flow, exit_flow, start_flow, simple_api, direct_response, clarify
     tool: Optional[str] = None
     params: Dict[str, Any] = field(default_factory=dict)
     flow_type: Optional[str] = None  # booking, mileage, case
     response: Optional[str] = None  # For direct_response
+    clarification: Optional[str] = None  # For clarify action (v2.0)
     reasoning: str = ""
     confidence: float = 0.0
+    ambiguity_detected: bool = False  # v2.0: Was ambiguity detected?
 
 
 # Primary tools - the 30 most common operations
@@ -135,6 +147,9 @@ class UnifiedRouter:
         # Query Router - brza staza za poznate patterne
         self.query_router = QueryRouter()
 
+        # v2.0: Ambiguity detector for disambiguation
+        self._ambiguity_detector: Optional[AmbiguityDetector] = None
+
         # Training examples
         self._training_examples: List[Dict] = []
         self._initialized = False
@@ -156,21 +171,25 @@ class UnifiedRouter:
 
         self._initialized = True
 
-    async def _get_relevant_tools(self, query: str, top_k: int = 20) -> Dict[str, str]:
+    async def _get_relevant_tools_with_ambiguity(
+        self,
+        query: str,
+        user_context: Optional[Dict[str, Any]] = None,
+        top_k: int = 20
+    ) -> Tuple[Dict[str, str], Optional[AmbiguityResult]]:
         """
-        Use UnifiedSearch to find relevant tools for this query.
+        Use UnifiedSearch to find relevant tools and detect ambiguity.
 
-        v4.0: Now uses UnifiedSearch which consolidates:
-        - ACTION INTENT GATE
-        - FAISS semantic search
-        - Category/Documentation/Example boosts
+        v2.0: Now also detects ambiguity in results for disambiguation.
 
-        Returns dict of {tool_name: description} for top_k most relevant tools.
-        Falls back to PRIMARY_TOOLS if registry not available.
+        Returns:
+            Tuple of (tools_dict, ambiguity_result)
+            - tools_dict: {tool_name: description}
+            - ambiguity_result: AmbiguityResult if ambiguity detected, else None
         """
         if not self._registry or not self._registry.is_ready:
             logger.debug("Registry not ready, using PRIMARY_TOOLS fallback")
-            return PRIMARY_TOOLS
+            return PRIMARY_TOOLS, None
 
         try:
             # v4.0: Use UnifiedSearch for consistent results
@@ -192,19 +211,53 @@ class UnifiedRouter:
                     if tool_name not in relevant_tools:
                         relevant_tools[tool_name] = desc
 
+                # v2.0: Detect ambiguity in results
+                ambiguity_result = None
+                if self._ambiguity_detector is None:
+                    self._ambiguity_detector = get_ambiguity_detector()
+
+                # Convert results to format expected by ambiguity detector
+                search_results_for_ambiguity = [
+                    {"tool_id": r.tool_id, "score": r.score}
+                    for r in response.results
+                ]
+
+                ambiguity_result = self._ambiguity_detector.detect_ambiguity(
+                    query=query,
+                    search_results=search_results_for_ambiguity,
+                    user_context=user_context
+                )
+
+                if ambiguity_result.is_ambiguous:
+                    logger.info(
+                        f"AMBIGUITY DETECTED: suffix={ambiguity_result.ambiguous_suffix}, "
+                        f"similar_tools={len(ambiguity_result.similar_tools)}, "
+                        f"detected_entity={ambiguity_result.detected_entity}"
+                    )
+
                 logger.info(
                     f"UnifiedSearch: {len(response.results)} tools "
                     f"(intent={response.intent.value}), "
-                    f"total {len(relevant_tools)} with PRIMARY merge"
+                    f"total {len(relevant_tools)} with PRIMARY merge, "
+                    f"ambiguous={ambiguity_result.is_ambiguous if ambiguity_result else False}"
                 )
-                return relevant_tools
+                return relevant_tools, ambiguity_result
 
             logger.debug("UnifiedSearch returned no results, using PRIMARY_TOOLS fallback")
-            return PRIMARY_TOOLS
+            return PRIMARY_TOOLS, None
 
         except Exception as e:
             logger.error(f"UnifiedSearch failed: {e}, using PRIMARY_TOOLS fallback")
-            return PRIMARY_TOOLS
+            return PRIMARY_TOOLS, None
+
+    async def _get_relevant_tools(self, query: str, top_k: int = 20) -> Dict[str, str]:
+        """
+        Use UnifiedSearch to find relevant tools for this query.
+
+        Backwards-compatible wrapper around _get_relevant_tools_with_ambiguity.
+        """
+        tools, _ = await self._get_relevant_tools_with_ambiguity(query, None, top_k)
+        return tools
 
     def _check_exit_signal(self, query: str) -> bool:
         """Check if query contains exit/cancellation signal."""
@@ -397,7 +450,7 @@ class UnifiedRouter:
         user_context: Dict[str, Any],
         conversation_state: Optional[Dict]
     ) -> RouterDecision:
-        """Make routing decision using LLM."""
+        """Make routing decision using LLM with disambiguation support (v2.0)."""
 
         # Build context description - use Swagger field names directly
         vehicle = user_context.get("vehicle", {})
@@ -427,9 +480,11 @@ class UnifiedRouter:
                     f"  - Nedostaju parametri: {missing}"
                 )
 
-        # Get relevant tools via semantic search (v2.0)
-        relevant_tools = await self._get_relevant_tools(query, top_k=25)
-        
+        # v2.0: Get relevant tools WITH ambiguity detection
+        relevant_tools, ambiguity_result = await self._get_relevant_tools_with_ambiguity(
+            query, user_context, top_k=25
+        )
+
         # Build tools description
         tools_desc = f"Dostupni alati ({len(relevant_tools)} relevantnih):\n"
         for tool_name, description in relevant_tools.items():
@@ -438,7 +493,23 @@ class UnifiedRouter:
         # Get few-shot examples
         examples = self._get_few_shot_examples(query, conversation_state.get("flow") if conversation_state else None)
 
-        # Build system prompt
+        # v2.0: Build disambiguation hints if ambiguity detected
+        disambiguation_section = ""
+        if ambiguity_result and ambiguity_result.is_ambiguous:
+            disambiguation_section = f"""
+        UPOZORENJE - DETEKTIRANA DVOSMISLENOST:
+        {ambiguity_result.disambiguation_hint}
+
+        Slični alati: {', '.join(ambiguity_result.similar_tools[:5])}
+
+        PRAVILO ZA DVOSMISLENOST:
+        - Ako upit NE SPOMINJE specifični entitet (npr. vozila, troškovi, osobe),
+          koristi action="clarify" i pitaj korisnika koje podatke želi
+        - Ako upit SPOMINJE entitet, odaberi alat za taj entitet
+        - Primjer: "prosječna kilometraža" → entitet je vozila → get_Vehicles_Agg ili get_MasterData
+        """
+
+        # Build system prompt with disambiguation support (v2.0)
         system_prompt = f"""Ti si routing sustav za MobilityOne fleet management bot.
 
         TVOJ ZADATAK: Odluči što napraviti s korisnikovim upitom.
@@ -450,6 +521,7 @@ class UnifiedRouter:
         {tools_desc}
 
         {examples}
+        {disambiguation_section}
 
         PRAVILA:
 
@@ -466,6 +538,7 @@ class UnifiedRouter:
         - Ako treba pokrenuti flow (rezervacija, unos km, prijava štete) → action="start_flow"
         - Ako je jednostavan upit (dohvat podataka) → action="simple_api"
         - Ako je pozdrav ili zahvala → action="direct_response"
+        - Ako je upit PREVIŠE GENERIČAN (npr. "prosječna vrijednost" bez entiteta) → action="clarify"
 
         3. ODABIR ALATA:
         - "unesi km", "upiši kilometražu", "mogu li upisati" → post_AddMileage (WRITE!)
@@ -483,13 +556,19 @@ class UnifiedRouter:
         - mileage: za unos kilometraže
         - case: za prijavu štete/kvara
 
+        5. CLARIFY (v2.0):
+        - Koristi action="clarify" SAMO kada je upit previše generičan
+        - U "clarification" polju postavi pitanje koje će pomoći identificirati pravi alat
+        - Primjer: "Za koje podatke želite izračunati statistiku? (vozila, troškovi, putovanja)"
+
         ODGOVORI U JSON FORMATU:
         {{
-            "action": "continue_flow|exit_flow|start_flow|simple_api|direct_response",
+            "action": "continue_flow|exit_flow|start_flow|simple_api|direct_response|clarify",
             "tool": "ime_alata ili null",
             "params": {{}},
             "flow_type": "booking|mileage|case ili null",
             "response": "tekst odgovora za direct_response ili null",
+            "clarification": "pitanje za korisnika (samo za action=clarify)",
             "reasoning": "kratko objašnjenje odluke",
             "confidence": 0.0-1.0
         }}"""
@@ -511,25 +590,39 @@ class UnifiedRouter:
             result_text = response.choices[0].message.content
             result = json.loads(result_text)
 
-            logger.info(
-                f"UNIFIED ROUTER: '{query[:30]}...' → "
-                f"action={result.get('action')}, tool={result.get('tool')}, "
-                f"flow={result.get('flow_type')}"
-            )
-
             action = result.get("action", "simple_api")
 
+            logger.info(
+                f"UNIFIED ROUTER v2.0: '{query[:30]}...' → "
+                f"action={action}, tool={result.get('tool')}, "
+                f"flow={result.get('flow_type')}, "
+                f"ambiguous={ambiguity_result.is_ambiguous if ambiguity_result else False}"
+            )
+
             # CRITICAL FIX: Prevent exit_flow when not in a flow
-            # This prevents infinite loop in engine when LLM hallucinates exit_flow
             if action == "exit_flow" and not conversation_state:
                 logger.warning(
                     f"LLM returned exit_flow but no active flow - "
                     f"converting to simple_api. Query: '{query[:40]}...'"
                 )
                 action = "simple_api"
-                # Try to use the tool from LLM response, or fallback to MasterData
                 if not result.get("tool"):
                     result["tool"] = "get_MasterData"
+
+            # v2.0: Handle clarify action
+            if action == "clarify":
+                clarification_text = result.get("clarification")
+                if not clarification_text and ambiguity_result:
+                    # Use detector's clarification question as fallback
+                    clarification_text = ambiguity_result.clarification_question
+
+                return RouterDecision(
+                    action="clarify",
+                    clarification=clarification_text,
+                    reasoning=result.get("reasoning", "Query is ambiguous, need clarification"),
+                    confidence=float(result.get("confidence", 0.3)),
+                    ambiguity_detected=True
+                )
 
             return RouterDecision(
                 action=action,
@@ -538,7 +631,8 @@ class UnifiedRouter:
                 flow_type=result.get("flow_type"),
                 response=result.get("response"),
                 reasoning=result.get("reasoning", ""),
-                confidence=float(result.get("confidence", 0.5))
+                confidence=float(result.get("confidence", 0.5)),
+                ambiguity_detected=ambiguity_result.is_ambiguous if ambiguity_result else False
             )
 
         except Exception as e:

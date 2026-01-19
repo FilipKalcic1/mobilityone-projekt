@@ -248,9 +248,15 @@ async def root():
 @app.get("/metrics")
 async def metrics():
     """Prometheus metrics endpoint."""
-    # Update gauge with current tools count
-    if hasattr(app.state, 'registry') and app.state.registry:
-        TOOLS_LOADED.set(len(app.state.registry.tools))
+    # Read tools count from Redis (written by worker after registry init)
+    # This fixes the "zero" bug - API doesn't load registry, worker does
+    if hasattr(app.state, 'redis') and app.state.redis:
+        try:
+            tools_count = await app.state.redis.get(settings.REDIS_STATS_KEY_TOOLS)
+            if tools_count:
+                TOOLS_LOADED.set(int(tools_count))
+        except Exception:
+            pass  # Metrics should never crash the endpoint
 
     return PlainTextResponse(
         content=generate_latest(),

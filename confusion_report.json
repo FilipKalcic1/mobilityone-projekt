@@ -1,0 +1,2571 @@
+{
+  "summary": {
+    "total_tools": 950,
+    "zero_top1": 223,
+    "low_top1": 0,
+    "good_top1": 727,
+    "perfect_top1": 533
+  },
+  "top_confusions": [
+    {
+      "expected": "get_DocumentTypes_id_documents_documentId",
+      "got": "get_DocumentTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Daj mi dokument s ID-om 1 unutar tipa dokumenta 2.",
+        "Koji su detalji za dokument tipa dokumenta tipa dokumenta 3 u tipu 1?"
+      ]
+    },
+    {
+      "expected": "delete_LatestPersonPeriodicActivities_id",
+      "got": "delete_LatestPeriodicActivities",
+      "count": 2,
+      "example_queries": [
+        "Obriši aktivnost s ID-om 789.",
+        "Ukloni aktivnost s ID-om 456."
+      ]
+    },
+    {
+      "expected": "delete_LatestPersonPeriodicActivities",
+      "got": "delete_PeriodicActivityTypes",
+      "count": 2,
+      "example_queries": [
+        "Obriši sve aktivnosti.",
+        "Ukloni sve aktivnosti s određenim statusom."
+      ]
+    },
+    {
+      "expected": "get_LatestPersonPeriodicActivities_id_metadata",
+      "got": "get_PersonPeriodicActivities_id_metadata",
+      "count": 2,
+      "example_queries": [
+        "Koji su metapodatci za aktivnost s ID-om 123?",
+        "Prikaži metapodatke za aktivnost 456."
+      ]
+    },
+    {
+      "expected": "patch_Metadata_id",
+      "got": "put_DashboardItems_id",
+      "count": 2,
+      "example_queries": [
+        "Djelomično ažuriraj metapodatak s ID-om 1",
+        "Promijeni samo opis kolone za metapodatak s ID-om 2"
+      ]
+    },
+    {
+      "expected": "get_Metadata_ProjectTo",
+      "got": "get_Expenses_ProjectTo",
+      "count": 2,
+      "example_queries": [
+        "Kako dobiti podatke s filtriranjem i sortiranjem?",
+        "Mogu li dobiti određene kolone iz baze?"
+      ]
+    },
+    {
+      "expected": "put_OrgUnits_id_documents_documentId_SetAsDefault",
+      "got": "get_PersonOrgUnits_id_documents",
+      "count": 2,
+      "example_queries": [
+        "Kako postaviti dokument organizacijske jedinice s ID-om 123 kao zadani?",
+        "Što trebam učiniti da promijenim zadani dokument organizacijske jedinice?"
+      ]
+    },
+    {
+      "expected": "get_OrgUnits_id_metadata",
+      "got": "get_Expenses_id_metadata",
+      "count": 2,
+      "example_queries": [
+        "Kako dobiti metapodatke za entitet s ID-om 123?",
+        "Gdje mogu vidjeti metapodatke entiteta?"
+      ]
+    },
+    {
+      "expected": "post_Partners_linktenant_partnerId",
+      "got": "get_Partners_id_documents",
+      "count": 2,
+      "example_queries": [
+        "Kako povezati partnera s ID-om 123?",
+        "Što trebam učiniti da povežem partnera?"
+      ]
+    },
+    {
+      "expected": "get_PersonPeriodicActivities_id_documents_documentId",
+      "got": "get_Persons_id_documents_documentId",
+      "count": 2,
+      "example_queries": [
+        "Daj mi detalje o dokumentu s ID-om doc123 za osobu 123.",
+        "Koje informacije imam o dokumentu 456 za osobu 789?"
+      ]
+    },
+    {
+      "expected": "put_PersonTypes_id",
+      "got": "patch_PersonTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Ažuriraj vrstu osobe s ID-om 1",
+        "Promijeni naziv vrste osobe s ID-om 2"
+      ]
+    },
+    {
+      "expected": "post_TeamMembers_multipatch",
+      "got": "patch_TeamMembers_id",
+      "count": 2,
+      "example_queries": [
+        "Djelomično ažuriraj članove tima s ID-evima 1, 2, 3",
+        "Promijeni ime članova tima s ID-evima 4, 5"
+      ]
+    },
+    {
+      "expected": "get_TenantPermissions_id_documents_documentId",
+      "got": "get_VehicleContracts_id_documents_documentId",
+      "count": 2,
+      "example_queries": [
+        "Daj mi detalje o dokumentu s ID-om 789",
+        "Koje informacije imam o dokumentu 456"
+      ]
+    },
+    {
+      "expected": "put_Tenants_id",
+      "got": "patch_Tenants_id",
+      "count": 2,
+      "example_queries": [
+        "Kako mogu ažurirati najam?",
+        "Koje informacije mogu promijeniti?"
+      ]
+    },
+    {
+      "expected": "post_Tenants_multipatch",
+      "got": "patch_Tenants_id",
+      "count": 2,
+      "example_queries": [
+        "Kako mogu djelomično ažurirati više najma?",
+        "Koje informacije mogu promijeniti?"
+      ]
+    },
+    {
+      "expected": "get_Cases_id",
+      "got": "get_Cases_id_documents_documentId",
+      "count": 2,
+      "example_queries": [
+        "Daj mi informacije o predmetu s ID-om 123.",
+        "Prikaži detalje za predmet 456."
+      ]
+    },
+    {
+      "expected": "get_Cases_ProjectTo",
+      "got": "get_CaseTypes",
+      "count": 2,
+      "example_queries": [
+        "Daj mi ID i ime svih slučajeva.",
+        "Prikazati sve slučajeve s kodom i nazivom."
+      ]
+    },
+    {
+      "expected": "patch_Equipment_id",
+      "got": "patch_EquipmentTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Ažuriraj opremu s ID-jem 1.",
+        "Promijeni naziv opreme s ID-jem 2."
+      ]
+    },
+    {
+      "expected": "patch_ExpenseTypes_id",
+      "got": "put_DashboardItems_id",
+      "count": 2,
+      "example_queries": [
+        "Djelomično ažuriraj stavku s ID-om 1.",
+        "Promijeni naziv stavke s ID-om 2."
+      ]
+    },
+    {
+      "expected": "delete_ExpenseTypes_id",
+      "got": "delete_Tags_id",
+      "count": 2,
+      "example_queries": [
+        "Izbriši stavku s ID-om 1.",
+        "Ukloni stavku s ID-om 2."
+      ]
+    },
+    {
+      "expected": "post_ExpenseTypes_multipatch",
+      "got": "put_DashboardItems_id",
+      "count": 2,
+      "example_queries": [
+        "Djelomično ažuriraj stavke s ID-ima 1 i 2.",
+        "Promijeni naziv stavki s ID-ima 3 i 4."
+      ]
+    },
+    {
+      "expected": "get_LatestEquipmentCalendar_id_metadata",
+      "got": "get_Expenses_id_metadata",
+      "count": 2,
+      "example_queries": [
+        "Daj mi metapodatke za entitet s ID-om 1.",
+        "Koji su metapodaci za entitet 5?"
+      ]
+    },
+    {
+      "expected": "get_LatestMileageReports",
+      "got": "get_DashboardItems",
+      "count": 2,
+      "example_queries": [
+        "Daj mi sve stavke.",
+        "Dohvati stavke s paginacijom."
+      ]
+    },
+    {
+      "expected": "delete_LatestPeriodicActivities_id",
+      "got": "delete_LatestPeriodicActivities",
+      "count": 2,
+      "example_queries": [
+        "Obriši aktivnost s ID-om 123.",
+        "Ukloni aktivnost s ID-om 456."
+      ]
+    },
+    {
+      "expected": "get_LatestVehicleCalendar_Agg",
+      "got": "get_LatestVehicleContracts_Agg",
+      "count": 2,
+      "example_queries": [
+        "Daj mi prosječnu cijenu vozila za agenciju TNT.",
+        "Koliko je najniža cijena vozila za klijenta Bob?"
+      ]
+    },
+    {
+      "expected": "delete_PeriodicActivitiesSchedules_DeleteByCriteria",
+      "got": "delete_Pools_DeleteByCriteria",
+      "count": 2,
+      "example_queries": [
+        "Izbriši sve stavke koje zadovoljavaju kriterije.",
+        "Izbriši stavke prema određenim uvjetima."
+      ]
+    },
+    {
+      "expected": "post_PeriodicActivityTypes_multipatch",
+      "got": "patch_PeriodicActivityTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Djelomično ažuriraj aktivnosti s ID-evima 1, 2 i 3.",
+        "Promijeni naziv aktivnosti za više stavki."
+      ]
+    },
+    {
+      "expected": "delete_PeriodicActivityTypes_DeleteByCriteria",
+      "got": "delete_PeriodicActivityTypes",
+      "count": 2,
+      "example_queries": [
+        "Izbriši sve aktivnosti koje imaju status 'neaktivan'.",
+        "Izbriši aktivnosti koje su starije od 6 mjeseci."
+      ]
+    },
+    {
+      "expected": "get_PeriodicActivityTypes_Agg",
+      "got": "get_PeriodicActivities_Agg",
+      "count": 2,
+      "example_queries": [
+        "Daj mi prosječnu vrijednost aktivnosti za klijenta Bob.",
+        "Koja je maksimalna aktivnost za agenciju TNT?"
+      ]
+    },
+    {
+      "expected": "get_SchedulingModels_id_documents_documentId",
+      "got": "get_SchedulingModels_id_documents",
+      "count": 2,
+      "example_queries": [
+        "Dohvati dokument modela raspoređivanja s ID-om 'doc123' za model s ID-om 123.",
+        "Dohvati dokument modela raspoređivanja s ID-om 'doc456' za model s ID-om 456."
+      ]
+    },
+    {
+      "expected": "get_SchedulingModels_id_metadata",
+      "got": "get_LatestVehicleContracts_id_metadata",
+      "count": 2,
+      "example_queries": [
+        "Dohvati metapodatke za model s ID-om 123.",
+        "Dohvati metapodatke za model s ID-om 456."
+      ]
+    },
+    {
+      "expected": "delete_Tags_id",
+      "got": "delete_Tags",
+      "count": 2,
+      "example_queries": [
+        "Obriši tag s ID-om 1.",
+        "Ukloni tag s ID-om 2."
+      ]
+    },
+    {
+      "expected": "get_Trips_id_metadata",
+      "got": "get_Expenses_id_metadata",
+      "count": 2,
+      "example_queries": [
+        "Kako dobiti metapodatke za entitet s ID-jem 123?",
+        "Što trebam učiniti da pregledam metapodatke entiteta?"
+      ]
+    },
+    {
+      "expected": "get_TripTypes_id_documents",
+      "got": "get_TripTypes_id_documents_documentId",
+      "count": 2,
+      "example_queries": [
+        "Daj mi dokumente tipa putovanja za tip putovanja s ID-om 1",
+        "Prikaži sve dokumente tipa putovanja vezane uz tip putovanja s ID-om 2"
+      ]
+    },
+    {
+      "expected": "put_TripTypes_id_documents_documentId_SetAsDefault",
+      "got": "get_TripTypes_id_documents_documentId_thumb",
+      "count": 2,
+      "example_queries": [
+        "Kako postaviti dokument tipa putovanja s id 123 za entitet 456 kao zadani?",
+        "Što se događa ako pokušam postaviti nepostojeći dokument tipa putovanja kao zadani?"
+      ]
+    },
+    {
+      "expected": "put_VehicleCalendar_id_documents_documentId_SetAsDefault",
+      "got": "get_VehicleCalendar_id_documents",
+      "count": 2,
+      "example_queries": [
+        "Kako mogu postaviti dokument kalendara vozila kao zadani?",
+        "Koje su posljedice postavljanja dokumenta kalendara vozila kao zadani?"
+      ]
+    },
+    {
+      "expected": "get_VehicleContracts_id_documents",
+      "got": "get_VehicleContracts_id_documents_documentId",
+      "count": 2,
+      "example_queries": [
+        "Želim dobiti dokumente ugovora vozila za ugovor s ID-om 123.",
+        "Kako mogu provjeriti dokumente ugovora vozila vozila s ID-om 456?"
+      ]
+    },
+    {
+      "expected": "get_Vehicles_id_documents_documentId",
+      "got": "get_VehicleContracts_id_documents_documentId",
+      "count": 2,
+      "example_queries": [
+        "Daj mi dokument vozila s ID-om 789 za vozilo s ID-om 123.",
+        "Prikaži informacije o dokumentu s ID-om 456 za vozilo 789."
+      ]
+    },
+    {
+      "expected": "patch_PersonActivityTypes_id",
+      "got": "patch_PeriodicActivityTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Djelomično ažuriraj tip aktivnosti s ID-om 1.",
+        "Promijeni samo naziv tipa aktivnosti s ID-om 2."
+      ]
+    },
+    {
+      "expected": "post_Trips_multipatch",
+      "got": "patch_Trips_id",
+      "count": 2,
+      "example_queries": [
+        "Kako mogu ažurirati više putovanja odjednom?",
+        "Želim promijeniti status nekoliko putovanja."
+      ]
+    },
+    {
+      "expected": "post_Vehicles_multipatch",
+      "got": "patch_Vehicles_id",
+      "count": 2,
+      "example_queries": [
+        "Kako mogu djelomično ažurirati više vozila?",
+        "Mogu li promijeniti status za više vozila odjednom?"
+      ]
+    },
+    {
+      "expected": "patch_PersonPeriodicActivities_id",
+      "got": "patch_PeriodicActivityTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Ažuriraj aktivnost s ID-jem 1",
+        "Djelomično ažuriraj aktivnost s ID-jem 2"
+      ]
+    },
+    {
+      "expected": "post_PersonPeriodicActivities_multipatch",
+      "got": "patch_PeriodicActivityTypes_id",
+      "count": 2,
+      "example_queries": [
+        "Ažuriraj aktivnosti s ID-ovima 1, 2, 3",
+        "Djelomično ažuriraj aktivnosti s novim podacima"
+      ]
+    },
+    {
+      "expected": "get_AverageFuelExpensesAndMileages_from_to_Agg",
+      "got": "get_AverageFuelExpensesAndMileages_from_to",
+      "count": 2,
+      "example_queries": [
+        "Koliko je ukupno potrošeno goriva od 01.01.2023. do 31.01.2023.?",
+        "Koja je prosječna kilometraža između 01.02.2023. i 28.02.2023.?"
+      ]
+    },
+    {
+      "expected": "delete_PeriodicActivities",
+      "got": "delete_PeriodicActivities_id",
+      "count": 2,
+      "example_queries": [
+        "DELETE /PeriodicActivities?id=1&id=2",
+        "DELETE /PeriodicActivities?id=3"
+      ]
+    },
+    {
+      "expected": "delete_VehicleCalendar_DeleteByCriteria",
+      "got": "delete_Pools_DeleteByCriteria",
+      "count": 2,
+      "example_queries": [
+        "Briši sve stavke koje zadovoljavaju kriterij A.",
+        "Briši stavke prema kriteriju B i C."
+      ]
+    },
+    {
+      "expected": "get_Companies",
+      "got": "get_Lookup_CompanyId",
+      "count": 1,
+      "example_queries": [
+        "Dohvati sve kompanije."
+      ]
+    },
+    {
+      "expected": "put_Companies_id",
+      "got": "put_Companies_id_documents_documentId",
+      "count": 1,
+      "example_queries": [
+        "Ažuriraj kompaniju s ID-em 123."
+      ]
+    },
+    {
+      "expected": "patch_Companies_id",
+      "got": "put_Companies_id_documents_documentId",
+      "count": 1,
+      "example_queries": [
+        "Djelomično ažuriraj kompaniju s ID-em 123."
+      ]
+    },
+    {
+      "expected": "delete_Companies_id",
+      "got": "delete_Companies_id_documents_documentId",
+      "count": 1,
+      "example_queries": [
+        "Izbriši kompaniju s ID-em 123."
+      ]
+    }
+  ],
+  "tools_needing_work": [
+    {
+      "tool": "put_Companies_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "put_Companies_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "patch_Companies_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "put_Companies_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "delete_Companies_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_Companies_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Companies_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Companies_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "post_Companies_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_Companies_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Companies_id_documents",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Companies_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_CostCenters_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_CostCenters_id_documents"
+      ]
+    },
+    {
+      "tool": "post_CostCenters_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_CostCenters_id"
+      ]
+    },
+    {
+      "tool": "get_CostCenters_id_metadata",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Expenses_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_CostCenters_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_DashboardItems_id"
+      ]
+    },
+    {
+      "tool": "get_CostCenters_GroupBy",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Pools_GroupBy"
+      ]
+    },
+    {
+      "tool": "get_DocumentTypes_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_DocumentTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_LatestPersonPeriodicActivities_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_LatestPeriodicActivities"
+      ]
+    },
+    {
+      "tool": "get_LatestPersonPeriodicActivities_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_LatestPeriodicActivities_id",
+        "get_LatestPersonPeriodicActivities"
+      ]
+    },
+    {
+      "tool": "delete_LatestPersonPeriodicActivities",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "delete_LatestPersonPeriodicActivities_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes_DeleteByCriteria",
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "get_LatestPersonPeriodicActivities_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PersonPeriodicActivities_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_LatestPersonPeriodicActivities_ProjectTo",
+      "queries": 3,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_LatestPersonPeriodicActivities",
+        "get_PeriodicActivityTypes",
+        "get_LatestPeriodicActivities"
+      ]
+    },
+    {
+      "tool": "get_LatestPersonPeriodicActivities_GroupBy",
+      "queries": 3,
+      "top1_acc": 0.0,
+      "top3_acc": 33.33333333333333,
+      "confused_with": [
+        "get_PeriodicActivityTypes",
+        "get_PeriodicActivities_GroupBy",
+        "get_PeriodicActivitiesSchedules_GroupBy"
+      ]
+    },
+    {
+      "tool": "patch_Metadata_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "put_DashboardItems_id"
+      ]
+    },
+    {
+      "tool": "get_Metadata_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Expenses_id_metadata",
+        "get_EquipmentCalendar_id_metadata"
+      ]
+    },
+    {
+      "tool": "post_Metadata_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_VehiclesHistoricalEntries_id",
+        "put_DashboardItems_id"
+      ]
+    },
+    {
+      "tool": "get_Metadata_id_documents",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Metadata_id_documents_documentId",
+        "get_DocumentTypes_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_Metadata_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_TripTypes_id_metadata",
+        "get_Teams_id"
+      ]
+    },
+    {
+      "tool": "get_Metadata_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Expenses_ProjectTo"
+      ]
+    },
+    {
+      "tool": "get_Metadata_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Tags_Agg",
+        "get_Expenses_Agg"
+      ]
+    },
+    {
+      "tool": "patch_OrgUnits_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "put_PersonOrgUnits_id_documents_documentId",
+        "put_OrgUnits_id"
+      ]
+    },
+    {
+      "tool": "get_OrgUnits_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PersonOrgUnits_id_documents"
+      ]
+    },
+    {
+      "tool": "post_OrgUnits_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_OrgUnits_id"
+      ]
+    },
+    {
+      "tool": "get_OrgUnits_id_documents",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PersonOrgUnits_id_documents"
+      ]
+    },
+    {
+      "tool": "get_OrgUnits_id_documents_documentId",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PersonOrgUnits_id_documents"
+      ]
+    },
+    {
+      "tool": "put_OrgUnits_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PersonOrgUnits_id_documents"
+      ]
+    },
+    {
+      "tool": "get_OrgUnits_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Expenses_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_OrgUnits_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_DashboardItems",
+        "get_TripTypes_ProjectTo"
+      ]
+    },
+    {
+      "tool": "post_Partners_linktenant_partnerId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Partners_id_documents"
+      ]
+    },
+    {
+      "tool": "post_Partners_unlinktenant_partnerId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Persons_id",
+        "get_Partners_id_documents"
+      ]
+    },
+    {
+      "tool": "delete_Partners",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_Partners_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "post_Partners_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_Partners_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_PersonActivityTypes_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_EquipmentTypes_ProjectTo"
+      ]
+    },
+    {
+      "tool": "get_PersonOrgUnits_GroupBy",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PersonActivityTypes_GroupBy"
+      ]
+    },
+    {
+      "tool": "get_PersonPeriodicActivities_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Persons_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "put_PersonPeriodicActivities_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "put_PersonActivityTypes_id_documents_documentId",
+        "put_Persons_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_PersonPeriodicActivities_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_EquipmentTypes_ProjectTo",
+        "get_TripTypes_ProjectTo"
+      ]
+    },
+    {
+      "tool": "post_Persons_ResendInvitation_personId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Persons_id",
+        "get_Persons_id_documents"
+      ]
+    },
+    {
+      "tool": "post_Persons_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Persons_id"
+      ]
+    },
+    {
+      "tool": "put_Persons_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Persons_id_documents_documentId",
+        "get_Persons_id_documents"
+      ]
+    },
+    {
+      "tool": "put_PersonTypes_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "patch_PersonTypes_id"
+      ]
+    },
+    {
+      "tool": "post_PersonTypes_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PersonTypes_id"
+      ]
+    },
+    {
+      "tool": "get_PersonTypes_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_VehicleTypes_id_metadata",
+        "get_Persons_ProjectTo"
+      ]
+    },
+    {
+      "tool": "get_Roles_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Persons_id",
+        "get_Persons_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Roles_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Persons_id_metadata",
+        "get_Persons_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Roles_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Roles_id",
+        "get_Roles"
+      ]
+    },
+    {
+      "tool": "post_TeamMembers_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_TeamMembers_id"
+      ]
+    },
+    {
+      "tool": "get_TeamMembers_id_documents_documentId_thumb",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Teams_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "get_TeamMembers_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Teams_id_metadata"
+      ]
+    },
+    {
+      "tool": "post_Teams_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Teams_id",
+        "put_Teams_id"
+      ]
+    },
+    {
+      "tool": "delete_Teams_id_documents_documentId",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Teams_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Teams_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Teams_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_TenantPermissions_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_MasterData",
+        "get_Persons_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "post_TenantPermissions_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_Persons_id_documents_documentId",
+        "put_TenantPermissions_id"
+      ]
+    },
+    {
+      "tool": "get_TenantPermissions_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_VehicleContracts_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_TenantPermissions_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Persons_id_metadata",
+        "get_VehicleCalendar_id"
+      ]
+    },
+    {
+      "tool": "get_TenantPermissions_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PersonTypes_ProjectTo",
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "get_TenantPermissions_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_CostCenters_Agg",
+        "get_PersonPeriodicActivities_Agg"
+      ]
+    },
+    {
+      "tool": "get_TenantPermissions_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Pools_GroupBy",
+        "get_ExpenseGroups"
+      ]
+    },
+    {
+      "tool": "put_Tenants_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "patch_Tenants_id"
+      ]
+    },
+    {
+      "tool": "delete_Tenants_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_Tenants",
+        "get_Tenants_Join_invitationId"
+      ]
+    },
+    {
+      "tool": "post_Tenants_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Tenants_id"
+      ]
+    },
+    {
+      "tool": "delete_Tenants_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_DocumentTypes_id_documents_documentId",
+        "delete_Equipment"
+      ]
+    },
+    {
+      "tool": "put_Tenants_id_documents_documentId_SetAsDefault",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_WhatCanIDo"
+      ]
+    },
+    {
+      "tool": "get_Cases_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Cases_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "post_Cases_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_Cases_id_documents_documentId",
+        "get_Pools"
+      ]
+    },
+    {
+      "tool": "get_Cases_id_documents",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Cases_id_documents_documentId",
+        "get_Cases_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "get_Cases_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_MasterData",
+        "get_LatestVehicleContracts_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_Cases_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_CaseTypes"
+      ]
+    },
+    {
+      "tool": "delete_CaseTypes",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "post_CaseTypes_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_CaseTypes_id",
+        "get_CaseTypes"
+      ]
+    },
+    {
+      "tool": "patch_Equipment_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_EquipmentTypes_id"
+      ]
+    },
+    {
+      "tool": "post_Equipment_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_Equipment_id",
+        "patch_EquipmentTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_Equipment_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_Equipment",
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "delete_EquipmentCalendar_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_Equipment_id",
+        "delete_LatestEquipmentCalendar"
+      ]
+    },
+    {
+      "tool": "post_EquipmentCalendar_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_DashboardItems_id",
+        "put_EquipmentTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_EquipmentCalendar_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_Pools_DeleteByCriteria",
+        "delete_Equipment"
+      ]
+    },
+    {
+      "tool": "put_EquipmentCalendar_id_documents_documentId_SetAsDefault",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_EquipmentCalendar_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "get_EquipmentCalendar_id_metadata",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Expenses_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_EquipmentCalendar_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_EquipmentTypes_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_EquipmentCalendar_Agg",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Cases_Agg"
+      ]
+    },
+    {
+      "tool": "get_EquipmentCalendarOnPersonVehicle_on_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_MasterData",
+        "get_EquipmentCalendarOnPersonVehicle_on"
+      ]
+    },
+    {
+      "tool": "put_EquipmentTypes_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "patch_EquipmentTypes_id"
+      ]
+    },
+    {
+      "tool": "get_EquipmentTypes_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_EquipmentTypes_id_documents",
+        "get_EquipmentTypes_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_EquipmentTypes_id_documents_documentId_thumb",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_EquipmentTypes_id_documents_documentId",
+        "get_EquipmentTypes_id_documents"
+      ]
+    },
+    {
+      "tool": "get_ExpenseGroups_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_ExpenseGroups_id_documents_documentId",
+        "get_ExpenseGroups_id_documents"
+      ]
+    },
+    {
+      "tool": "post_Expenses_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_Expenses_id",
+        "get_Stats_FleetAverageMonthlyExpenses"
+      ]
+    },
+    {
+      "tool": "put_Expenses_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "put_Persons_id_documents_documentId",
+        "put_DocumentTypes_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "patch_ExpenseTypes_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "put_DashboardItems_id"
+      ]
+    },
+    {
+      "tool": "delete_ExpenseTypes_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_Tags_id"
+      ]
+    },
+    {
+      "tool": "get_ExpenseTypes_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_DashboardItems_id",
+        "get_Tags_id"
+      ]
+    },
+    {
+      "tool": "post_ExpenseTypes_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_DashboardItems_id"
+      ]
+    },
+    {
+      "tool": "get_ExpenseTypes_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_ExpenseTypes_id_metadata",
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "get_ExpenseTypes_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Stats_FleetAverageMonthlyExpenses",
+        "get_VehiclesMonthlyExpenses_Agg"
+      ]
+    },
+    {
+      "tool": "delete_LatestEquipmentCalendar_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes",
+        "delete_LatestEquipmentCalendar"
+      ]
+    },
+    {
+      "tool": "get_LatestEquipmentCalendar_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Expenses_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_LatestEquipmentCalendar_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_LatestMileageReports_id",
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "get_LatestEquipmentCalendar_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Pools_Agg",
+        "get_Expenses_Agg"
+      ]
+    },
+    {
+      "tool": "get_LatestEquipmentCalendar_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_VehicleTypes_GroupBy",
+        "get_TeamMembers_GroupBy"
+      ]
+    },
+    {
+      "tool": "delete_LatestMileageReports",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_Pools_id",
+        "delete_Pools_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_LatestMileageReports",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "delete_LatestMileageReports_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes",
+        "delete_LatestEquipmentCalendar"
+      ]
+    },
+    {
+      "tool": "get_LatestMileageReports_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_MileageReports_id",
+        "get_VehicleCalendar_id"
+      ]
+    },
+    {
+      "tool": "get_LatestMileageReports_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_MonthlyMileages_Agg",
+        "get_Expenses_Agg"
+      ]
+    },
+    {
+      "tool": "delete_LatestPeriodicActivities_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_LatestPeriodicActivities"
+      ]
+    },
+    {
+      "tool": "get_LatestPeriodicActivities_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_PersonPeriodicActivities_id_metadata",
+        "get_LatestPeriodicActivities_id"
+      ]
+    },
+    {
+      "tool": "get_LatestPeriodicActivities_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivityTypes",
+        "get_LatestPeriodicActivities"
+      ]
+    },
+    {
+      "tool": "get_LatestPeriodicActivities_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Pools_Agg",
+        "get_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "get_LatestPeriodicActivities_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PeriodicActivitiesSchedules_GroupBy",
+        "get_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "delete_LatestVehicleCalendar",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "delete_LatestVehicleCalendar_DeleteByCriteria",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_VehicleCalendar_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_LatestVehicleCalendar_id_metadata",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_LatestVehicleCalendar_id"
+      ]
+    },
+    {
+      "tool": "get_LatestVehicleCalendar_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_PeriodicActivityTypes",
+        "get_LatestPeriodicActivities"
+      ]
+    },
+    {
+      "tool": "get_LatestVehicleCalendar_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_LatestVehicleContracts_Agg"
+      ]
+    },
+    {
+      "tool": "get_LatestVehicleContracts_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Vehicles_vehicleId_external_info",
+        "get_Lookup_VehicleId_id"
+      ]
+    },
+    {
+      "tool": "get_LatestVehicleContracts_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_LatestVehicleContracts_id",
+        "get_Vehicles"
+      ]
+    },
+    {
+      "tool": "get_Master_id_metadata",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_EquipmentCalendar_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_Master_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Cases_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "put_MileageReports_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_MileageReports_id_documents_documentId",
+        "put_MileageReports_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_MileageReports_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_LatestMileageReports_GroupBy",
+        "get_Tags_GroupBy"
+      ]
+    },
+    {
+      "tool": "get_MonthlyFuelExpensesAndMileages_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_MonthlyFuelExpensesAndMileages",
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "get_MonthlyFuelExpensesAndMileages_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_AverageFuelExpensesAndMileages_from_to",
+        "get_Expenses_Agg"
+      ]
+    },
+    {
+      "tool": "get_MonthlyMileages_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Stats_FleetAverageMonthlyMileage_year_month",
+        "get_MonthlyMileagesAssigned"
+      ]
+    },
+    {
+      "tool": "get_MonthlyMileages_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_MonthlyMileagesAssigned_GroupBy",
+        "get_MonthlyMileages_Agg"
+      ]
+    },
+    {
+      "tool": "delete_PeriodicActivities_DeleteByCriteria",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivities_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "post_PeriodicActivitiesSchedules",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "post_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "put_PeriodicActivitiesSchedules_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "patch_PeriodicActivitiesSchedules_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_PeriodicActivitiesSchedules_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivitiesSchedules_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "post_PeriodicActivitiesSchedules_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_PeriodicActivitiesSchedules_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_Pools_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivitiesSchedules_id_documents_documentId_thumb",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivities_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "put_PeriodicActivitiesSchedules_id_documents_documentId_SetAsDefault",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivitiesSchedules_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivitiesSchedules_id_metadata",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_EquipmentCalendar_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivitiesSchedules_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_VehicleCalendar_ProjectTo"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivitiesSchedules_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivities_Agg",
+        "get_PeriodicActivityTypes_Agg"
+      ]
+    },
+    {
+      "tool": "post_PeriodicActivityTypes_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_PeriodicActivityTypes_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "post_PeriodicActivityTypes_id_documents",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "post_PeriodicActivities_id_documents"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivityTypes_id_documents",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PeriodicActivities_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivityTypes_id_documents_documentId",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivities_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "put_PeriodicActivityTypes_id_documents_documentId",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_PeriodicActivities_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivityTypes_id_documents_documentId_thumb",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PeriodicActivities_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "put_PeriodicActivityTypes_id_documents_documentId_SetAsDefault",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "put_PeriodicActivities_id_documents_documentId_SetAsDefault"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivityTypes_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivityTypes_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivities_Agg"
+      ]
+    },
+    {
+      "tool": "get_PeriodicActivityTypes_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivitiesSchedules_GroupBy",
+        "get_PeriodicActivities_GroupBy"
+      ]
+    },
+    {
+      "tool": "patch_Pools_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "put_Pools_id"
+      ]
+    },
+    {
+      "tool": "post_Pools_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Pools_id"
+      ]
+    },
+    {
+      "tool": "get_Pools_id_metadata",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Expenses_id_metadata"
+      ]
+    },
+    {
+      "tool": "delete_SchedulingModels",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "post_SchedulingModels_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_SchedulingModels_id"
+      ]
+    },
+    {
+      "tool": "delete_SchedulingModels_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes",
+        "delete_LatestPeriodicActivities_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_SchedulingModels_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_SchedulingModels_id_documents"
+      ]
+    },
+    {
+      "tool": "get_SchedulingModels_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_LatestVehicleContracts_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_SchedulingModels_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_VehicleTypes_id_documents",
+        "get_Lookup_SchedulingModelId"
+      ]
+    },
+    {
+      "tool": "get_SchedulingModels_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Pools_Agg",
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "delete_Tags_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_Tags"
+      ]
+    },
+    {
+      "tool": "post_Tags_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Tags_id",
+        "put_Tags_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Tags_id_documents_documentId_thumb",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Persons_id_documents_documentId_thumb",
+        "get_Vehicles_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "put_Tags_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Tags_id_documents_documentId",
+        "put_Tags_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Tags_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_TripTypes_ProjectTo",
+        "delete_Pools_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_Trips_FileIds",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_VehicleContracts_id_documents_documentId",
+        "delete_DocumentTypes_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "put_Trips_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_Trips_id_documents_documentId",
+        "get_Trips_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "get_Trips_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Expenses_id_metadata"
+      ]
+    },
+    {
+      "tool": "get_Trips_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_TripTypes_ProjectTo",
+        "get_DashboardItems"
+      ]
+    },
+    {
+      "tool": "post_TripTypes_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_TripTypes_id",
+        "put_TripTypes_id"
+      ]
+    },
+    {
+      "tool": "get_TripTypes_id_documents",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_TripTypes_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "put_TripTypes_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_TripTypes_id_documents_documentId_thumb"
+      ]
+    },
+    {
+      "tool": "post_VehicleBoard_Defleet",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_VehicleCalendar_id",
+        "get_EquipmentCalendarOn_on"
+      ]
+    },
+    {
+      "tool": "put_VehicleCalendar_id_documents_documentId_SetAsDefault",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_VehicleCalendar_id_documents"
+      ]
+    },
+    {
+      "tool": "get_VehicleContracts_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_LatestVehicleContracts_id",
+        "get_VehicleCalendar_id"
+      ]
+    },
+    {
+      "tool": "post_VehicleContracts_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_VehicleContracts_id",
+        "put_Persons_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_VehicleContracts_id_documents",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_VehicleContracts_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Vehicles_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_VehicleContracts_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_Vehicles_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_VehicleTypes_GroupBy",
+        "get_VehicleCalendarOn_on_GroupBy"
+      ]
+    },
+    {
+      "tool": "post_VehiclesHistoricalEntries_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_VehiclesHistoricalEntries_id",
+        "put_VehiclesHistoricalEntries_id"
+      ]
+    },
+    {
+      "tool": "get_VehiclesHistoricalEntries_id_documents_documentId",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_VehiclesHistoricalEntries_id_documents",
+        "get_VehicleContracts_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "get_VehiclesHistoricalEntries_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_LatestVehicleContracts_id_metadata",
+        "get_VehicleCalendar_id"
+      ]
+    },
+    {
+      "tool": "get_VehiclesHistoricalEntries_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_LatestVehicleContracts_id",
+        "get_VehicleCalendar_ProjectTo"
+      ]
+    },
+    {
+      "tool": "get_VehiclesHistoricalEntries_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_Stats_VehicleAverageMonthlyExpenses_vehicleId",
+        "get_VehiclesMonthlyExpenses_Agg"
+      ]
+    },
+    {
+      "tool": "get_VehiclesHistoricalEntries_GroupBy",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_VehicleTypes_GroupBy",
+        "get_Expenses_GroupBy"
+      ]
+    },
+    {
+      "tool": "get_VehiclesMonthlyExpenses_id_metadata",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_VehiclesMonthlyExpenses_id",
+        "get_VehicleCalendar_id"
+      ]
+    },
+    {
+      "tool": "get_VehiclesMonthlyExpenses_ProjectTo",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "get_VehiclesMonthlyExpenses_id",
+        "get_VehicleCalendar_ProjectTo"
+      ]
+    },
+    {
+      "tool": "delete_VehicleTypes",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_VehicleTypes_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_VehicleTypes_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_VehicleTypes_id_documents_documentId"
+      ]
+    },
+    {
+      "tool": "post_VehicleTypes_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_VehicleTypes_id"
+      ]
+    },
+    {
+      "tool": "get_VehicleTypes_ProjectTo",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "get_VehicleTypes_id_documents"
+      ]
+    },
+    {
+      "tool": "get_VehicleTypes_Agg",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Stats_VehicleAverageMonthlyExpenses_vehicleId"
+      ]
+    },
+    {
+      "tool": "delete_PersonActivityTypes",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "get_PersonActivityTypes",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_Lookup_ActivityTypeId",
+        "get_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "patch_PersonActivityTypes_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_PersonActivityTypes_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "get_PersonActivityTypes_id",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "post_PersonActivityTypes_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_PersonActivityTypes_DeleteByCriteria",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "post_PersonOrgUnits_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PersonOrgUnits_id"
+      ]
+    },
+    {
+      "tool": "delete_PersonOrgUnits_DeleteByCriteria",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_Pools_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "post_MileageReports_multipatch",
+      "queries": 1,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_MileageReports_id"
+      ]
+    },
+    {
+      "tool": "post_PeriodicActivities_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_PeriodicActivityTypes_id",
+        "put_PersonPeriodicActivities_id"
+      ]
+    },
+    {
+      "tool": "post_Trips_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Trips_id"
+      ]
+    },
+    {
+      "tool": "delete_Vehicles",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_Vehicles_DeleteByCriteria",
+        "get_VehiclesMonthlyExpenses"
+      ]
+    },
+    {
+      "tool": "delete_Vehicles_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "delete_VehicleCalendar",
+        "get_VehiclesMonthlyExpenses"
+      ]
+    },
+    {
+      "tool": "post_Vehicles_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_Vehicles_id"
+      ]
+    },
+    {
+      "tool": "post_AddCase_parse",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "post_AddCase",
+        "get_Lookup_CaseId"
+      ]
+    },
+    {
+      "tool": "post_SyncExternalIdAndLicencePlate",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "put_VehicleCalendar_id_documents_documentId",
+        "delete_Vehicles_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "get_PersonPeriodicActivities",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_LatestPeriodicActivities",
+        "get_PeriodicActivityTypes"
+      ]
+    },
+    {
+      "tool": "patch_PersonPeriodicActivities_id",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "post_PersonPeriodicActivities_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_PeriodicActivityTypes_id"
+      ]
+    },
+    {
+      "tool": "delete_PersonPeriodicActivities_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "delete_LatestPeriodicActivities",
+        "delete_LatestPeriodicActivities_DeleteByCriteria"
+      ]
+    },
+    {
+      "tool": "post_Upsert_People",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 50.0,
+      "confused_with": [
+        "post_Persons",
+        "put_Persons_id"
+      ]
+    },
+    {
+      "tool": "get_AverageFuelExpensesAndMileages_from_to_Agg",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "get_AverageFuelExpensesAndMileages_from_to"
+      ]
+    },
+    {
+      "tool": "delete_PeriodicActivities",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_PeriodicActivities_id"
+      ]
+    },
+    {
+      "tool": "post_VehicleCalendar_multipatch",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 0.0,
+      "confused_with": [
+        "patch_VehiclesHistoricalEntries_id",
+        "put_VehiclesHistoricalEntries_id"
+      ]
+    },
+    {
+      "tool": "delete_VehicleCalendar_DeleteByCriteria",
+      "queries": 2,
+      "top1_acc": 0.0,
+      "top3_acc": 100.0,
+      "confused_with": [
+        "delete_Pools_DeleteByCriteria"
+      ]
+    }
+  ]
+}

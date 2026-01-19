@@ -1,11 +1,7 @@
 """
 Database Models
-Version: 10.1
 
-SQLAlchemy ORM models.
-DEPENDS ON: database.py
-
-FIXED: Replaced deprecated datetime.utcnow() with timezone-aware datetime.now(timezone.utc)
+SQLAlchemy ORM models with timezone-aware timestamps.
 """
 
 import uuid
