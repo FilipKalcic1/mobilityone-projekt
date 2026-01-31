@@ -223,7 +223,7 @@ class ProjectAuditor:
 
         try:
             tree = ast.parse(content)
-        except:
+        except SyntaxError:
             return
 
         for node in ast.walk(tree):

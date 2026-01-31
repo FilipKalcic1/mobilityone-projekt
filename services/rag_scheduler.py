@@ -79,12 +79,10 @@ class RAGScheduler:
     3. Tool documentation cache
     """
 
-    # Configuration - with environment overrides
-    DEFAULT_REFRESH_INTERVAL_HOURS = int(os.getenv("RAG_REFRESH_INTERVAL_HOURS", "6"))
+    # FIX v11.1: Use centralized config instead of os.getenv()
     REDIS_KEY_METRICS = "rag:scheduler:metrics"
     REDIS_KEY_LOCK = "rag:scheduler:lock"
     REDIS_CHANNEL_REFRESH = "rag:refresh:trigger"
-    LOCK_TTL_SECONDS = int(os.getenv("RAG_LOCK_TTL_SECONDS", "600"))  # Increased to 10 min
 
     # Backoff configuration
     MIN_RETRY_DELAY_SECONDS = 60
@@ -104,10 +102,13 @@ class RAGScheduler:
             refresh_interval_hours: Hours between refreshes (default: 6)
             on_refresh_callback: Async function to call for refresh
         """
+        from config import get_settings
+        _settings = get_settings()
         self.redis = redis_client
         self.refresh_interval = timedelta(
-            hours=refresh_interval_hours or self.DEFAULT_REFRESH_INTERVAL_HOURS
+            hours=refresh_interval_hours or _settings.RAG_REFRESH_INTERVAL_HOURS
         )
+        self.lock_ttl_seconds = _settings.RAG_LOCK_TTL_SECONDS
         self.on_refresh_callback = on_refresh_callback
 
         self._running = False
@@ -120,7 +121,7 @@ class RAGScheduler:
 
         logger.info(
             f"RAGScheduler initialized: interval={self.refresh_interval}, "
-            f"lock_ttl={self.LOCK_TTL_SECONDS}s"
+            f"lock_ttl={self.lock_ttl_seconds}s"
         )
 
     async def start(self) -> None:
@@ -355,7 +356,7 @@ class RAGScheduler:
             self.REDIS_KEY_LOCK,
             lock_value,
             nx=True,  # Only if not exists
-            ex=self.LOCK_TTL_SECONDS
+            ex=self.lock_ttl_seconds
         )
 
         if not lock_acquired:

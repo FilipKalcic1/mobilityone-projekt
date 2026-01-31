@@ -6,18 +6,20 @@ Tracks LLM token usage and costs in Redis.
 Single model pricing (gpt-4o-mini) from config.
 """
 
-import os
 import logging
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-logger = logging.getLogger(__name__)
+from config import get_settings
 
-# Pricing from env or defaults (per 1K tokens)
-INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_1K", "0.00015"))
-OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_1K", "0.0006"))
-DAILY_BUDGET = float(os.getenv("DAILY_COST_BUDGET_USD", "50.0"))
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# FIX v11.1: Use centralized config instead of os.getenv()
+INPUT_PRICE = settings.LLM_INPUT_PRICE_PER_1K
+OUTPUT_PRICE = settings.LLM_OUTPUT_PRICE_PER_1K
+DAILY_BUDGET = settings.DAILY_COST_BUDGET_USD
 
 
 @dataclass

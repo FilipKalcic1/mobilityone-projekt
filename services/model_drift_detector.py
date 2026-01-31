@@ -6,7 +6,6 @@ Detects AI model performance drift by comparing
 recent metrics against baseline.
 """
 
-import os
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -14,12 +13,15 @@ from collections import deque
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
-logger = logging.getLogger(__name__)
+from config import get_settings
 
-# Config from env
-BASELINE_DAYS = int(os.getenv("DRIFT_BASELINE_DAYS", "7"))
-ANALYSIS_HOURS = int(os.getenv("DRIFT_ANALYSIS_HOURS", "6"))
-MIN_SAMPLES = int(os.getenv("DRIFT_MIN_SAMPLES", "50"))
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# FIX v11.1: Use centralized config instead of os.getenv()
+BASELINE_DAYS = settings.DRIFT_BASELINE_DAYS
+ANALYSIS_HOURS = settings.DRIFT_ANALYSIS_HOURS
+MIN_SAMPLES = settings.DRIFT_MIN_SAMPLES
 
 
 @dataclass

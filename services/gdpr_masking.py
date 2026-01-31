@@ -30,7 +30,6 @@ SECURITY:
     - Minimum salt length: 32 characters
 """
 
-import os
 import re
 import hmac
 import hashlib
@@ -186,11 +185,13 @@ class GDPRMaskingService:
         """
         self.use_hashing = use_hashing
 
-        # CRITICAL: Load salt from environment, never hardcode!
+        # CRITICAL: Load salt from config, never hardcode!
+        # FIX v11.1: Use centralized config instead of os.getenv()
         if hash_salt:
             self.hash_salt = hash_salt
         else:
-            self.hash_salt = os.getenv("GDPR_HASH_SALT")
+            from config import get_settings
+            self.hash_salt = get_settings().GDPR_HASH_SALT
             if not self.hash_salt:
                 # Generate a secure random salt for this session
                 # WARNING: This means hashes won't be consistent across restarts!
@@ -217,8 +218,8 @@ class GDPRMaskingService:
         )
 
         logger.info(
-            "GDPRMaskingService initialized (salt from env: %s)",
-            "yes" if os.getenv("GDPR_HASH_SALT") else "no"
+            "GDPRMaskingService initialized (salt from config: %s)",
+            "yes" if get_settings().GDPR_HASH_SALT else "no"
         )
 
     def _compile_patterns(self) -> None:

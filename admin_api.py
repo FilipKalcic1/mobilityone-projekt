@@ -157,11 +157,17 @@ app.add_middleware(
 
 admin_api_key = APIKeyHeader(name="X-Admin-Token", auto_error=True)
 
-# Valid admin tokens (in production, use database or vault)
-VALID_ADMIN_TOKENS = {
-    os.getenv("ADMIN_TOKEN_1", "dev-admin-token-12345"): os.getenv("ADMIN_TOKEN_1_USER", "admin_dev_1"),
-    os.getenv("ADMIN_TOKEN_2", "dev-admin-token-67890"): os.getenv("ADMIN_TOKEN_2_USER", "admin_dev_2"),
-}
+# Valid admin tokens - MUST be set via environment variables
+# FIX v11.1: Removed hardcoded dev tokens - admin API won't work without real tokens
+VALID_ADMIN_TOKENS = {}
+for i in range(1, 5):  # Support up to 4 admin tokens
+    token = os.environ.get(f"ADMIN_TOKEN_{i}")
+    user = os.environ.get(f"ADMIN_TOKEN_{i}_USER")
+    if token and user:
+        VALID_ADMIN_TOKENS[token] = user
+
+if not VALID_ADMIN_TOKENS:
+    logger.warning("ADMIN API: No admin tokens configured! Set ADMIN_TOKEN_1 + ADMIN_TOKEN_1_USER env vars.")
 
 
 async def verify_admin_token(token: str = Security(admin_api_key)) -> str:

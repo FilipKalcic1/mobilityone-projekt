@@ -120,6 +120,37 @@ class Settings(BaseSettings):
     CACHE_TTL_CONVERSATION: int = Field(default=1800)
     
     # =========================================================================
+    # COST TRACKING (LLM token pricing)
+    # =========================================================================
+    LLM_INPUT_PRICE_PER_1K: float = Field(default=0.00015, description="Input token price per 1K tokens")
+    LLM_OUTPUT_PRICE_PER_1K: float = Field(default=0.0006, description="Output token price per 1K tokens")
+    DAILY_COST_BUDGET_USD: float = Field(default=50.0, description="Daily cost budget alert threshold in USD")
+
+    # =========================================================================
+    # MODEL DRIFT DETECTION
+    # =========================================================================
+    DRIFT_BASELINE_DAYS: int = Field(default=7, description="Days of data for baseline metrics")
+    DRIFT_ANALYSIS_HOURS: int = Field(default=6, description="Hours of recent data to analyze for drift")
+    DRIFT_MIN_SAMPLES: int = Field(default=50, description="Minimum samples needed for valid drift analysis")
+
+    # =========================================================================
+    # GDPR
+    # =========================================================================
+    GDPR_HASH_SALT: Optional[str] = Field(default=None, description="Salt for GDPR-compliant data hashing")
+
+    # =========================================================================
+    # RAG SCHEDULER
+    # =========================================================================
+    RAG_REFRESH_INTERVAL_HOURS: int = Field(default=6, description="Hours between RAG index refreshes")
+    RAG_LOCK_TTL_SECONDS: int = Field(default=600, description="Lock TTL for RAG refresh (prevents concurrent refreshes)")
+
+    # =========================================================================
+    # CONFLICT RESOLVER
+    # =========================================================================
+    CONFLICT_LOCK_TTL_MINUTES: int = Field(default=30, description="Edit lock duration in minutes")
+    CONFLICT_SNAPSHOT_TTL_DAYS: int = Field(default=90, description="Config snapshot retention for compliance")
+
+    # =========================================================================
     # MONITORING & LOGGING
     # =========================================================================
     SENTRY_DSN: Optional[str] = Field(default=None)

@@ -52,9 +52,9 @@ def get_memory_usage_mb() -> float:
                 for line in f:
                     if line.startswith('VmRSS:'):
                         return int(line.split()[1]) / 1024  # Convert KB to MB
-        except:
+        except Exception:
             pass
-    except:
+    except Exception:
         pass
     return 0.0
 

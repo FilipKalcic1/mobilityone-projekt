@@ -37,7 +37,6 @@ USAGE:
         logger.warning(f"Conflict detected: {result.conflict_diff}")
 """
 
-import os
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -140,14 +139,10 @@ class ConflictResolver:
     4. Merge suggestions - help resolve conflicts automatically where possible
     """
 
-    # Lock configuration - made configurable via environment
-    LOCK_TTL_MINUTES = int(os.getenv("CONFLICT_LOCK_TTL_MINUTES", "30"))  # Increased from 15
+    # FIX v11.1: Use centralized config instead of os.getenv()
     REDIS_LOCK_PREFIX = "edit_lock:"
     REDIS_VERSION_PREFIX = "record_version:"
     REDIS_HISTORY_PREFIX = "change_history:"
-
-    # Snapshot configuration - 90 days for compliance
-    SNAPSHOT_TTL_DAYS = int(os.getenv("CONFLICT_SNAPSHOT_TTL_DAYS", "90"))  # Increased from 30
 
     def __init__(
         self,
@@ -161,8 +156,12 @@ class ConflictResolver:
             db_session: Database session for persistence
             redis_client: Redis for distributed locking (required in production)
         """
+        from config import get_settings
+        _settings = get_settings()
         self.db = db_session
         self.redis = redis_client
+        self.lock_ttl_minutes = _settings.CONFLICT_LOCK_TTL_MINUTES
+        self.snapshot_ttl_days = _settings.CONFLICT_SNAPSHOT_TTL_DAYS
 
         if not redis_client:
             logger.warning(
@@ -293,7 +292,7 @@ class ConflictResolver:
     async def _create_lock(self, record_id: str, admin_id: str) -> EditLock:
         """Create a new edit lock."""
         now = datetime.now(timezone.utc)
-        expires = now + timedelta(minutes=self.LOCK_TTL_MINUTES)
+        expires = now + timedelta(minutes=self.lock_ttl_minutes)
 
         # Get current version
         version = await self._get_version(record_id)
@@ -311,7 +310,7 @@ class ConflictResolver:
             lock_key = f"{self.REDIS_LOCK_PREFIX}{record_id}"
             await self.redis.setex(
                 lock_key,
-                self.LOCK_TTL_MINUTES * 60,
+                self.lock_ttl_minutes * 60,
                 json.dumps(asdict(lock))
             )
 
@@ -647,7 +646,7 @@ class ConflictResolver:
 
         await self.redis.setex(
             snapshot_key,
-            86400 * self.SNAPSHOT_TTL_DAYS,  # Configurable TTL
+            86400 * self.snapshot_ttl_days,  # Configurable TTL
             json.dumps({
                 "version": version,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
