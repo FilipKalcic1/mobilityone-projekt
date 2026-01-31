@@ -58,12 +58,14 @@ jobs:
           AZURE_OPENAI_API_KEY: "test-api-key"
           APP_ENV: "testing"
         run: |
-          pytest tests/ -v --tb=long -x 2>&1 | tee test_output.txt || true
+          set +e
+          pytest tests/ -v --tb=long -x 2>&1 | tee test_output.txt
+          EXIT_CODE=$?
+          echo '## Test Output (last 100 lines)' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -80 test_output.txt >> $GITHUB_STEP_SUMMARY
+          tail -100 test_output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          # Fail the step if tests failed
-          grep -q "passed" test_output.txt && ! grep -q "failed\|error" test_output.txt
+          exit $EXIT_CODE
 
   lint:
     runs-on: ubuntu-latest
