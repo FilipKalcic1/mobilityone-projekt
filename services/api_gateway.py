@@ -129,12 +129,13 @@ class APIGateway:
         if params is None:
             params = {}
 
-        # For GET requests, enforce Rows=1 if not specified, for efficiency
+        # For GET requests, set a sensible default Rows limit if not specified
+        # FIX v11.1: Was Rows=1 which silently truncated ALL list responses!
         if method == HttpMethod.GET:
             # Case-insensitive check for 'Rows'
             if not any(k.lower() == 'rows' for k in params):
-                params['Rows'] = 1
-                logger.debug("Default 'Rows=1' added for GET request.")
+                params['Rows'] = 50
+                logger.debug("Default 'Rows=50' added for GET request.")
         
         url = self._build_url(path, params)
         effective_tenant = tenant_id or self.tenant_id

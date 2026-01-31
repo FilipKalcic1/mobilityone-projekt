@@ -439,8 +439,18 @@ class MessageEngine:
                 if isinstance(result, dict) and result.get("mid_flow_question"):
                     question = result.get("question", text)
                     logger.info(f"P1: Handling mid-flow question: '{question[:50]}'")
-                    answer = await self._handle_new_request(sender, question, user_context, conv_manager)
-                    return f"{answer}\n\n---\n_Ceka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
+                    # FIX v11.1: Guard against infinite recursion - only handle
+                    # mid-flow question if we're not already handling one
+                    if not getattr(self, '_handling_mid_flow', False):
+                        self._handling_mid_flow = True
+                        try:
+                            answer = await self._handle_new_request(sender, question, user_context, conv_manager)
+                        finally:
+                            self._handling_mid_flow = False
+                        return f"{answer}\n\n---\n_Ceka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
+                    else:
+                        logger.warning("P1: Skipping nested mid-flow question to prevent recursion")
+                        return "Potvrdite prethodnu operaciju s **Da** ili **Ne**."
                 return result
             if state == ConversationState.GATHERING_PARAMS:
                 return await self._flow_handler.handle_gathering(

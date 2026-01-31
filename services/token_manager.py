@@ -160,8 +160,8 @@ class TokenManager:
         """Clear Redis cache."""
         try:
             await self._redis.delete(self._cache_key)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to clear Redis token cache: {e}")
     
     @property
     def is_valid(self) -> bool:

@@ -26,6 +26,23 @@ from services.context import UserContextManager
 
 logger = logging.getLogger(__name__)
 
+# FIX v11.1: Centralized tool-specific parameter overrides.
+# These tools have Swagger metadata that incorrectly maps context_key for certain params.
+# Instead of hardcoding tool IDs throughout the code, define overrides here.
+TOOL_SKIP_CONTEXT_INJECTION: Dict[str, set] = {
+    "post_VehicleCalendar": {"VehicleId", "EntryType", "AssigneeType"},
+    "post_AddMileage": {"VehicleId"},
+    "post_AddCase": {"User", "Subject", "Message"},
+}
+
+# Params that come from flow_handler (not LLM/context), so pass them through directly
+TOOL_FLOW_PARAMS: Dict[str, set] = {
+    "post_VehicleCalendar": {"VehicleId", "AssignedToId", "FromTime", "ToTime",
+                              "EntryType", "AssigneeType", "Description"},
+    "post_AddMileage": {"VehicleId", "Value", "Comment", "Time"},
+    "post_AddCase": {"User", "Subject", "Message"},
+}
+
 
 class ParameterValidationError(Exception):
     """Raised when parameter validation fails."""
@@ -240,11 +257,7 @@ class ParameterManager:
 
         # FIX v13.3: Skip certain params that have incorrect context_key in Swagger metadata
         # VehicleId should come from user context vehicle.id, not person_id
-        skip_injection = set()
-        if tool.operation_id == "post_VehicleCalendar":
-            skip_injection = {"VehicleId", "EntryType", "AssigneeType"}
-        elif tool.operation_id == "post_AddMileage":
-            skip_injection = {"VehicleId"}  # VehicleId comes from user_context.vehicle.id
+        skip_injection = TOOL_SKIP_CONTEXT_INJECTION.get(tool.operation_id, set())
 
         # STEP 1: Direct context parameter injection (existing behavior)
         for param_name, param_def in tool.get_context_params().items():
@@ -401,32 +414,12 @@ class ParameterManager:
                         break
 
                 if not matched:
-                    # FIX v13.3: Special handling for VehicleCalendar booking params
+                    # FIX v11.1: Use centralized TOOL_FLOW_PARAMS instead of hardcoded checks
                     # These params come from flow_handler, not LLM, so pass them through
-                    if tool.operation_id == "post_VehicleCalendar" and param_name in {
-                        "VehicleId", "AssignedToId", "FromTime", "ToTime",
-                        "EntryType", "AssigneeType", "Description"
-                    }:
+                    flow_params = TOOL_FLOW_PARAMS.get(tool.operation_id, set())
+                    if param_name in flow_params:
                         processed[param_name] = value
-                        logger.debug(f"Passed through booking param: {param_name}")
-                        continue
-
-                    # FIX v13.4: Special handling for AddMileage params
-                    # VehicleId comes from user_context.vehicle.id, not context injection
-                    if tool.operation_id == "post_AddMileage" and param_name in {
-                        "VehicleId", "Value", "Comment", "Time"
-                    }:
-                        processed[param_name] = value
-                        logger.debug(f"Passed through mileage param: {param_name}")
-                        continue
-
-                    # FIX v13.5: Special handling for AddCase params
-                    # These come from flow_handler, not standard param resolution
-                    if tool.operation_id == "post_AddCase" and param_name in {
-                        "User", "Subject", "Message"
-                    }:
-                        processed[param_name] = value
-                        logger.debug(f"Passed through case param: {param_name}")
+                        logger.debug(f"Passed through flow param: {param_name} for {tool.operation_id}")
                         continue
 
                     # FIX v13.2: Log at debug level, not warning, because
@@ -714,18 +707,8 @@ class ParameterManager:
         missing = []
 
         # FIX v13.3: Skip params with incorrect context_key/dependency_source
-        # These have incorrect metadata in Swagger definitions
-        # - VehicleId comes from user selection or user_context.vehicle.id, not person_id
-        # - EntryType/AssigneeType will be injected by executor
-        skip_params = set()
-        if tool.operation_id == "post_VehicleCalendar":
-            skip_params = {"VehicleId", "EntryType", "AssigneeType"}
-        elif tool.operation_id == "post_AddMileage":
-            # VehicleId comes from llm_params (passed from flow/executor), not context
-            skip_params = {"VehicleId"}
-        elif tool.operation_id == "post_AddCase":
-            # All params come from flow, not context injection
-            skip_params = {"User", "Subject", "Message"}
+        # FIX v11.1: Use centralized TOOL_SKIP_CONTEXT_INJECTION instead of hardcoded checks
+        skip_params = TOOL_SKIP_CONTEXT_INJECTION.get(tool.operation_id, set())
 
         for param_name in tool.required_params:
             if param_name in skip_params:

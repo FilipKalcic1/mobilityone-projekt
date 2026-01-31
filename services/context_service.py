@@ -249,16 +249,18 @@ class ContextService:
 
     def _validate_user_id(self, user_id: str) -> bool:
         """
-        Validate that user_id is a phone number, not a UUID.
+        Validate user_id and warn if it looks like a UUID instead of phone number.
 
-        NEW v11.0: Prevents the UUID trap where person_id gets used
-        instead of phone number for context keys.
+        NEW v11.0: Detects the UUID trap where person_id gets used
+        instead of phone number for context keys. Logs an error but
+        allows the operation to proceed (some cases may be intentional).
 
         Args:
             user_id: User identifier (should be phone number)
 
         Returns:
-            True if valid phone, False if UUID detected
+            True if user_id is usable (including UUIDs with warning),
+            False only if user_id is empty/None
         """
         if not user_id:
             logger.warning("CONTEXT: Empty user_id provided")

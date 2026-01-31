@@ -5,6 +5,7 @@ Version: 1.0
 Extracted from engine/__init__.py for better modularity.
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 
@@ -142,8 +143,9 @@ class HallucinationHandler:
                 tenant_id=ctx.tenant_id
             )
 
-            # Save state
-            self.error_learning.save_to_file()
+            # Save state (run in thread to avoid blocking the event loop)
+            # FIX v11.1: Was blocking file I/O in async handler
+            await asyncio.to_thread(self.error_learning.save_to_file)
 
             # Return the follow-up question
             follow_up = result.get("follow_up_question", "")

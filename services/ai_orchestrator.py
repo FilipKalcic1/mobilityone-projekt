@@ -28,16 +28,16 @@ except ImportError:
 # v16.0: LLM DECISION MODE - Show more tools, let LLM decide
 # REMOVED single-tool mode - LLM is smarter than embeddings
 SINGLE_TOOL_THRESHOLD = 1.1  # > 1.0 = disabled, never use single-tool mode
-# Use config setting for max tools, default to 25 if not set
-from config import get_settings
-_settings = get_settings()
-MAX_TOOLS_FOR_LLM = getattr(_settings, 'MAX_TOOLS_FOR_LLM', 25)
+# FIX v11.1: Removed duplicate import of get_settings (already imported at line 13)
+MAX_TOOLS_FOR_LLM = getattr(settings, 'MAX_TOOLS_FOR_LLM', 25)
 # Always show at least 5 tools - give LLM real choices
 MIN_TOOLS_FOR_LLM = 5
 MAX_HISTORY_MESSAGES = 20
 MAX_TOKEN_LIMIT = 8000
 
-# LOW FIX v12.2: Token counting overhead constants
+# Token counting overhead constants
+# FIX v11.1: Croatian avg word ~6 chars, ~1.3 tokens/word → chars / 4.6
+CROATIAN_CHARS_PER_TOKEN = 4.6
 MESSAGE_TOKEN_OVERHEAD = 3  # Tokens added per message (OpenAI format overhead)
 FINAL_TOKEN_OVERHEAD = 3    # Final overhead added to total count
 
@@ -101,12 +101,9 @@ class AIOrchestrator:
         """Azure-safe token counting."""
         
         if not self.tokenizer:
-            # MEDIUM FIX v12.2: Improved fallback for Croatian language
-            # Croatian avg word ~6 chars, ~1.3 tokens/word
-            # Approx: chars ÷ 6 × 1.3 = chars ÷ 4.6
+            # Fallback token counting for Croatian language (when tiktoken unavailable)
             total_chars = sum(len(m.get("content", "")) for m in messages)
-            # Add per-message overhead
-            return int(total_chars / 4.6) + len(messages) * MESSAGE_TOKEN_OVERHEAD
+            return int(total_chars / CROATIAN_CHARS_PER_TOKEN) + len(messages) * MESSAGE_TOKEN_OVERHEAD
 
         num_tokens = 0
         for message in messages:

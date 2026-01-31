@@ -517,7 +517,8 @@ class ToolRegistry:
                 f"(confidence={reranked[0].confidence:.2f})"
             )
 
-            return reordered[:top_k * 2]
+            # FIX v11.1: Was top_k * 2 which returned double the expected results
+            return reordered[:top_k]
 
         except ImportError as e:
             logger.debug(f"LLM reranker not available: {e}")
