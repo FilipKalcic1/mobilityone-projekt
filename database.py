@@ -41,8 +41,8 @@ settings = get_settings()
 # Bot uses limited user (can't see admin tables)
 # Admin uses full-access user
 
-BOT_DATABASE_URL = os.getenv("BOT_DATABASE_URL", settings.DATABASE_URL)
-ADMIN_DATABASE_URL = os.getenv("ADMIN_DATABASE_URL", settings.DATABASE_URL)
+BOT_DATABASE_URL = settings.BOT_DATABASE_URL or settings.DATABASE_URL
+ADMIN_DATABASE_URL = settings.ADMIN_DATABASE_URL or settings.DATABASE_URL
 
 # Detect which service we are (set in docker-compose environment)
 SERVICE_TYPE = os.getenv("SERVICE_TYPE", "api")  # api, worker, admin

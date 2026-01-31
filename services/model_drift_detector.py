@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from collections import deque
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 from config import get_settings
 

@@ -151,6 +151,21 @@ class Settings(BaseSettings):
     CONFLICT_SNAPSHOT_TTL_DAYS: int = Field(default=90, description="Config snapshot retention for compliance")
 
     # =========================================================================
+    # ADMIN API
+    # =========================================================================
+    ADMIN_CORS_ORIGINS: str = Field(
+        default="https://admin.mobilityone.io",
+        description="Comma-separated CORS origins for admin API"
+    )
+    ADMIN_RATE_LIMIT_PER_MINUTE: int = Field(default=30, description="Admin API rate limit per minute per user")
+
+    # =========================================================================
+    # DATABASE ROLES (dual-user security)
+    # =========================================================================
+    BOT_DATABASE_URL: Optional[str] = Field(default=None, description="Limited-access DB URL for bot (falls back to DATABASE_URL)")
+    ADMIN_DATABASE_URL: Optional[str] = Field(default=None, description="Full-access DB URL for admin (falls back to DATABASE_URL)")
+
+    # =========================================================================
     # MONITORING & LOGGING
     # =========================================================================
     SENTRY_DSN: Optional[str] = Field(default=None)

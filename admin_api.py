@@ -52,6 +52,7 @@ if env_path.exists():
 # This ensures database.py uses admin connection string with full privileges
 os.environ["SERVICE_TYPE"] = "admin"
 
+from config import get_settings
 from database import AsyncSessionLocal, engine
 from services.admin_review import AdminReviewService, SecurityError
 from services.model_drift_detector import get_drift_detector
@@ -59,6 +60,7 @@ from services.cost_tracker import CostTracker
 from services.conflict_resolver import ConflictResolver
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # Prometheus metrics for Admin API
 ADMIN_REQUESTS = Counter(
@@ -93,7 +95,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Cannot start without database")
 
     # Initialize Redis for drift detector
-    redis_url = os.environ["REDIS_URL"]  # REQUIRED - no default
+    redis_url = settings.REDIS_URL
     try:
         app.state.redis = aioredis.from_url(
             redis_url,
@@ -145,7 +147,7 @@ app = FastAPI(
 # CORS - Restrict to internal domains only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ADMIN_CORS_ORIGINS", "https://admin.mobilityone.io").split(","),
+    allow_origins=settings.ADMIN_CORS_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["X-Admin-Token", "Content-Type"],
@@ -196,7 +198,7 @@ class RedisRateLimiter:
         self._init_redis()
 
     def _init_redis(self):
-        redis_url = os.environ["REDIS_URL"]  # REQUIRED - no default
+        redis_url = settings.REDIS_URL
         try:
             self.redis = aioredis.from_url(redis_url, decode_responses=True)
             logging.info(f"Rate limiter connected to Redis: {redis_url}")
@@ -254,7 +256,7 @@ class RedisRateLimiter:
 
 
 rate_limiter = RedisRateLimiter(
-    requests_per_minute=int(os.getenv("ADMIN_RATE_LIMIT_PER_MINUTE", "30"))
+    requests_per_minute=settings.ADMIN_RATE_LIMIT_PER_MINUTE
 )
 
 
