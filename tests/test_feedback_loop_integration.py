@@ -372,53 +372,51 @@ class TestCostTracker:
     def tracker(self, mock_redis):
         """Create cost tracker."""
         from services.cost_tracker import CostTracker
-        return CostTracker(mock_redis, daily_budget_usd=100.0)
+        return CostTracker(mock_redis)
 
-    def test_model_pricing(self):
-        """Test model pricing configuration."""
-        from services.cost_tracker import ModelPricing
+    def test_pricing_config(self):
+        """Test pricing is loaded from config."""
+        from services.cost_tracker import INPUT_PRICE, OUTPUT_PRICE, DAILY_BUDGET
 
-        pricing = ModelPricing.get_model_pricing("gpt-4o-mini")
-        assert "input" in pricing
-        assert "output" in pricing
-        assert pricing["input"] > 0
+        assert INPUT_PRICE > 0
+        assert OUTPUT_PRICE > 0
+        assert DAILY_BUDGET > 0
 
-    def test_calculate_cost(self):
+    def test_calculate_cost(self, tracker):
         """Test cost calculation."""
-        from services.cost_tracker import ModelPricing
-
-        cost = ModelPricing.calculate_cost("gpt-4o-mini", 1000, 500)
+        cost = tracker._calculate_cost(1000, 500)
         assert cost > 0
         assert cost < 1.0  # Should be in cents range
 
-    def test_negative_tokens_rejected(self):
-        """Test that negative tokens are rejected."""
-        from services.cost_tracker import ModelPricing
-
-        cost = ModelPricing.calculate_cost("gpt-4o-mini", -100, -50)
-        assert cost == 0  # Negative tokens should result in 0
+    def test_zero_tokens(self, tracker):
+        """Test that zero tokens result in zero cost."""
+        cost = tracker._calculate_cost(0, 0)
+        assert cost == 0
 
     @pytest.mark.asyncio
     async def test_record_usage(self, tracker, mock_redis):
         """Test recording usage."""
-        record = await tracker.record_usage(
+        cost = await tracker.record_usage(
             prompt_tokens=100,
             completion_tokens=50,
-            model="gpt-4o-mini",
             tenant_id="test-tenant"
         )
 
-        assert record.prompt_tokens == 100
-        assert record.completion_tokens == 50
-        assert record.estimated_cost_usd > 0
+        assert cost > 0
+        stats = await tracker.get_session_stats()
+        assert stats["session_prompt_tokens"] == 100
+        assert stats["session_completion_tokens"] == 50
 
     @pytest.mark.asyncio
-    async def test_health_check(self, tracker, mock_redis):
-        """Test health check."""
-        health = await tracker.health_check()
+    async def test_session_stats(self, tracker):
+        """Test session stats accumulation."""
+        await tracker.record_usage(prompt_tokens=100, completion_tokens=50)
+        await tracker.record_usage(prompt_tokens=200, completion_tokens=100)
 
-        assert "healthy" in health
-        assert "redis_connected" in health
+        stats = await tracker.get_session_stats()
+        assert stats["session_prompt_tokens"] == 300
+        assert stats["session_completion_tokens"] == 150
+        assert stats["session_requests"] == 2
 
 
 class TestModelDriftDetector:
@@ -444,30 +442,6 @@ class TestModelDriftDetector:
         from services.model_drift_detector import ModelDriftDetector
         return ModelDriftDetector(mock_redis)
 
-    def test_percentile_calculation(self, detector):
-        """Test percentile calculation."""
-        values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        p95 = detector._calculate_percentile(values, 0.95)
-        assert p95 is not None
-        assert 9 <= p95 <= 10
-
-    def test_percentile_empty_list(self, detector):
-        """Test percentile with empty list."""
-        p95 = detector._calculate_percentile([], 0.95)
-        assert p95 is None
-
-    def test_severity_detection(self, detector):
-        """Test drift severity detection."""
-        from services.model_drift_detector import DriftType, DriftSeverity
-
-        # 60% increase should be LOW
-        severity = detector._get_severity(DriftType.ERROR_RATE, 0.6)
-        assert severity == DriftSeverity.LOW
-
-        # 150% increase should be MEDIUM
-        severity = detector._get_severity(DriftType.ERROR_RATE, 1.5)
-        assert severity == DriftSeverity.MEDIUM
-
     @pytest.mark.asyncio
     async def test_record_interaction(self, detector):
         """Test recording interaction metrics."""
@@ -477,7 +451,35 @@ class TestModelDriftDetector:
             success=True
         )
 
-        assert detector.get_metrics_count() == 1
+        assert len(detector._metrics) == 1
+
+    @pytest.mark.asyncio
+    async def test_check_drift_insufficient_data(self, detector):
+        """Test drift check with insufficient data returns no drift."""
+        report = await detector.check_drift()
+        assert not report.has_drift
+        assert report.severity == "none"
+        assert report.sample_count == 0
+
+    def test_drift_report_dataclass(self):
+        """Test DriftReport dataclass structure."""
+        from services.model_drift_detector import DriftReport
+
+        report = DriftReport(
+            has_drift=True,
+            severity="medium",
+            error_rate=0.15,
+            baseline_error_rate=0.05,
+            latency_ms=2000,
+            baseline_latency_ms=1500,
+            hallucination_rate=0.05,
+            baseline_hallucination_rate=0.02,
+            sample_count=100,
+            alerts=["Error rate +200%"]
+        )
+        assert report.has_drift
+        assert report.severity == "medium"
+        assert len(report.alerts) == 1
 
 
 class TestRAGScheduler:

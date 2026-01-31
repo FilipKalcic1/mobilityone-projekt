@@ -24,3 +24,7 @@ alembic==1.13.1
 faiss-cpu==1.8.0
 psutil==5.9.8
 packaging==24.0
+
+# Testing
+pytest==9.0.1
+pytest-asyncio==1.3.0
