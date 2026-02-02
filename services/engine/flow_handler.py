@@ -18,6 +18,7 @@ from services.booking_contracts import AssigneeType, EntryType
 from services.error_translator import get_error_translator
 from services.confirmation_dialog import get_confirmation_dialog, ConfirmationDialog
 from services.context import get_multiple_missing_prompts
+from services.context.user_context_manager import UserContextManager
 
 logger = logging.getLogger(__name__)
 

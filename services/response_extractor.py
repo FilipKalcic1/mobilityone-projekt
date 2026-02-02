@@ -310,7 +310,6 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
             "FullVehicleName": "Vozilo",
             "VehicleName": "Vozilo",
             "Name": "Naziv",
-            "DisplayName": "Naziv",
             "LicencePlate": "Registarska oznaka",
             "Plate": "Tablica",
             "VIN": "VIN broj",

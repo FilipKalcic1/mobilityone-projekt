@@ -1,0 +1,44 @@
+[project]
+name = "mobility-whatsapp-bot"
+version = "11.0.2"
+description = "MobilityOne WhatsApp Bot - AI-powered fleet management chatbot"
+requires-python = ">=3.11"
+license = {text = "Proprietary"}
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes (unused imports, undefined names, etc.)
+    "B",     # flake8-bugbear (common bug patterns)
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module import not at top (FastAPI patterns need this)
+    "E722",   # bare except (already fixed in critical paths)
+    "E712",   # true/false comparison (explicit in some ORM queries)
+    "B008",   # function call in default argument (FastAPI Depends pattern)
+    "B905",   # zip strict
+    "B904",   # raise without from (too noisy for existing code)
+    "B007",   # unused loop variable (common in iteration patterns)
+    "F401",   # unused imports (too many to fix in one pass - tracked for cleanup)
+    "F541",   # f-string missing placeholders (some are intentional template strings)
+    "F841",   # unused variable (some are intentional for destructuring)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E", "F", "B"]
+"scripts/benchmarks/*" = ["E", "F", "B"]
+"tests/*" = ["E", "F", "B"]
+"alembic/*" = ["E", "F", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "database", "models", "services"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"

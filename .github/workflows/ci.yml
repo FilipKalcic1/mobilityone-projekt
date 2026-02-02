@@ -6,10 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Shared test env vars (not real credentials)
+  DATABASE_URL: "postgresql+asyncpg://test:test@localhost/test_db"
+  REDIS_URL: "redis://localhost:6379/1"
+  MOBILITY_API_URL: "https://test-api.example.com"
+  MOBILITY_AUTH_URL: "https://test-api.example.com/sso/connect/token"
+  MOBILITY_CLIENT_ID: "test_client"
+  MOBILITY_CLIENT_SECRET: "test_secret"
+  MOBILITY_TENANT_ID: "test-tenant-id"
+  AZURE_OPENAI_ENDPOINT: "https://test.openai.azure.com"
+  AZURE_OPENAI_API_KEY: "test-api-key"
+  APP_ENV: "testing"
+
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -22,54 +34,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Verify imports
-        env:
-          DATABASE_URL: "postgresql+asyncpg://test:test@localhost/test_db"
-          REDIS_URL: "redis://localhost:6379/1"
-          MOBILITY_API_URL: "https://test-api.example.com"
-          MOBILITY_AUTH_URL: "https://test-api.example.com/sso/connect/token"
-          MOBILITY_CLIENT_ID: "test_client"
-          MOBILITY_CLIENT_SECRET: "test_secret"
-          MOBILITY_TENANT_ID: "test-tenant-id"
-          AZURE_OPENAI_ENDPOINT: "https://test.openai.azure.com"
-          AZURE_OPENAI_API_KEY: "test-api-key"
-          APP_ENV: "testing"
-        run: |
-          echo "=== Python version ==="
-          python --version
-          echo "=== Verify key imports ==="
-          python -c "from config import get_settings; print('config OK')"
-          python -c "from services.patterns import detect_intent; print('patterns OK')"
-          python -c "import faiss; print('faiss OK:', faiss.__version__)"
-          python -c "import numpy; print('numpy OK:', numpy.__version__)"
-          echo "=== Collect tests ==="
-          pytest --collect-only -q tests/ 2>&1 | tail -5
-
       - name: Run tests
-        env:
-          DATABASE_URL: "postgresql+asyncpg://test:test@localhost/test_db"
-          REDIS_URL: "redis://localhost:6379/1"
-          MOBILITY_API_URL: "https://test-api.example.com"
-          MOBILITY_AUTH_URL: "https://test-api.example.com/sso/connect/token"
-          MOBILITY_CLIENT_ID: "test_client"
-          MOBILITY_CLIENT_SECRET: "test_secret"
-          MOBILITY_TENANT_ID: "test-tenant-id"
-          AZURE_OPENAI_ENDPOINT: "https://test.openai.azure.com"
-          AZURE_OPENAI_API_KEY: "test-api-key"
-          APP_ENV: "testing"
-        run: |
-          set +e
-          pytest tests/ -v --tb=long -x 2>&1 | tee test_output.txt
-          EXIT_CODE=$?
-          echo '## Test Output (last 100 lines)' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -100 test_output.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          exit $EXIT_CODE
+        run: pytest tests/ -v --tb=short
 
   lint:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -80,17 +49,14 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt ruff
 
-      - name: Check syntax (compile all .py files)
-        env:
-          DATABASE_URL: "postgresql+asyncpg://test:test@localhost/test_db"
-          REDIS_URL: "redis://localhost:6379/1"
-          MOBILITY_API_URL: "https://test-api.example.com"
-          MOBILITY_AUTH_URL: "https://test-api.example.com/sso/connect/token"
-          MOBILITY_CLIENT_ID: "test_client"
-          MOBILITY_CLIENT_SECRET: "test_secret"
-          MOBILITY_TENANT_ID: "test-tenant-id"
-          AZURE_OPENAI_ENDPOINT: "https://test.openai.azure.com"
-          AZURE_OPENAI_API_KEY: "test-api-key"
+      - name: Ruff check
+        run: ruff check . --output-format=github
+
+      - name: Ruff format check
+        run: ruff format --check --diff .
+        continue-on-error: true
+
+      - name: Compile entry points
         run: python -m py_compile config.py && python -m py_compile main.py && python -m py_compile worker.py && python -m py_compile admin_api.py
