@@ -49,16 +49,21 @@ jobs:
       - name: Run pytest collection check
         run: pytest tests/ --collect-only 2>&1 | tail -50
 
+      - name: Run quick smoke test
+        run: pytest tests/test_admin_review.py -v --tb=short 2>&1 | tail -50 || echo "Smoke test failed"
+
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90 2>&1 | tee pytest_output.txt || true
-          echo "=== PYTEST EXIT CODE: $? ==="
-          echo "=== Last 200 lines of output ==="
-          tail -200 pytest_output.txt
-          grep -i "error\|fail\|exception" pytest_output.txt | head -50 || true
-          # Actually fail if tests failed
-          if grep -q "FAILED\|ERROR" pytest_output.txt; then exit 1; fi
-          if ! grep -q "passed" pytest_output.txt; then exit 1; fi
+          pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90 2>&1 | tee pytest_output.txt
+          EXIT_CODE=$?
+          echo "=== PYTEST EXIT CODE: $EXIT_CODE ==="
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "=== FAILURES ==="
+            grep -A 20 "FAILED\|ERROR" pytest_output.txt | head -100 || true
+            echo "=== LAST 100 LINES ==="
+            tail -100 pytest_output.txt
+            exit $EXIT_CODE
+          fi
 
   lint:
     runs-on: ubuntu-latest
