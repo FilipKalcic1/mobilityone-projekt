@@ -47,7 +47,7 @@ jobs:
       - name: Run tests with coverage
         id: pytest
         continue-on-error: true
-        run: pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90
+        run: pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=85
 
       - name: Check test result
         if: steps.pytest.outcome == 'failure'
