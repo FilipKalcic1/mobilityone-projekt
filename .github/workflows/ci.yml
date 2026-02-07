@@ -50,7 +50,15 @@ jobs:
         run: pytest tests/ --collect-only 2>&1 | tail -50
 
       - name: Run tests with coverage
-        run: pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90 2>&1 || (echo "=== Test output above ===" && exit 1)
+        run: |
+          pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90 2>&1 | tee pytest_output.txt || true
+          echo "=== PYTEST EXIT CODE: $? ==="
+          echo "=== Last 200 lines of output ==="
+          tail -200 pytest_output.txt
+          grep -i "error\|fail\|exception" pytest_output.txt | head -50 || true
+          # Actually fail if tests failed
+          if grep -q "FAILED\|ERROR" pytest_output.txt; then exit 1; fi
+          if ! grep -q "passed" pytest_output.txt; then exit 1; fi
 
   lint:
     runs-on: ubuntu-latest
