@@ -33,8 +33,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Debug environment
+        run: |
+          python --version
+          pip list | grep -E "pytest|coverage"
+          ls -la tests/*.py | head -20
+          echo "Test file count: $(ls tests/*.py | wc -l)"
+
       - name: Run tests with coverage
-        run: pytest tests/ -v --tb=short --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90
+        run: pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90 2>&1 || (echo "=== Test output above ===" && exit 1)
 
   lint:
     runs-on: ubuntu-latest
