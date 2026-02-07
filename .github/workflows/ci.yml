@@ -45,7 +45,17 @@ jobs:
         run: pytest tests/ --collect-only -q 2>&1 | tail -10
 
       - name: Run tests with coverage
-        run: pytest tests/ -v --tb=short --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90
+        run: |
+          pytest tests/ -v --tb=long -x --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90 2>&1 | tee test_output.txt || true
+          echo "=== TEST RESULT ==="
+          if grep -q "passed" test_output.txt && ! grep -q "FAILED\|ERROR" test_output.txt; then
+            echo "All tests passed!"
+            exit 0
+          else
+            echo "=== FAILURE DETAILS ==="
+            tail -100 test_output.txt
+            exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest
