@@ -45,15 +45,7 @@ jobs:
         run: pytest tests/ --collect-only -q 2>&1 | tail -10
 
       - name: Run tests with coverage
-        id: pytest
-        continue-on-error: true
-        run: pytest tests/ -v --tb=long --cov=services --cov=config --cov-report=term-missing --cov-fail-under=85
-
-      - name: Check test result
-        if: steps.pytest.outcome == 'failure'
-        run: |
-          echo "Tests failed!"
-          exit 1
+        run: pytest tests/ -v --tb=short --cov=services --cov=config --cov-report=term-missing --cov-fail-under=89
 
   lint:
     runs-on: ubuntu-latest
