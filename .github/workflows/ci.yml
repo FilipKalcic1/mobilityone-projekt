@@ -35,10 +35,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Verify imports
+      - name: Pre-import modules
         run: |
-          python -c "from config import get_settings; print('Config OK')"
+          python -c "from config import get_settings; s = get_settings(); print(f'Config OK: APP_ENV={s.APP_ENV}')"
           python -c "from services.cost_tracker import get_cost_tracker; print('CostTracker OK')"
+          python -c "from services.registry import ToolRegistry; print('Registry OK')"
+
+      - name: Warm up test collection
+        run: pytest tests/ --collect-only -q 2>&1 | tail -10
 
       - name: Run tests with coverage
         run: pytest tests/ -v --tb=short --cov=services --cov=config --cov-report=term-missing --cov-fail-under=90
