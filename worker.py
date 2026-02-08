@@ -1,8 +1,12 @@
 """
 Background Worker
-Version: 15.0 - Redis Reconnection
+Version: 15.1 - Fixed duplicate logging
 
 Processes messages from Redis queue.
+
+CHANGES v15.1:
+- Fixed duplicate logging issue by configuring root logger
+- Prevents handler duplication when services are imported
 
 CHANGES v15.0:
 - Added automatic Redis reconnection on connection loss
@@ -18,9 +22,22 @@ import sys
 import hashlib
 import traceback
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Optional, Set, Dict
 from contextlib import suppress
+
+# Configure logging BEFORE any imports that use logging
+# This prevents duplicate handlers from being added
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',  # Simple format since we use structured JSON logs
+    handlers=[logging.StreamHandler(sys.stderr)],
+    force=True  # Override any existing configuration
+)
+# Prevent duplicate logs from propagating to root logger
+for handler in logging.root.handlers[:]:
+    handler.setLevel(logging.WARNING)  # Only show warnings+ from Python logging
 
 import redis.asyncio as aioredis
 
@@ -385,6 +402,30 @@ class Worker:
             log("info", "rag_scheduler_initialized")
         except Exception as e:
             log("warn", "rag_scheduler_init_failed", {"error": str(e)})
+
+        # Initialize ML models (train if missing)
+        try:
+            from services.intent_classifier import IntentClassifier, get_query_type_classifier_ml
+            from pathlib import Path
+
+            model_dir = Path("/app/models/intent")
+            tfidf_model = model_dir / "tfidf_lr_model.pkl"
+
+            if not tfidf_model.exists():
+                log("info", "intent_model_training")
+                model_dir.mkdir(parents=True, exist_ok=True)
+                clf = IntentClassifier(algorithm="tfidf_lr")
+                metrics = clf.train()
+                log("info", "intent_model_trained", {"accuracy": f"{metrics.get('accuracy', 0):.1%}"})
+            else:
+                log("info", "intent_model_found")
+
+            # Initialize query type classifier
+            query_clf = get_query_type_classifier_ml()
+            log("info", "query_type_classifier_ready")
+
+        except Exception as e:
+            log("warn", "ml_model_init_failed", {"error": str(e)})
 
     async def _create_consumer_group(self):
         try:

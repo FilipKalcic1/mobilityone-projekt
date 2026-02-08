@@ -18,8 +18,88 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Set
 from dataclasses import dataclass
 import numpy as np
+import unicodedata
+import re
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# TEXT NORMALIZATION - Handles Croatian diacritics and synonyms
+# ============================================================
+
+# Croatian diacritic mapping
+DIACRITIC_MAP = {
+    'č': 'c', 'ć': 'c', 'đ': 'd', 'š': 's', 'ž': 'z',
+    'Č': 'C', 'Ć': 'C', 'Đ': 'D', 'Š': 'S', 'Ž': 'Z',
+}
+
+# Common Croatian synonyms (normalize to canonical form)
+SYNONYM_MAP = {
+    # Vehicle synonyms → vozilo
+    'auto': 'vozilo',
+    'auta': 'vozila',
+    'automobil': 'vozilo',
+    'automobili': 'vozila',
+    'automobila': 'vozila',
+    'kola': 'vozilo',
+    'kolima': 'vozilima',
+    # Phone synonyms
+    'mobitel': 'telefon',
+    'mobitela': 'telefona',
+    'gsm': 'telefon',
+    'tel': 'telefon',
+    # Mileage synonyms
+    'kilometraza': 'kilometara',
+    'km': 'kilometara',
+    # Common typos
+    'telfon': 'telefon',
+    'telef': 'telefon',
+    'rezevacija': 'rezervacija',
+    'rezevirati': 'rezervirati',
+    'osteio': 'ostetio',
+    'ostetiti': 'ostetio',
+}
+
+
+def normalize_diacritics(text: str) -> str:
+    """Remove Croatian diacritics from text."""
+    result = []
+    for char in text:
+        if char in DIACRITIC_MAP:
+            result.append(DIACRITIC_MAP[char])
+        else:
+            result.append(char)
+    return ''.join(result)
+
+
+def normalize_synonyms(text: str) -> str:
+    """Replace common synonyms with canonical forms."""
+    words = text.split()
+    normalized = []
+    for word in words:
+        # Check if word or lowercase version is in synonym map
+        lower_word = word.lower()
+        if lower_word in SYNONYM_MAP:
+            normalized.append(SYNONYM_MAP[lower_word])
+        else:
+            normalized.append(word)
+    return ' '.join(normalized)
+
+
+def normalize_query(text: str) -> str:
+    """
+    Normalize query text for better ML classification.
+
+    1. Lowercase
+    2. Remove diacritics (ž→z, č→c, etc.)
+    3. Replace synonyms (auto→vozilo, etc.)
+    4. Strip whitespace
+    """
+    text = text.lower().strip()
+    text = normalize_diacritics(text)
+    text = normalize_synonyms(text)
+    return text
 
 
 # ============================================================
@@ -190,7 +270,8 @@ class IntentClassifier:
                     confidence=0.0
                 )
 
-        text_clean = text.lower().strip()
+        # Apply normalization: lowercase, diacritics, synonyms
+        text_clean = normalize_query(text)
 
         if self.algorithm == "tfidf_lr":
             return self._predict_tfidf_lr(text_clean)
@@ -217,7 +298,9 @@ class IntentClassifier:
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 item = json.loads(line)
-                texts.append(item["text"])
+                # Normalize training text same as prediction text
+                normalized_text = normalize_query(item["text"])
+                texts.append(normalized_text)
                 labels.append(item["intent"])
 
                 # Store metadata mapping
@@ -617,16 +700,32 @@ def get_intent_classifier(algorithm: str = "tfidf_lr") -> IntentClassifier:
 
 # Cache for semantic classifier (only load when needed)
 _semantic_classifier: Optional[IntentClassifier] = None
+_semantic_model_unavailable: bool = False  # Prevents repeated warnings
 
 ENSEMBLE_FALLBACK_THRESHOLD = 0.75  # Use semantic if TF-IDF < 75%
 
 
 def _get_semantic_classifier() -> IntentClassifier:
     """Get semantic classifier (lazy loaded)."""
-    global _semantic_classifier
+    global _semantic_classifier, _semantic_model_unavailable
+
+    # Skip if we already know the model is unavailable
+    if _semantic_model_unavailable:
+        raise FileNotFoundError("Azure embedding model not available (cached)")
+
     if _semantic_classifier is None:
+        # Check if model file exists BEFORE creating classifier
+        model_file = MODEL_DIR / "azure_embedding_model.pkl"
+        if not model_file.exists():
+            _semantic_model_unavailable = True  # Remember for future calls
+            logger.info("Semantic fallback disabled - azure_embedding model not found")
+            raise FileNotFoundError(f"Azure embedding model not available: {model_file}")
+
         _semantic_classifier = IntentClassifier(algorithm="azure_embedding")
-        _semantic_classifier.load()
+        if not _semantic_classifier.load():
+            _semantic_model_unavailable = True
+            _semantic_classifier = None
+            raise RuntimeError("Failed to load azure_embedding model")
     return _semantic_classifier
 
 
@@ -648,6 +747,10 @@ def predict_with_ensemble(query: str) -> IntentPrediction:
     if tfidf_pred.confidence >= ENSEMBLE_FALLBACK_THRESHOLD:
         return tfidf_pred
 
+    # Skip semantic fallback if we already know it's unavailable (prevents log spam)
+    if _semantic_model_unavailable:
+        return tfidf_pred
+
     # Low confidence - use semantic for better understanding
     try:
         semantic = _get_semantic_classifier()
@@ -661,7 +764,9 @@ def predict_with_ensemble(query: str) -> IntentPrediction:
             )
             return sem_pred
     except Exception as e:
-        logger.warning(f"Semantic fallback failed: {e}")
+        # Only log once - _semantic_model_unavailable will be set by _get_semantic_classifier
+        if not _semantic_model_unavailable:
+            logger.warning(f"Semantic fallback failed: {e}")
 
     return tfidf_pred
 
@@ -905,7 +1010,9 @@ class QueryTypeClassifierML:
             )
 
         try:
-            X = self.vectorizer.transform([text.lower()])
+            # Apply normalization for consistency with IntentClassifier
+            text_normalized = normalize_query(text)
+            X = self.vectorizer.transform([text_normalized])
             probs = self.model.predict_proba(X)[0]
             predicted_idx = np.argmax(probs)
             predicted_type = self.model.classes_[predicted_idx]

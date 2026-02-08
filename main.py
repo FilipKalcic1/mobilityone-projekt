@@ -151,7 +151,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"Service initialization failed: {e}")
         raise
-    
+
+    # 4. Initialize ML models (train if missing)
+    try:
+        from services.intent_classifier import IntentClassifier, get_query_type_classifier_ml
+        from pathlib import Path
+
+        model_dir = Path("/app/models/intent")
+        tfidf_model = model_dir / "tfidf_lr_model.pkl"
+
+        if not tfidf_model.exists():
+            logger.info("Intent classifier model not found, training...")
+            model_dir.mkdir(parents=True, exist_ok=True)
+            clf = IntentClassifier(algorithm="tfidf_lr")
+            metrics = clf.train()
+            logger.info(f"Intent classifier trained: {metrics.get('accuracy', 0):.1%} accuracy")
+        else:
+            logger.info("Intent classifier model found")
+
+        # Also initialize query type classifier
+        query_clf = get_query_type_classifier_ml()
+        logger.info("Query type classifier ready")
+
+    except Exception as e:
+        logger.warning(f"ML model initialization failed (non-critical): {e}")
+
     logger.info("Application ready!")
     
     yield

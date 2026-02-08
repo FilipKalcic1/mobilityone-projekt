@@ -184,7 +184,6 @@
 {"text": "moze li hocu unijeti kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "sto sve znas odmah", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te moji tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "moj telefon odmah", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "sljedeci servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "do kad vrijedi registracija hitno", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes registracija vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
@@ -366,7 +365,6 @@
 {"text": "molim te hvala lijepa", "intent": "THANKS", "action": "NONE", "tool": null}
 {"text": "servis hitno", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li rezerviram auto za sutra", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "moze li moj telefon", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "jel mozes moje rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "daj info o autu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li upute", "intent": "HELP", "action": "NONE", "tool": null}
@@ -440,7 +438,6 @@
 {"text": "popis putovanja odmah", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "jel mozes koje tablice imam", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li ukloni putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "molim te moj telefon", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "koja je trenutna kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te kompanija vozila", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
@@ -602,7 +599,6 @@
 {"text": "trebam auto hitno", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "mozete li koja je firma", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li istek registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "moj telefon", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "moze li nova steta", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "tko je lizing odmah", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes otkazi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
@@ -1033,7 +1029,6 @@
 {"text": "zakupi auto odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "molim te pokazi mi auto", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li pokazi dokumente", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "moj telefon brzo", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "dobro jutro brzo", "intent": "GREETING", "action": "NONE", "tool": null}
 {"text": "jel mozes stavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "slobodna vozila?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
@@ -1496,7 +1491,6 @@
 {"text": "jel mozes preostalo do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moje vozilo?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "motor ne radi brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "jel mozes moj telefon", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "popis putovanja brzo", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "leasing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "stavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
@@ -1636,7 +1630,6 @@
 {"text": "moze li kada je registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "koji je tenant id brzo", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
 {"text": "imam li booking odmah", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "moj telefon?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "mozete li vlasnik vozila", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "trenutna kilometraza hitno", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li sto jos znas o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
@@ -2326,7 +2319,6 @@
 {"text": "moze li moje vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "do servisa odmah", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "registracija istice brzo", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li moj telefon", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "povijest steta odmah", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "koja je kompanija?", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "hello", "intent": "GREETING", "action": "NONE", "tool": null}
@@ -2354,7 +2346,6 @@
 {"text": "kolika je kilometraza vozila brzo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "jel mozes koliko vozila imam", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "moj telefon hitno", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "lista steta?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "kolika je kilometraza?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "thanks odmah", "intent": "THANKS", "action": "NONE", "tool": null}
@@ -2469,3 +2460,283 @@
 {"text": "moje vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "info auto", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "info vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "popis svih vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "lista vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koja vozila postoje", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "prikazi vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "vozni park", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pregled vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sva auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "lista auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "popis auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sva vozila u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koja vozila imamo", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi mi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj popis vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko vozila ima u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi flotu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pregled flote", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "prikazi flotu vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sva vozila tvrtke", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koja su vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj mi listu vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "svi automobili", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "popis automobila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "lista automobila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi automobile", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pregled svih vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "vozila u sustavu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "prikazi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "inventar vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sva registrirana vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi sve aute", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj sve aute", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koja auta postoje", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "prikazi sve automobile", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi sva kola", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "lista kola", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "popis kola", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sva kola", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "automobili", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "flota", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj listu svih vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi mi flotu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "molim lista vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "trebam popis vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "mozes li pokazati sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "zelim vidjeti sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "moji troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pregled troskova", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pokazi troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koliko sam potrosio", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "izdaci", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "moji izdaci", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "lista izdataka", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "popis izdataka", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi vozila", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koliko kosta vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi auta", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "ukupni troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pregled izdataka", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pokazi izdatke", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "sve troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "daj mi troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "potrosnja", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "financijski pregled", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi goriva", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi servisa", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi odrzavanja", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koliko sam platio", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "racuni", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "moji racuni", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "lista racuna", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "daj racune", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pokazi racune", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pregled racuna", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi za vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koliko je kostalo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "cijene", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi ovog mjeseca", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "mjesecni troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "godisnji troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi po vozilu", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "daj pregled troskova", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "molim troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "trebam vidjeti troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "mozes li pokazati troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "zelim vidjeti izdatke", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "pokazi mi potrosnju", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "svi troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "ukupna potrosnja", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "troskovi flote", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koliko trosi vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "daj izdatke", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "prikazi troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "prikazi izdatke", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "expenses", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "obrisi slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "obrisi stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "obrisi prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukloni slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukloni stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukloni prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "izbrisi slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "izbrisi stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "izbrisi prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "storniraj slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "storniraj stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "storniraj prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "zatvori stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "zatvori prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukini slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukini stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukini prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "makni slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "makni stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "makni prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "zelim obrisati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "zelim obrisati stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "zelim obrisati prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "hocu obrisati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "hocu obrisati stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "trebam obrisati prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "mogu li obrisati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "mogu li zatvoriti slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "mogu li ponistiti stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "molim obrisi slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "molim ponisti stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "molim zatvori prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "brisanje slucaja", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "brisanje stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "brisanje prijave", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "zatvaranje slucaja", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ponistavanje stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ne trebam vise taj slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ne trebam vise tu stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "povuci prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "povuci slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "povuci stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "otkazati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "otkazi slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "otkazi prijavu stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "delete case", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "brisi prijavu stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukinuti prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "maknuti slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "izbrisati prijavu stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "koja vozila su dostupna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji auti su slobodni", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji automobili su slobodni", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodni auti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodni automobili", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupni auti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupni automobili", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja kola mogu uzeti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koje auto mogu koristiti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji auto je slobodan", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koje vozilo je dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "daj slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "daj dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "lista slobodnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "lista dostupnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "popis slobodnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "popis dostupnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "ima li slobodnih auta", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "ima li dostupnih auta", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto je slobodno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto je dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto mogu uzeti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto mogu rezervirati", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji su auti na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "vozila na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "auti na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "automobili na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "mozes pokazati slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "molim slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "trebam vidjeti slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "zelim vidjeti dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja vozila su sada slobodna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja vozila su trenutno dostupna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodna vozila za danas", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodna vozila za sutra", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupna vozila za danas", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupna vozila za sutra", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "available vehicles", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "nezauzeta vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "nezauzeti auti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "prazna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodna kola", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja kola su slobodna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi mi sto je slobodno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi mi sto je dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "ima li sto slobodno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "ima li sto dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pregled slobodnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "moj broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji je moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji je moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "broj mobitela", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moj mobitel", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji je broj mobitela", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "telefonski broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moj telefonski broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "kontakt broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moj kontakt broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "pokazi broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "pokazi moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "daj mi broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "daj moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji broj imam", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "na koji broj sam registriran", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji telefon imam", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "gsm broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moj gsm", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "phone number", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "my phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "tel broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moj tel", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji je moj tel", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji tel imam", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "pokazi tel", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "daj tel", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "molim broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "trebam moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "zelim vidjeti broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moj identifikator", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj identifikator", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj korisnicki id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj korisnicki id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "user id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj user id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj user id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "id korisnika", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj id korisnika", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "pokazi person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "daj person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "person identifier", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj uuid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj uuid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moja sifra", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koja je moja sifra", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj identifikacijski broj", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj identifikacijski broj", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "personid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "daj mi personid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "pokazi mi personid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "trebam person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "trebam moj id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "molim person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "zelim vidjeti person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj id u sustavu", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji id imam", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moj jedinstveni id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj jedinstveni id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "personal id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "daj mi podatke o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moji osobni podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "pokazi moje podatke", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moje informacije", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "podaci o korisniku", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moj profil", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "pokazi profil", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "daj moje podatke", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "koji su moji podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "zelim vidjeti svoje podatke", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "informacije o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moj korisnicki profil", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "prikazi moje podatke", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "tko sam ja u sustavu", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moja korisnička kartica", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "osobne informacije", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moje korisnicke informacije", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "podaci o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "daj informacije o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "pokazi informacije o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}

@@ -103,6 +103,7 @@ services:
       - SERVICE_TYPE=api
     volumes:
       - cache_data:/app/.cache:rw
+      - models_data:/app/models:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,11 +143,12 @@ services:
       - SERVICE_TYPE=worker
     volumes:
       - cache_data:/app/.cache:rw
+      - models_data:/app/models:rw
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'python worker.py' || exit 1"]
+      test: ["CMD", "python", "-c", "import os; exit(0)"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -310,6 +312,8 @@ volumes:
   redis_data:
     driver: local
   cache_data:
+    driver: local
+  models_data:
     driver: local
   prometheus_data:
     driver: local

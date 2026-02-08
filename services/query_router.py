@@ -199,9 +199,9 @@ INTENT_METADATA = {
 }
 
 # v16.0: Confidence threshold for DETERMINISTIC routing (bypasses LLM)
-# Set very high so most queries go to LLM for final decision
-# ML classification becomes a SUGGESTION, not a replacement for LLM
-ML_CONFIDENCE_THRESHOLD = 0.98  # Only 98%+ confidence bypasses LLM
+# Balanced threshold: High-confidence ML predictions bypass LLM for speed
+# Lower confidence queries still go to LLM for final decision
+ML_CONFIDENCE_THRESHOLD = 0.85  # 85%+ confidence uses ML directly (faster, cheaper)
 
 
 class QueryRouter:

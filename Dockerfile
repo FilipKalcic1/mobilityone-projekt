@@ -74,6 +74,15 @@ COPY --chown=appuser:appgroup . .
 # Make init script executable if exists
 RUN chmod +x /app/docker/init-db.sh 2>/dev/null || true
 
+# Force retrain ML models with fresh training data
+# This ensures model matches current training data after each build
+RUN rm -f /app/models/intent/*.pkl && \
+    python -c "from services.intent_classifier import IntentClassifier; \
+               c = IntentClassifier(algorithm='tfidf_lr'); \
+               m = c.train(); \
+               print(f'Model trained: {m.get(\"accuracy\", 0):.1%} accuracy')" && \
+    chown -R appuser:appgroup /app/models
+
 # Switch to non-root user
 USER appuser
 
