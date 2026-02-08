@@ -238,28 +238,39 @@ async def health_check():
         "version": settings.APP_VERSION,
         "database": "disconnected",
         "redis": "disconnected",
+        "mobility_api": "disconnected",
         "tools": 0
     }
-    
+
     try:
         # Check database
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         checks["database"] = "connected"
-        
+
         # Check redis
         if hasattr(app.state, 'redis') and app.state.redis:
             await app.state.redis.ping()
             checks["redis"] = "connected"
-        
+
         # Check tools
         if hasattr(app.state, 'registry') and app.state.registry:
             checks["tools"] = len(app.state.registry.tools)
-            
+
+        # Check MobilityOne API
+        try:
+            from services.token_manager import TokenManager
+            token_manager = TokenManager()
+            token = await token_manager.get_token()
+            if token:
+                checks["mobility_api"] = "connected"
+        except Exception:
+            pass  # Leave as disconnected
+
     except Exception as e:
         checks["status"] = "unhealthy"
         checks["error"] = str(e)
-    
+
     return checks
 
 
@@ -285,6 +296,16 @@ async def readiness_check():
 
     if not hasattr(app.state, 'registry') or not app.state.registry or len(app.state.registry.tools) == 0:
         return JSONResponse(status_code=503, content={"ready": False, "reason": "tool registry empty"})
+
+    # Verify MobilityOne API connectivity
+    try:
+        from services.token_manager import TokenManager
+        token_manager = TokenManager()
+        token = await token_manager.get_token()
+        if not token:
+            return JSONResponse(status_code=503, content={"ready": False, "reason": "mobility API token unavailable"})
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ready": False, "reason": f"mobility API unreachable: {str(e)[:50]}"})
 
     return {"ready": True}
 
