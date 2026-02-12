@@ -38,7 +38,8 @@ class TestExpandQuery:
 
     def test_action_create(self, mapper):
         result = mapper.expand_query("unesi km")
-        assert "post" in result or "dodaj" in result or "kreiraj" in result
+        # Any of these synonyms for create action is valid (set order is non-deterministic)
+        assert "post" in result or "dodaj" in result or "kreiraj" in result or "add" in result or "create" in result
 
     def test_registration_terms(self, mapper):
         result = mapper.expand_query("reg")

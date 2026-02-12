@@ -435,13 +435,37 @@ class QueryIntent(Enum):
 
 def detect_intent(query: str) -> QueryIntent:
     """
-    Detect user intent using ML classifier.
+    Detect user intent using ML classifier with rule-based fallback.
 
-    Version 2.0: Uses trained ML model (99.25% accuracy) instead of regex.
-    Handles Croatian and English, typos, and diacritics variations.
+    Version 2.1: Uses trained ML model with rule-based fallback for
+    high-confidence Croatian action keywords.
     """
     from services.intent_classifier import detect_action_intent, ActionIntent
 
+    query_lower = query.lower()
+
+    # Rule-based detection for high-confidence Croatian action keywords
+    # These keywords have unambiguous intent meaning
+    WRITE_KEYWORDS = [
+        "rezerviraj", "unesi", "prijavi", "dodaj", "kreiraj", "napravi",
+        "ažuriraj", "azuriraj", "promijeni", "promjeni", "zakaži", "zakazi",
+        "upiši", "upisi", "stavi", "otvori", "zauzmi",
+    ]
+    DELETE_KEYWORDS = [
+        "obriši", "obrisi", "otkaži", "otkazi", "ukloni", "makni",
+        "izbriši", "izbrisi", "izbaci", "poništi", "ponisti",
+    ]
+
+    # Check for keywords first (high-confidence rule-based)
+    for keyword in DELETE_KEYWORDS:
+        if keyword in query_lower:
+            return QueryIntent.DELETE
+
+    for keyword in WRITE_KEYWORDS:
+        if keyword in query_lower:
+            return QueryIntent.WRITE
+
+    # Fall back to ML classifier
     result = detect_action_intent(query)
 
     # Map ML ActionIntent to QueryIntent
