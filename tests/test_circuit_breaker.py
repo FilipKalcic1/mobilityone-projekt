@@ -184,3 +184,12 @@ class TestCircuitBreakerEdgeCases:
     async def test_reset_nonexistent_endpoint_noop(self, breaker):
         """Resetting an unknown endpoint should not raise."""
         await breaker.reset("never-used-endpoint")
+
+    def test_should_attempt_reset_without_opened_at(self, breaker):
+        """_should_attempt_reset returns False if circuit never opened."""
+        from services.circuit_breaker import CircuitMetrics
+        circuit = CircuitMetrics()
+        # opened_at is None by default
+        assert circuit.opened_at is None
+        result = breaker._should_attempt_reset(circuit)
+        assert result is False

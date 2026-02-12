@@ -37,6 +37,17 @@ class TestCosineSimilarity:
         b = [1.0] * 100
         assert cosine_similarity(a, b) == pytest.approx(1.0, abs=0.01)
 
+    def test_empty_vectors(self):
+        """Empty vectors should return 0.0."""
+        assert cosine_similarity([], []) == 0.0
+        assert cosine_similarity([], [1.0]) == 0.0
+        assert cosine_similarity([1.0], []) == 0.0
+
+    def test_different_length_vectors(self):
+        """Vectors of different lengths should return 0.0."""
+        assert cosine_similarity([1.0, 2.0], [1.0, 2.0, 3.0]) == 0.0
+        assert cosine_similarity([1.0], [1.0, 2.0]) == 0.0
+
 
 class TestFilterBuilderSanitize:
     def test_clean_value(self):
@@ -64,6 +75,12 @@ class TestFilterBuilderSanitize:
 
     def test_empty_string(self):
         assert FilterBuilder._sanitize_value("") == ""
+
+    def test_non_string_value_converted(self):
+        """Non-string values should be converted to string."""
+        assert FilterBuilder._sanitize_value(12345) == "12345"
+        assert FilterBuilder._sanitize_value(3.14) == "3.14"
+        assert FilterBuilder._sanitize_value(True) == "True"
 
 
 class TestFilterBuilderBuild:

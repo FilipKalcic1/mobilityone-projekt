@@ -211,3 +211,12 @@ class TestConstants:
     def test_clarification_questions_for_each_suffix(self):
         for suffix in GENERIC_SUFFIX_PATTERNS:
             assert suffix in CLARIFICATION_QUESTIONS
+
+
+class TestSingleton:
+    def test_get_ambiguity_detector_singleton(self):
+        """get_ambiguity_detector should return singleton."""
+        from services.ambiguity_detector import get_ambiguity_detector
+        detector1 = get_ambiguity_detector()
+        detector2 = get_ambiguity_detector()
+        assert detector1 is detector2
