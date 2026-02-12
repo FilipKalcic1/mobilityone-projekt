@@ -355,7 +355,6 @@ class EmbeddingEngine:
         "driverlicense": "vozačku dozvolu",
         # Lists & counts
         "count": "broj",
-        "total": "ukupno",
         "items": "stavke",
         "list": "popis",
         "results": "rezultate",
