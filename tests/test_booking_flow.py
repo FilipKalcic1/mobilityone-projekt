@@ -9,12 +9,16 @@ Simulira cijeli booking flow kroz MessageEngine:
 4. Bot: Kreira rezervaciju
 
 Pokreni: python -m tests.test_booking_flow
+
+Note: These are integration tests requiring real Redis, DB, and API connections.
+      They are skipped in CI (when APP_ENV=testing).
 """
 
 import asyncio
 import logging
 import sys
 import os
+import pytest
 
 # Fix Windows console encoding for emojis
 if sys.platform == "win32":
@@ -36,6 +40,8 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_booking_flow():
     """Test complete booking flow."""
 
@@ -188,6 +194,8 @@ async def test_booking_flow():
     await redis_client.aclose()
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_api_directly():
     """Quick API test without full engine."""
 
@@ -245,6 +253,8 @@ async def test_api_directly():
     await redis_client.aclose()
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_flow_handler_directly():
     """Test FlowHandler directly without user lookup."""
 
