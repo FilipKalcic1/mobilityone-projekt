@@ -44,8 +44,9 @@ def unmapped_tool():
         service_name="unknown",
         service_url="https://api.example.com",
         swagger_name="unknown",
-        # Use output keys that don't contain any mapped terms
-        output_keys=["xyzField", "abcValue", "qrsData"],
+        # Use output keys that don't contain ANY mapped terms or substrings
+        # Avoid: data, type, code, name, id, key, tag, etc.
+        output_keys=["xyzblob", "abcwoof", "qrsmeow"],
     )
 
 

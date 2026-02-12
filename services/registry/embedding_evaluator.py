@@ -299,13 +299,89 @@ class EmbeddingEvaluator:
             QueryTestCase(query="privici", expected_tool_id="get_Attachments", category="document"),
 
             # =================================================================
-            # FLEET MANAGEMENT (5 queries)
+            # FLEET MANAGEMENT (15 queries)
             # =================================================================
             QueryTestCase(query="statistika flote", expected_tool_id="get_FleetStatistics", category="fleet"),
             QueryTestCase(query="pregled voznog parka", expected_tool_id="get_FleetOverview", category="fleet"),
             QueryTestCase(query="iskorištenost flote", expected_tool_id="get_FleetUtilization", category="fleet"),
             QueryTestCase(query="kategorije vozila", expected_tool_id="get_VehicleCategories", category="fleet"),
             QueryTestCase(query="tipovi vozila", expected_tool_id="get_VehicleTypes", category="fleet"),
+            QueryTestCase(query="klase automobila", expected_tool_id="get_VehicleClasses", category="fleet"),
+            QueryTestCase(query="modeli vozila", expected_tool_id="get_VehicleModels", category="fleet"),
+            QueryTestCase(query="marke automobila", expected_tool_id="get_VehicleBrands", category="fleet"),
+            QueryTestCase(query="specifikacije vozila", expected_tool_id="get_VehicleSpecifications", category="fleet"),
+            QueryTestCase(query="oprema vozila", expected_tool_id="get_VehicleEquipment", category="fleet"),
+            QueryTestCase(query="dodaci vozila", expected_tool_id="get_VehicleAccessories", category="fleet"),
+            QueryTestCase(query="SUV vozila", expected_tool_id="get_SUVs", category="fleet"),
+            QueryTestCase(query="električna vozila", expected_tool_id="get_ElectricVehicles", category="fleet"),
+            QueryTestCase(query="kombiji", expected_tool_id="get_Vans", category="fleet"),
+            QueryTestCase(query="luksuzna vozila", expected_tool_id="get_LuxuryVehicles", category="fleet"),
+
+            # =================================================================
+            # DAMAGE/ACCIDENT QUERIES (15 queries)
+            # =================================================================
+            QueryTestCase(query="prijavi štetu", expected_tool_id="post_DamageReport", category="damage"),
+            QueryTestCase(query="oštećenja vozila", expected_tool_id="get_VehicleDamages", category="damage"),
+            QueryTestCase(query="štete", expected_tool_id="get_Damages", category="damage"),
+            QueryTestCase(query="nesreće", expected_tool_id="get_Accidents", category="damage"),
+            QueryTestCase(query="prijava nesreće", expected_tool_id="post_AccidentReport", category="damage"),
+            QueryTestCase(query="procjena štete", expected_tool_id="get_DamageAssessment", category="damage"),
+            QueryTestCase(query="fotografije štete", expected_tool_id="get_DamagePhotos", category="damage"),
+            QueryTestCase(query="status štete", expected_tool_id="get_DamageStatus", category="damage"),
+            QueryTestCase(query="osiguranje za štetu", expected_tool_id="get_DamageInsurance", category="damage"),
+            QueryTestCase(query="zahtjev za osiguranje", expected_tool_id="post_InsuranceClaim", category="damage"),
+            QueryTestCase(query="popravak štete", expected_tool_id="get_DamageRepairs", category="damage"),
+            QueryTestCase(query="trošak popravka", expected_tool_id="get_RepairCost", category="damage"),
+            QueryTestCase(query="udar na vozilo", expected_tool_id="post_DamageReport", category="damage"),
+            QueryTestCase(query="ogrebotina na autu", expected_tool_id="post_DamageReport", category="damage"),
+            QueryTestCase(query="kvar vozila", expected_tool_id="post_MalfunctionReport", category="damage"),
+
+            # =================================================================
+            # RENTAL OPERATIONS (15 queries)
+            # =================================================================
+            QueryTestCase(query="preuzimanje vozila", expected_tool_id="post_VehiclePickup", category="rental_ops"),
+            QueryTestCase(query="vraćanje auta", expected_tool_id="post_VehicleReturn", category="rental_ops"),
+            QueryTestCase(query="primopredaja vozila", expected_tool_id="post_VehicleHandover", category="rental_ops"),
+            QueryTestCase(query="checkin", expected_tool_id="post_Checkin", category="rental_ops"),
+            QueryTestCase(query="checkout", expected_tool_id="post_Checkout", category="rental_ops"),
+            QueryTestCase(query="produži najam", expected_tool_id="post_ExtendRental", category="rental_ops"),
+            QueryTestCase(query="otkaži rezervaciju", expected_tool_id="post_CancelBooking", category="rental_ops"),
+            QueryTestCase(query="promijeni rezervaciju", expected_tool_id="put_ModifyBooking", category="rental_ops"),
+            QueryTestCase(query="zamjena vozila", expected_tool_id="post_VehicleSwap", category="rental_ops"),
+            QueryTestCase(query="upgrade vozila", expected_tool_id="post_VehicleUpgrade", category="rental_ops"),
+            QueryTestCase(query="downgrade vozila", expected_tool_id="post_VehicleDowngrade", category="rental_ops"),
+            QueryTestCase(query="dodatna oprema", expected_tool_id="post_AddExtras", category="rental_ops"),
+            QueryTestCase(query="naruči GPS", expected_tool_id="post_AddGPS", category="rental_ops"),
+            QueryTestCase(query="dječje sjedalo", expected_tool_id="post_AddChildSeat", category="rental_ops"),
+            QueryTestCase(query="dodaj dodatnog vozača", expected_tool_id="post_AddDriver", category="rental_ops"),
+
+            # =================================================================
+            # LOYALTY/REWARDS (10 queries)
+            # =================================================================
+            QueryTestCase(query="bodovi lojalnosti", expected_tool_id="get_LoyaltyPoints", category="loyalty"),
+            QueryTestCase(query="nagrade", expected_tool_id="get_Rewards", category="loyalty"),
+            QueryTestCase(query="kuponi", expected_tool_id="get_Coupons", category="loyalty"),
+            QueryTestCase(query="vaučeri", expected_tool_id="get_Vouchers", category="loyalty"),
+            QueryTestCase(query="popusti", expected_tool_id="get_Discounts", category="loyalty"),
+            QueryTestCase(query="promocije", expected_tool_id="get_Promotions", category="loyalty"),
+            QueryTestCase(query="članstvo", expected_tool_id="get_Membership", category="loyalty"),
+            QueryTestCase(query="razina članstva", expected_tool_id="get_MembershipTier", category="loyalty"),
+            QueryTestCase(query="iskoristi kupon", expected_tool_id="post_RedeemCoupon", category="loyalty"),
+            QueryTestCase(query="iskoristi bodove", expected_tool_id="post_RedeemPoints", category="loyalty"),
+
+            # =================================================================
+            # NOTIFICATIONS/ALERTS (10 queries)
+            # =================================================================
+            QueryTestCase(query="obavijesti", expected_tool_id="get_Notifications", category="notifications"),
+            QueryTestCase(query="upozorenja", expected_tool_id="get_Alerts", category="notifications"),
+            QueryTestCase(query="poruke", expected_tool_id="get_Messages", category="notifications"),
+            QueryTestCase(query="nepročitane poruke", expected_tool_id="get_UnreadMessages", category="notifications"),
+            QueryTestCase(query="pošalji obavijest", expected_tool_id="post_Notification", category="notifications"),
+            QueryTestCase(query="pošalji SMS", expected_tool_id="post_SMS", category="notifications"),
+            QueryTestCase(query="pošalji email", expected_tool_id="post_Email", category="notifications"),
+            QueryTestCase(query="podsjetnici", expected_tool_id="get_Reminders", category="notifications"),
+            QueryTestCase(query="postavi podsjetnik", expected_tool_id="post_Reminder", category="notifications"),
+            QueryTestCase(query="alarmi vozila", expected_tool_id="get_VehicleAlerts", category="notifications"),
         ]
 
         return test_cases
