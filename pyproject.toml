@@ -44,11 +44,16 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 python_classes = ["Test*"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --tb=short"
 filterwarnings = [
     "ignore::DeprecationWarning:asyncio",
     "ignore::DeprecationWarning:pydantic",
     "ignore::UserWarning:tests.test_ghost_variables",
+    "ignore::DeprecationWarning:services.admin_review",
+    "ignore:coroutine.*was never awaited:RuntimeWarning",
+    "ignore:builtin type Swig:DeprecationWarning",
+    "ignore:builtin type swig:DeprecationWarning",
 ]
 markers = [
     "asyncio: mark test as async",
