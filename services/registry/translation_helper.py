@@ -1,43 +1,32 @@
 """
 Translation Helper - Runtime fallback for unmapped terms.
-Version: 2.0
+Version: 1.0
 
 Provides fallback translation mechanisms when hardcoded dictionaries
 don't have a mapping for a term.
 
-STRATEGIES (in priority order):
+STRATEGIES:
     1. Dictionary lookup (PATH_ENTITY_MAP, OUTPUT_KEY_MAP)
     2. Partial match (substring matching)
     3. Levenshtein distance (fuzzy matching for typos)
-    4. **NEW** Translation API (DeepL/Google) - high-quality Croatian
-    5. English fallback (readable formatting)
-
-SYNC vs ASYNC:
-    - translate() - sync, uses dictionaries only
-    - translate_with_api() - async, uses API when dictionaries fail
+    4. English fallback (readable formatting)
 
 USAGE:
     helper = TranslationHelper()
 
-    # Sync - dictionary only (fast, no API)
+    # Translate a single term
     croatian = helper.translate("vehicle")  # "vozilo"
 
-    # Async - with API fallback (slower, but better quality)
-    croatian = await helper.translate_with_api("unknownterm")  # Croatian from API
+    # Translate with fallback
+    croatian = helper.translate("unknownterm")  # "unknown term" (formatted)
 
     # Get suggestions for unmapped terms
     suggestions = helper.suggest_translations("vehiclstatus")  # ["status vozila"]
 """
 
 import re
-import logging
-from typing import List, Optional, Tuple, Dict, TYPE_CHECKING
+from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
-
-if TYPE_CHECKING:
-    from services.registry.translation_api_client import TranslationAPIClient
-
-logger = logging.getLogger("translation_helper")
 
 
 @dataclass
@@ -45,7 +34,7 @@ class TranslationResult:
     """Result of a translation attempt."""
     original: str
     translated: str
-    method: str  # "dictionary", "partial", "fuzzy", "api", "fallback"
+    method: str  # "dictionary", "partial", "fuzzy", "fallback"
     confidence: float  # 0.0 to 1.0
 
 
@@ -59,13 +48,8 @@ class TranslationHelper:
     - Formatted English fallback
     """
 
-    def __init__(self, use_api: bool = True):
-        """
-        Initialize with dictionaries from EmbeddingEngine.
-
-        Args:
-            use_api: Whether to enable API fallback (default True)
-        """
+    def __init__(self):
+        """Initialize with dictionaries from EmbeddingEngine."""
         # Import here to avoid circular imports
         from services.registry.embedding_engine import EmbeddingEngine
 
@@ -79,10 +63,6 @@ class TranslationHelper:
         for eng, (cro_nom, cro_gen) in self.path_entity_map.items():
             self.croatian_to_english[cro_nom.lower()] = eng
             self.croatian_to_english[cro_gen.lower()] = eng
-
-        # API client (lazy initialization)
-        self._use_api = use_api
-        self._api_client: Optional["TranslationAPIClient"] = None
 
     def translate(self, term: str, prefer_genitive: bool = False) -> TranslationResult:
         """
@@ -298,130 +278,6 @@ class TranslationHelper:
 
         return list(set(terms))
 
-    def _get_api_client(self) -> Optional["TranslationAPIClient"]:
-        """Get or create API client lazily."""
-        if not self._use_api:
-            return None
-
-        if self._api_client is None:
-            try:
-                from services.registry.translation_api_client import TranslationAPIClient
-                self._api_client = TranslationAPIClient.from_settings()
-            except Exception as e:
-                logger.warning(f"Failed to initialize translation API client: {e}")
-                self._use_api = False  # Disable for future calls
-                return None
-
-        return self._api_client
-
-    async def translate_with_api(
-        self,
-        term: str,
-        prefer_genitive: bool = False
-    ) -> TranslationResult:
-        """
-        Translate a term to Croatian with API fallback.
-
-        This async method first tries dictionary lookup (fast), then
-        falls back to external translation APIs (DeepL/Google) for
-        unmapped terms.
-
-        Args:
-            term: English term to translate
-            prefer_genitive: If True, return genitive form
-
-        Returns:
-            TranslationResult with translated term and metadata
-        """
-        # First try sync dictionary lookup
-        result = self.translate(term, prefer_genitive)
-
-        # If dictionary found it, return immediately
-        if result.method in ("dictionary", "partial", "fuzzy"):
-            return result
-
-        # Dictionary failed - try API
-        api_client = self._get_api_client()
-        if api_client:
-            try:
-                api_result = await api_client.translate(term)
-
-                if api_result.confidence >= 0.5:
-                    logger.info(
-                        f"API translated: '{term}' -> '{api_result.translated}' "
-                        f"(source={api_result.source.value})"
-                    )
-                    return TranslationResult(
-                        original=term,
-                        translated=api_result.translated,
-                        method="api",
-                        confidence=api_result.confidence
-                    )
-            except Exception as e:
-                logger.warning(f"API translation failed for '{term}': {e}")
-
-        # Return the fallback result from sync translate
-        return result
-
-    async def translate_batch_with_api(
-        self,
-        terms: List[str],
-        prefer_genitive: bool = False
-    ) -> List[TranslationResult]:
-        """
-        Translate multiple terms with API fallback.
-
-        Efficiently batches API calls for terms not found in dictionaries.
-
-        Args:
-            terms: List of English terms to translate
-            prefer_genitive: If True, return genitive forms
-
-        Returns:
-            List of TranslationResult
-        """
-        import asyncio
-
-        results: List[TranslationResult] = []
-        api_needed: List[Tuple[int, str]] = []  # (index, term)
-
-        # First pass: try dictionary for all
-        for i, term in enumerate(terms):
-            result = self.translate(term, prefer_genitive)
-            results.append(result)
-
-            # Mark for API if dictionary failed
-            if result.method == "fallback":
-                api_needed.append((i, term))
-
-        # If no API calls needed, return immediately
-        if not api_needed:
-            return results
-
-        # Get API client
-        api_client = self._get_api_client()
-        if not api_client:
-            return results
-
-        # Batch translate via API
-        try:
-            api_terms = [term for _, term in api_needed]
-            api_results = await api_client.translate_batch(api_terms)
-
-            # Update results with API translations
-            for (i, _), api_result in zip(api_needed, api_results):
-                if api_result.confidence >= 0.5:
-                    results[i] = TranslationResult(
-                        original=api_result.original,
-                        translated=api_result.translated,
-                        method="api",
-                        confidence=api_result.confidence
-                    )
-        except Exception as e:
-            logger.warning(f"Batch API translation failed: {e}")
-
-        return results
-
 
 def translate_term(term: str, prefer_genitive: bool = False) -> str:
     """
@@ -452,21 +308,3 @@ def suggest_mapping(term: str) -> List[str]:
     helper = TranslationHelper()
     suggestions = helper.suggest_translations(term)
     return [s.translated for s in suggestions]
-
-
-async def translate_term_with_api(term: str, prefer_genitive: bool = False) -> str:
-    """
-    Async convenience function for translation with API fallback.
-
-    Uses DeepL/Google when dictionary lookup fails.
-
-    Args:
-        term: English term to translate
-        prefer_genitive: If True, return genitive form
-
-    Returns:
-        Croatian translation (from dictionary or API)
-    """
-    helper = TranslationHelper()
-    result = await helper.translate_with_api(term, prefer_genitive)
-    return result.translated
