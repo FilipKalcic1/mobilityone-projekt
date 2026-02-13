@@ -177,6 +177,26 @@ class Settings(BaseSettings):
     ADMIN_DATABASE_URL: Optional[str] = Field(default=None, description="Full-access DB URL for admin (falls back to DATABASE_URL)")
 
     # =========================================================================
+    # TRANSLATION API (for embedding quality improvement)
+    # =========================================================================
+    DEEPL_API_KEY: Optional[str] = Field(
+        default=None,
+        description="DeepL API key for high-quality Croatian translations (preferred)"
+    )
+    GOOGLE_TRANSLATE_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Google Translate API key (fallback if DeepL unavailable)"
+    )
+    TRANSLATION_API_CACHE_TTL: int = Field(
+        default=86400 * 30,  # 30 days
+        description="TTL for cached translations in seconds"
+    )
+    TRANSLATION_API_ENABLED: bool = Field(
+        default=True,
+        description="Enable/disable external translation API calls"
+    )
+
+    # =========================================================================
     # MONITORING & LOGGING
     # =========================================================================
     SENTRY_DSN: Optional[str] = Field(default=None)
