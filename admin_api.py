@@ -902,6 +902,141 @@ async def get_drift_status(
 
 
 # =============================================================================
+# FEEDBACK ANALYSIS ENDPOINTS
+# =============================================================================
+
+@app.get(
+    "/admin/feedback/analyze",
+    summary="Analyze user feedback patterns",
+    description="Analyze hallucination reports to identify missing dictionary terms"
+)
+async def analyze_feedback(
+    min_occurrences: int = 2,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Analyze hallucination reports to find improvement opportunities.
+
+    This endpoint:
+    1. Reads hallucination_reports from database
+    2. Extracts Croatian terms from user queries
+    3. Identifies terms not covered by dictionaries
+    4. Generates suggestions for dictionary additions
+
+    Args:
+        min_occurrences: Minimum term frequency to generate suggestion
+        limit: Maximum reports to analyze
+
+    Returns:
+        Analysis result with suggestions
+    """
+    try:
+        from services.feedback_analyzer import FeedbackAnalyzer
+
+        analyzer = FeedbackAnalyzer(db)
+        result = await analyzer.analyze(
+            min_occurrences=min_occurrences,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error analyzing feedback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/admin/feedback/stats",
+    summary="Get feedback quick stats",
+    description="Get quick statistics about hallucination reports"
+)
+async def get_feedback_stats(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get quick statistics about feedback reports."""
+    try:
+        from services.feedback_analyzer import FeedbackAnalyzer
+
+        analyzer = FeedbackAnalyzer(db)
+        stats = await analyzer.get_quick_stats()
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting feedback stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/admin/quality/summary",
+    summary="Get quality tracking summary",
+    description="Get MRR/NDCG tracking summary and trends"
+)
+async def get_quality_summary(
+    admin_id: str = Depends(check_rate_limit)
+):
+    """
+    Get search quality tracking summary.
+
+    Returns:
+        - Current metrics (MRR, NDCG)
+        - Baseline comparison
+        - Quality trend (improving/degrading)
+        - History count
+    """
+    try:
+        from services.quality_tracker import get_quality_tracker
+
+        tracker = get_quality_tracker()
+        summary = tracker.get_summary()
+
+        return summary
+
+    except Exception as e:
+        logger.error(f"Error getting quality summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/admin/quality/trend",
+    summary="Analyze quality trend",
+    description="Compare current quality metrics against baseline"
+)
+async def get_quality_trend(
+    admin_id: str = Depends(check_rate_limit)
+):
+    """
+    Analyze quality trend over time.
+
+    Returns:
+        - MRR/NDCG changes
+        - Is improving or degrading
+        - Recommendations
+    """
+    try:
+        from services.quality_tracker import get_quality_tracker
+
+        tracker = get_quality_tracker()
+        trend = tracker.analyze_trend()
+
+        if not trend:
+            return {
+                "status": "no_data",
+                "message": "No evaluation history found. Run evaluation first."
+            }
+
+        return trend.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error analyzing quality trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
