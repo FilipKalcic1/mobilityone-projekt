@@ -972,6 +972,118 @@ async def get_feedback_stats(
 
 
 @app.get(
+    "/admin/feedback/analyze-comprehensive",
+    summary="Comprehensive feedback analysis with query learning",
+    description="v2.0 analysis including dictionary gaps, query→tool mappings, and recommendations"
+)
+async def analyze_feedback_comprehensive(
+    min_occurrences: int = 2,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Comprehensive feedback analysis (v2.0).
+
+    This endpoint provides:
+    1. Dictionary gap analysis (missing Croatian terms)
+    2. Query→tool learning from corrections
+    3. Failure category analysis with root causes
+    4. Actionable recommendations
+
+    Args:
+        min_occurrences: Minimum term frequency for suggestions
+        limit: Maximum reports to analyze
+
+    Returns:
+        Comprehensive analysis with dictionary suggestions and query insights
+    """
+    try:
+        from services.feedback_analyzer import FeedbackAnalyzer
+
+        analyzer = FeedbackAnalyzer(db)
+        result = await analyzer.analyze_comprehensive(
+            min_occurrences=min_occurrences,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error in comprehensive feedback analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/admin/feedback/learn-patterns",
+    summary="Learn query patterns from corrections",
+    description="Extract query→tool mappings from hallucination corrections"
+)
+async def learn_query_patterns(
+    min_occurrences: int = 1,
+    include_uncorrected: bool = False,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Learn query→tool patterns from hallucination reports.
+
+    This endpoint:
+    1. Analyzes reports with admin corrections
+    2. Extracts query patterns that led to wrong tool selection
+    3. Builds mappings for future improvement
+    4. Identifies confused query/tool pairs
+
+    Args:
+        min_occurrences: Minimum pattern occurrences to include
+        include_uncorrected: Also analyze reports without corrections
+        limit: Maximum reports to analyze
+
+    Returns:
+        Learning result with mappings and insights
+    """
+    try:
+        from services.query_pattern_learner import QueryPatternLearner
+
+        learner = QueryPatternLearner(db)
+        result = await learner.learn(
+            min_occurrences=min_occurrences,
+            include_uncorrected=include_uncorrected,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error learning query patterns: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/admin/feedback/learning-stats",
+    summary="Get query learning statistics",
+    description="Statistics about learned query→tool mappings"
+)
+async def get_learning_stats(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get statistics about learned query patterns."""
+    try:
+        from services.query_pattern_learner import QueryPatternLearner
+
+        learner = QueryPatternLearner(db)
+        stats = await learner.get_statistics()
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting learning stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
     "/admin/quality/summary",
     summary="Get quality tracking summary",
     description="Get MRR/NDCG tracking summary and trends"

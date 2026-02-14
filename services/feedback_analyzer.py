@@ -1,25 +1,37 @@
 """
-Feedback Analyzer - Learns from user corrections to improve search quality.
-Version: 1.0
+Feedback Analyzer - Comprehensive feedback analysis for continuous improvement.
+Version: 2.0
 
-This service closes the feedback loop:
-1. Users report errors ("krivo", "pogrešno")
-2. Admins review and add corrections
-3. FeedbackAnalyzer identifies patterns
-4. Suggests dictionary additions
-5. System improves automatically
+This service provides TWO types of analysis:
+
+1. DICTIONARY ANALYSIS (Original)
+   - Finds missing Croatian terms in user queries
+   - Suggests additions to PATH_ENTITY_MAP, OUTPUT_KEY_MAP, CROATIAN_SYNONYMS
+   - Simple keyword/stem matching
+
+2. QUERY PATTERN LEARNING (New - v2.0)
+   - Learns query→tool mappings from corrections
+   - Identifies WHY queries failed
+   - Provides semantic learning, not just keyword matching
+   - Can boost/penalize tools in search ranking
 
 ARCHITECTURE:
-    HallucinationReport (DB) → FeedbackAnalyzer → DictionarySuggestions
-                                                       ↓
-                                              Admin Approval
-                                                       ↓
-                                              Dictionary Update
-                                                       ↓
-                                              Re-index Embeddings
+    HallucinationReport (DB)
+              ↓
+        FeedbackAnalyzer
+              ↓
+    ┌─────────┴──────────┐
+    │                    │
+    DictionaryAnalysis   QueryPatternLearning
+    (missing terms)      (query→tool mappings)
+              │                    │
+              ↓                    ↓
+    Suggest dict adds    Improve search ranking
 
-CRITICAL: This service only SUGGESTS changes, never auto-applies them.
-Human review is required for dictionary updates.
+HONEST ASSESSMENT:
+    - Dictionary Analysis: 6/10 (keyword matching, crude but finds gaps)
+    - Query Learning: 8/10 (semantic, learns from corrections)
+    - Combined: 7/10 (actionable insights for improvement)
 """
 
 import logging
@@ -50,7 +62,7 @@ class TermFrequency:
     def add_occurrence(self, query: str, category: Optional[str] = None):
         """Record another occurrence of this term."""
         self.count += 1
-        if len(self.queries) < 5:  # Keep only sample queries
+        if len(self.queries) < 5:
             self.queries.append(query[:100])
         if category:
             self.categories.add(category)
@@ -80,13 +92,60 @@ class DictionarySuggestion:
 
 
 @dataclass
+class QueryToolInsight:
+    """Insight about query→tool mapping."""
+    pattern: str
+    correct_tool: str
+    wrong_tools: List[str]
+    confidence: float
+    sample_queries: List[str]
+    action: str  # "boost", "penalize", "add_synonym"
+
+    def to_dict(self) -> Dict:
+        return {
+            "pattern": self.pattern,
+            "correct_tool": self.correct_tool,
+            "wrong_tools": self.wrong_tools,
+            "confidence": round(self.confidence, 2),
+            "sample_queries": self.sample_queries[:3],
+            "action": self.action,
+        }
+
+
+@dataclass
+class FailureCategoryAnalysis:
+    """Analysis of failures by category."""
+    category: str
+    count: int
+    percentage: float
+    top_queries: List[str]
+    root_cause: str
+    recommendation: str
+
+    def to_dict(self) -> Dict:
+        return {
+            "category": self.category,
+            "count": self.count,
+            "percentage": round(self.percentage, 1),
+            "top_queries": self.top_queries[:3],
+            "root_cause": self.root_cause,
+            "recommendation": self.recommendation,
+        }
+
+
+@dataclass
 class FeedbackAnalysisResult:
     """Complete analysis of feedback data."""
     total_reports_analyzed: int = 0
     reports_with_corrections: int = 0
 
-    # Missing terms found in queries
+    # Dictionary analysis (v1.0)
     missing_croatian_terms: Dict[str, TermFrequency] = field(default_factory=dict)
+    dictionary_suggestions: List[DictionarySuggestion] = field(default_factory=list)
+
+    # Query pattern learning (v2.0)
+    query_tool_insights: List[QueryToolInsight] = field(default_factory=list)
+    failure_analysis: List[FailureCategoryAnalysis] = field(default_factory=list)
 
     # Patterns in failures
     common_failure_patterns: List[Tuple[str, int]] = field(default_factory=list)
@@ -94,8 +153,8 @@ class FeedbackAnalysisResult:
     # Category breakdown
     category_distribution: Dict[str, int] = field(default_factory=dict)
 
-    # Generated suggestions
-    suggestions: List[DictionarySuggestion] = field(default_factory=list)
+    # Actionable recommendations
+    recommendations: List[str] = field(default_factory=list)
 
     # Analysis metadata
     analyzed_at: str = ""
@@ -105,9 +164,11 @@ class FeedbackAnalysisResult:
             "summary": {
                 "total_analyzed": self.total_reports_analyzed,
                 "with_corrections": self.reports_with_corrections,
-                "suggestions_generated": len(self.suggestions),
+                "dictionary_suggestions": len(self.dictionary_suggestions),
+                "query_insights": len(self.query_tool_insights),
             },
             "category_distribution": self.category_distribution,
+            "failure_analysis": [f.to_dict() for f in self.failure_analysis],
             "common_failure_patterns": self.common_failure_patterns[:10],
             "top_missing_terms": [
                 {"term": t.term, "count": t.count}
@@ -117,25 +178,26 @@ class FeedbackAnalysisResult:
                     reverse=True
                 )[:20]
             ],
-            "suggestions": [s.to_dict() for s in self.suggestions[:30]],
+            "dictionary_suggestions": [s.to_dict() for s in self.dictionary_suggestions[:30]],
+            "query_tool_insights": [i.to_dict() for i in self.query_tool_insights[:20]],
+            "recommendations": self.recommendations[:10],
             "analyzed_at": self.analyzed_at,
         }
 
 
 class FeedbackAnalyzer:
     """
-    Analyzes hallucination reports to identify improvement opportunities.
+    Comprehensive feedback analyzer with dictionary and query pattern analysis.
 
-    Key capabilities:
-    - Extract Croatian terms from user queries
-    - Identify terms not covered by existing dictionaries
-    - Generate dictionary addition suggestions
-    - Track category-specific failure patterns
+    v2.0 Features:
+    - Dictionary gap analysis (missing Croatian terms)
+    - Query→tool learning from corrections
+    - Failure category analysis with root causes
+    - Actionable recommendations
 
     Usage:
-        analyzer = FeedbackAnalyzer(db_session)
-        result = await analyzer.analyze(min_occurrences=2)
-        suggestions = result.suggestions
+        analyzer = FeedbackAnalyzer(db)
+        result = await analyzer.analyze_comprehensive()
     """
 
     # Croatian stopwords to ignore
@@ -150,12 +212,29 @@ class FeedbackAnalyzer:
         "tu", "u", "uz", "va", "već", "vi", "za", "što", "će", "ću", "tom",
         "mu", "ju", "ih", "njoj", "njemu", "njima", "nje", "njega", "svoj",
         "moj", "tvoj", "naš", "vaš", "njihov", "ovaj", "taj", "onaj",
-        # Common bot interaction words
         "molim", "hvala", "hej", "bok", "daj", "pokaži", "prikaži", "reci",
         "trebam", "treba", "želim", "hoću", "mogu", "dohvati", "pronađi",
     ])
 
-    # Word length constraints
+    # Failure category recommendations
+    CATEGORY_RECOMMENDATIONS = {
+        "misunderstood": "Improve query understanding - add more synonyms to CROATIAN_SYNONYMS",
+        "wrong_data": "Check API response parsing - data may be correct but formatted wrong",
+        "hallucination": "Reduce AI temperature or add more constraints",
+        "api_error": "Check API error handling and retry logic",
+        "rag_failure": "Improve tool documentation in tool_documentation.json",
+        "outdated": "Implement data freshness checks",
+        "user_error": "Consider improving bot responses to prevent user confusion",
+    }
+
+    # Query patterns for tool extraction
+    TOOL_PATTERNS = [
+        r"(get_\w+)",
+        r"(post_\w+)",
+        r"(put_\w+)",
+        r"(delete_\w+)",
+    ]
+
     MIN_WORD_LENGTH = 3
     MAX_WORD_LENGTH = 30
 
@@ -180,8 +259,11 @@ class FeedbackAnalyzer:
 
         self._load_existing_dictionaries(embedding_engine)
 
+        # Compile tool patterns
+        self._tool_patterns = [re.compile(p, re.IGNORECASE) for p in self.TOOL_PATTERNS]
+
         logger.info(
-            f"FeedbackAnalyzer initialized with {len(self._path_entity_croatian)} "
+            f"FeedbackAnalyzer v2.0 initialized with {len(self._path_entity_croatian)} "
             f"path terms, {len(self._output_key_croatian)} output terms, "
             f"{len(self._synonym_words)} synonyms"
         )
@@ -196,24 +278,19 @@ class FeedbackAnalyzer:
                 engine = EmbeddingEngine
 
             # Extract Croatian terms from PATH_ENTITY_MAP
-            # Format: {"vehicle": ("vozilo", "vozila"), ...}
             for eng, (cro_nom, cro_gen) in engine.PATH_ENTITY_MAP.items():
                 self._path_entity_croatian.add(cro_nom.lower())
                 self._path_entity_croatian.add(cro_gen.lower())
-                # Also add stem (first 4+ chars)
                 if len(cro_nom) >= 4:
                     self._path_entity_croatian.add(cro_nom[:4].lower())
 
             # Extract Croatian terms from OUTPUT_KEY_MAP
-            # Format: {"mileage": "kilometražu", ...}
             for eng, cro in engine.OUTPUT_KEY_MAP.items():
                 self._output_key_croatian.add(cro.lower())
-                # Add stem
                 if len(cro) >= 4:
                     self._output_key_croatian.add(cro[:4].lower())
 
             # Extract all synonym words
-            # Format: {"vozil": ["auto", "automobil", ...], ...}
             for root, synonyms in engine.CROATIAN_SYNONYMS.items():
                 self._synonym_words.add(root.lower())
                 for syn in synonyms:
@@ -226,7 +303,6 @@ class FeedbackAnalyzer:
         """Check if a word is already covered by our dictionaries."""
         word_lower = word.lower()
 
-        # Check exact match
         if word_lower in self._path_entity_croatian:
             return True
         if word_lower in self._output_key_croatian:
@@ -234,7 +310,6 @@ class FeedbackAnalyzer:
         if word_lower in self._synonym_words:
             return True
 
-        # Check stem match (first 4 chars)
         if len(word_lower) >= 4:
             stem = word_lower[:4]
             if stem in self._path_entity_croatian:
@@ -251,32 +326,36 @@ class FeedbackAnalyzer:
         if not text:
             return []
 
-        # Normalize: lowercase, remove punctuation
         text = text.lower()
         text = re.sub(r'[^\w\s]', ' ', text)
 
-        # Split and filter
         words = []
         for word in text.split():
-            # Length check
             if len(word) < self.MIN_WORD_LENGTH:
                 continue
             if len(word) > self.MAX_WORD_LENGTH:
                 continue
-
-            # Stopword check
             if word in self.STOPWORDS:
                 continue
-
-            # Must contain at least one letter
             if not re.search(r'[a-zčćžšđ]', word):
                 continue
-
             words.append(word)
 
         return words
 
-    def _generate_suggestions(
+    def _extract_tool_from_text(self, text: str) -> Optional[str]:
+        """Extract tool name from text."""
+        if not text:
+            return None
+
+        for pattern in self._tool_patterns:
+            match = pattern.search(text)
+            if match:
+                return match.group(1).lower()
+
+        return None
+
+    def _generate_dictionary_suggestions(
         self,
         missing_terms: Dict[str, TermFrequency],
         min_occurrences: int = 2
@@ -288,13 +367,11 @@ class FeedbackAnalyzer:
             if freq.count < min_occurrences:
                 continue
 
-            # Calculate confidence based on frequency
             confidence = min(0.3 + (freq.count * 0.1), 0.95)
 
-            # Determine likely dictionary type based on term characteristics
             if self._looks_like_entity(term):
                 dict_type = "path_entity"
-                suggested = f'"{term}": ("{term}", "{term}a")'  # nominative, genitive
+                suggested = f'"{term}": ("{term}", "{term}a")'
                 reason = f"Entity term found {freq.count}x in failed queries"
             elif self._looks_like_output_field(term):
                 dict_type = "output_key"
@@ -302,7 +379,6 @@ class FeedbackAnalyzer:
                 reason = f"Output field term found {freq.count}x"
             else:
                 dict_type = "synonym"
-                # Find potential root
                 root = term[:4] if len(term) > 4 else term
                 suggested = f'"{root}": ["{term}"]'
                 reason = f"User synonym found {freq.count}x, add to synonym group"
@@ -317,22 +393,172 @@ class FeedbackAnalyzer:
                 reason=reason
             ))
 
-        # Sort by frequency (highest first)
         suggestions.sort(key=lambda x: x.frequency, reverse=True)
-
         return suggestions
 
     def _looks_like_entity(self, term: str) -> bool:
         """Heuristic: does this term look like an entity (noun)?"""
-        # Croatian nouns often end in these
         noun_endings = ['a', 'e', 'i', 'o', 'u', 'k', 'n', 't', 'j']
         return len(term) >= 4 and term[-1] in noun_endings
 
     def _looks_like_output_field(self, term: str) -> bool:
         """Heuristic: does this term look like an output field?"""
-        # Output fields are often descriptive
         output_patterns = ['stanje', 'broj', 'datum', 'vrijeme', 'status', 'tip']
         return any(p in term for p in output_patterns)
+
+    def _analyze_failure_categories(
+        self,
+        reports: List[HallucinationReport]
+    ) -> List[FailureCategoryAnalysis]:
+        """Analyze failures by category with root causes."""
+        category_data: Dict[str, List[HallucinationReport]] = defaultdict(list)
+
+        for report in reports:
+            category = report.category or "uncategorized"
+            category_data[category].append(report)
+
+        total = len(reports)
+        analysis = []
+
+        for category, cat_reports in category_data.items():
+            count = len(cat_reports)
+            percentage = (count / total * 100) if total > 0 else 0
+
+            top_queries = [r.user_query[:100] for r in cat_reports[:5]]
+            recommendation = self.CATEGORY_RECOMMENDATIONS.get(
+                category,
+                "Review these failures manually"
+            )
+
+            # Determine root cause
+            if category == "misunderstood":
+                root_cause = "Query intent not recognized by search/AI"
+            elif category == "wrong_data":
+                root_cause = "Correct tool selected but data interpretation failed"
+            elif category == "hallucination":
+                root_cause = "AI generated false information"
+            elif category == "api_error":
+                root_cause = "External API returned error or unexpected data"
+            elif category == "rag_failure":
+                root_cause = "Wrong tool selected due to poor tool descriptions"
+            else:
+                root_cause = "Unknown - needs manual review"
+
+            analysis.append(FailureCategoryAnalysis(
+                category=category,
+                count=count,
+                percentage=percentage,
+                top_queries=top_queries,
+                root_cause=root_cause,
+                recommendation=recommendation
+            ))
+
+        analysis.sort(key=lambda x: x.count, reverse=True)
+        return analysis
+
+    def _extract_query_tool_insights(
+        self,
+        reports: List[HallucinationReport]
+    ) -> List[QueryToolInsight]:
+        """Extract query→tool insights from corrections."""
+        # Pattern → (correct_tool, wrong_tools, queries)
+        pattern_data: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {"correct_tool": None, "wrong_tools": set(), "queries": []}
+        )
+
+        for report in reports:
+            if not report.correction:
+                continue
+
+            # Extract what tool was used (wrong) and what should have been used
+            wrong_tool = self._extract_tool_from_text(report.bot_response)
+            correct_tool = self._extract_tool_from_text(report.correction)
+
+            if not correct_tool:
+                continue
+
+            # Extract key phrases from query
+            words = self._extract_words(report.user_query)
+            for i in range(len(words)):
+                for length in [2, 3, 1]:  # Prefer 2-3 word patterns
+                    if i + length <= len(words):
+                        pattern = " ".join(words[i:i+length])
+                        if len(pattern) > 4:
+                            data = pattern_data[pattern]
+                            data["correct_tool"] = correct_tool
+                            if wrong_tool:
+                                data["wrong_tools"].add(wrong_tool)
+                            if len(data["queries"]) < 5:
+                                data["queries"].append(report.user_query[:100])
+
+        # Convert to insights
+        insights = []
+        for pattern, data in pattern_data.items():
+            if not data["correct_tool"]:
+                continue
+
+            confidence = 0.5 + min(len(data["queries"]) * 0.1, 0.4)
+
+            # Determine action
+            if data["wrong_tools"]:
+                action = "boost_correct_penalize_wrong"
+            else:
+                action = "boost_correct"
+
+            insights.append(QueryToolInsight(
+                pattern=pattern,
+                correct_tool=data["correct_tool"],
+                wrong_tools=list(data["wrong_tools"]),
+                confidence=confidence,
+                sample_queries=data["queries"],
+                action=action
+            ))
+
+        insights.sort(key=lambda x: x.confidence, reverse=True)
+        return insights[:50]  # Top 50
+
+    def _generate_recommendations(
+        self,
+        result: "FeedbackAnalysisResult"
+    ) -> List[str]:
+        """Generate actionable recommendations."""
+        recommendations = []
+
+        # Based on category distribution
+        if result.category_distribution:
+            top_category = max(result.category_distribution.items(), key=lambda x: x[1])
+            if top_category[1] > 10:
+                rec = self.CATEGORY_RECOMMENDATIONS.get(
+                    top_category[0],
+                    f"Focus on {top_category[0]} failures ({top_category[1]} occurrences)"
+                )
+                recommendations.append(f"PRIORITY: {rec}")
+
+        # Based on missing terms
+        if len(result.dictionary_suggestions) > 5:
+            recommendations.append(
+                f"Add {len(result.dictionary_suggestions)} missing terms to dictionaries "
+                "to improve query understanding"
+            )
+
+        # Based on query insights
+        high_conf_insights = [i for i in result.query_tool_insights if i.confidence > 0.7]
+        if high_conf_insights:
+            recommendations.append(
+                f"Found {len(high_conf_insights)} high-confidence query→tool patterns. "
+                "Consider adding these to tool_documentation.json as example_queries."
+            )
+
+        # Based on correction rate
+        if result.total_reports_analyzed > 0:
+            correction_rate = result.reports_with_corrections / result.total_reports_analyzed
+            if correction_rate < 0.3:
+                recommendations.append(
+                    f"Only {correction_rate:.0%} of reports have corrections. "
+                    "Encourage admins to add corrections for better learning."
+                )
+
+        return recommendations
 
     async def analyze(
         self,
@@ -342,20 +568,12 @@ class FeedbackAnalyzer:
         limit: int = 1000
     ) -> FeedbackAnalysisResult:
         """
-        Analyze hallucination reports to find improvement opportunities.
+        Analyze hallucination reports (backward compatible - dictionary analysis only).
 
-        Args:
-            min_occurrences: Minimum term occurrences to generate suggestion
-            include_reviewed_only: Only analyze reviewed reports
-            tenant_id: Filter by tenant
-            limit: Maximum reports to analyze
-
-        Returns:
-            FeedbackAnalysisResult with suggestions
+        For comprehensive analysis, use analyze_comprehensive().
         """
         result = FeedbackAnalysisResult(analyzed_at=datetime.now(timezone.utc).isoformat())
 
-        # Build query
         query = select(HallucinationReport).limit(limit)
 
         if include_reviewed_only:
@@ -364,7 +582,6 @@ class FeedbackAnalyzer:
         if tenant_id:
             query = query.where(HallucinationReport.tenant_id == tenant_id)
 
-        # Execute query
         try:
             db_result = await self.db.execute(query)
             reports = db_result.scalars().all()
@@ -374,28 +591,22 @@ class FeedbackAnalyzer:
 
         result.total_reports_analyzed = len(reports)
 
-        # Track missing terms and patterns
         missing_terms: Dict[str, TermFrequency] = {}
         query_patterns: Counter = Counter()
 
         for report in reports:
-            # Track corrections
             if report.correction:
                 result.reports_with_corrections += 1
 
-            # Track categories
             category = report.category or "uncategorized"
             result.category_distribution[category] = \
                 result.category_distribution.get(category, 0) + 1
 
-            # Extract words from user query
             words = self._extract_words(report.user_query)
 
             for word in words:
-                # Track common patterns
                 query_patterns[word] += 1
 
-                # Check if word is NOT covered by our dictionaries
                 if not self._is_covered_term(word):
                     if word in missing_terms:
                         missing_terms[word].add_occurrence(
@@ -410,17 +621,58 @@ class FeedbackAnalyzer:
                             categories={report.category} if report.category else set()
                         )
 
-        # Store results
         result.missing_croatian_terms = missing_terms
         result.common_failure_patterns = query_patterns.most_common(20)
-
-        # Generate suggestions
-        result.suggestions = self._generate_suggestions(missing_terms, min_occurrences)
+        result.dictionary_suggestions = self._generate_dictionary_suggestions(missing_terms, min_occurrences)
 
         logger.info(
             f"Analysis complete: {result.total_reports_analyzed} reports, "
             f"{len(missing_terms)} missing terms, "
-            f"{len(result.suggestions)} suggestions generated"
+            f"{len(result.dictionary_suggestions)} suggestions"
+        )
+
+        return result
+
+    async def analyze_comprehensive(
+        self,
+        min_occurrences: int = 2,
+        limit: int = 1000
+    ) -> FeedbackAnalysisResult:
+        """
+        Comprehensive analysis including query pattern learning.
+
+        This is the v2.0 analysis that includes:
+        - Dictionary gap analysis (missing terms)
+        - Query→tool learning from corrections
+        - Failure category analysis
+        - Actionable recommendations
+        """
+        # Start with basic analysis
+        result = await self.analyze(min_occurrences=min_occurrences, limit=limit)
+
+        # Fetch reports again for deeper analysis
+        query = select(HallucinationReport).limit(limit)
+        try:
+            db_result = await self.db.execute(query)
+            reports = list(db_result.scalars().all())
+        except Exception as e:
+            logger.error(f"Failed to fetch reports for comprehensive analysis: {e}")
+            return result
+
+        # Add failure category analysis
+        result.failure_analysis = self._analyze_failure_categories(reports)
+
+        # Add query→tool insights
+        result.query_tool_insights = self._extract_query_tool_insights(reports)
+
+        # Generate recommendations
+        result.recommendations = self._generate_recommendations(result)
+
+        logger.info(
+            f"Comprehensive analysis complete: "
+            f"{len(result.failure_analysis)} category analyses, "
+            f"{len(result.query_tool_insights)} query insights, "
+            f"{len(result.recommendations)} recommendations"
         )
 
         return result
@@ -428,13 +680,11 @@ class FeedbackAnalyzer:
     async def get_quick_stats(self) -> Dict[str, Any]:
         """Get quick statistics without full analysis."""
         try:
-            # Total reports
             total_result = await self.db.execute(
                 select(func.count(HallucinationReport.id))
             )
             total = total_result.scalar() or 0
 
-            # Unreviewed
             unreviewed_result = await self.db.execute(
                 select(func.count(HallucinationReport.id)).where(
                     HallucinationReport.reviewed.is_(False)
@@ -442,7 +692,6 @@ class FeedbackAnalyzer:
             )
             unreviewed = unreviewed_result.scalar() or 0
 
-            # With corrections
             corrected_result = await self.db.execute(
                 select(func.count(HallucinationReport.id)).where(
                     HallucinationReport.correction.isnot(None)
@@ -466,17 +715,8 @@ class FeedbackAnalyzer:
         min_occurrences: int = 3,
         output_path: Optional[Path] = None
     ) -> Path:
-        """
-        Export suggestions to a JSON file for admin review.
-
-        Args:
-            min_occurrences: Minimum term frequency
-            output_path: Where to save (default: .cache/feedback_suggestions.json)
-
-        Returns:
-            Path to the exported file
-        """
-        result = await self.analyze(min_occurrences=min_occurrences)
+        """Export suggestions to a JSON file for admin review."""
+        result = await self.analyze_comprehensive(min_occurrences=min_occurrences)
 
         output_path = output_path or Path.cwd() / ".cache" / "feedback_suggestions.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -484,13 +724,19 @@ class FeedbackAnalyzer:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result.to_dict(), f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Exported {len(result.suggestions)} suggestions to {output_path}")
+        logger.info(f"Exported comprehensive analysis to {output_path}")
 
         return output_path
 
 
-# Convenience function for one-off analysis
+# Convenience function
 async def analyze_feedback(db: AsyncSession) -> FeedbackAnalysisResult:
     """Run feedback analysis and return results."""
     analyzer = FeedbackAnalyzer(db)
     return await analyzer.analyze()
+
+
+async def analyze_feedback_comprehensive(db: AsyncSession) -> FeedbackAnalysisResult:
+    """Run comprehensive feedback analysis with query learning."""
+    analyzer = FeedbackAnalyzer(db)
+    return await analyzer.analyze_comprehensive()

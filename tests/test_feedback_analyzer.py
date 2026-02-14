@@ -164,7 +164,7 @@ class TestFeedbackAnalyzer:
             "obrazac": TermFrequency(term="obrazac", count=3),
         }
 
-        suggestions = analyzer._generate_suggestions(missing_terms, min_occurrences=2)
+        suggestions = analyzer._generate_dictionary_suggestions(missing_terms, min_occurrences=2)
 
         # Only obrazac should be suggested (count=3 >= min=2)
         assert len(suggestions) == 1
@@ -177,7 +177,7 @@ class TestFeedbackAnalyzer:
             "high": TermFrequency(term="high", count=10),
         }
 
-        suggestions = analyzer._generate_suggestions(missing_terms, min_occurrences=2)
+        suggestions = analyzer._generate_dictionary_suggestions(missing_terms, min_occurrences=2)
 
         low_conf = next(s for s in suggestions if s.term == "low").confidence
         high_conf = next(s for s in suggestions if s.term == "high").confidence
@@ -201,7 +201,7 @@ class TestFeedbackAnalyzer:
         result = await analyzer.analyze()
 
         assert result.total_reports_analyzed == 0
-        assert len(result.suggestions) == 0
+        assert len(result.dictionary_suggestions) == 0
 
     @pytest.mark.asyncio
     async def test_analyze_with_reports(self, analyzer, mock_db):
