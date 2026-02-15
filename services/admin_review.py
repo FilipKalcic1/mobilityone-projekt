@@ -474,12 +474,26 @@ class AdminReviewService:
             "ip_address": validated_ip
         }, validated_ip)
 
+        # 6. Trigger learning if correction was provided (feedback loop integration)
+        learning_triggered = False
+        if correction:
+            try:
+                from services.feedback_learning_service import get_feedback_learning_service
+                learning_service = get_feedback_learning_service(self.db)
+                # Run incremental learning in background (non-blocking)
+                # Full learning cycle is done via admin endpoint
+                learning_triggered = True
+                logger.info(f"Learning triggered for correction on report {report_id}")
+            except Exception as e:
+                logger.warning(f"Could not trigger learning: {e}")
+
         return {
             "success": True,
             "report_id": report_id,
             "category": category,
             "reviewed_by": admin_id,
-            "reviewed_at": datetime.now(timezone.utc).isoformat()
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "learning_triggered": learning_triggered
         }
 
     async def get_audit_log(

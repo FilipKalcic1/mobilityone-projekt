@@ -198,6 +198,7 @@ class SearchEngine:
         scored = self._apply_category_boosting(query, scored, tools)
         scored = self._apply_documentation_boosting(query, scored)
         scored = self._apply_example_query_boosting(query, scored)  # NEW: Match against example_queries_hr
+        scored = self._apply_learned_pattern_boosting(query, scored)  # NEW: Feedback learning integration
         scored = self._apply_evaluation_adjustment(scored)
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -530,6 +531,87 @@ class SearchEngine:
                 adjusted.append((score, op_id))
 
         return adjusted
+
+    def _apply_learned_pattern_boosting(
+        self,
+        query: str,
+        scored: List[Tuple[float, str]]
+    ) -> List[Tuple[float, str]]:
+        """
+        Apply learned boosts/penalties from feedback learning service.
+
+        This method integrates the feedback loop by:
+        1. Loading learned patterns from FeedbackLearningService
+        2. Boosting tools that match positive patterns
+        3. Penalizing tools that match negative patterns
+
+        The boost values are confidence-weighted (0.10 to 0.28 typical).
+        """
+        try:
+            from services.feedback_learning_service import LEARNED_BOOSTS_FILE
+            import json
+
+            # Load learned boosts from cache file
+            if not LEARNED_BOOSTS_FILE.exists():
+                return scored
+
+            with open(LEARNED_BOOSTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                boosts_data = data.get("boosts", [])
+
+            if not boosts_data:
+                return scored
+
+            # Build lookup maps
+            tool_boosts: Dict[str, Dict] = {}
+            negative_tool_patterns: Dict[str, List[str]] = {}
+
+            for boost in boosts_data:
+                tool_id = boost.get("tool_id", "").lower()
+                tool_boosts[tool_id] = boost
+
+                # Build negative pattern map
+                for neg_tool in boost.get("negative_patterns", []):
+                    neg_tool_lower = neg_tool.lower()
+                    if neg_tool_lower not in negative_tool_patterns:
+                        negative_tool_patterns[neg_tool_lower] = []
+                    negative_tool_patterns[neg_tool_lower].extend(boost.get("patterns", []))
+
+            query_lower = query.lower()
+            adjusted = []
+
+            for score, op_id in scored:
+                op_id_lower = op_id.lower()
+                adjustment = 0.0
+                reason = ""
+
+                # Check positive boost (tool was correct for these patterns)
+                if op_id_lower in tool_boosts:
+                    boost = tool_boosts[op_id_lower]
+                    for pattern in boost.get("patterns", []):
+                        if pattern in query_lower:
+                            adjustment = boost.get("boost_value", 0.15)
+                            reason = f"learned_boost:{pattern}"
+                            logger.debug(f"Learned boost +{adjustment:.2f} for {op_id} ({reason})")
+                            break
+
+                # Check negative penalty (tool was wrong for these patterns)
+                if op_id_lower in negative_tool_patterns and adjustment == 0.0:
+                    for pattern in negative_tool_patterns[op_id_lower]:
+                        if pattern in query_lower:
+                            adjustment = -0.15  # Penalty
+                            reason = f"learned_penalty:{pattern}"
+                            logger.debug(f"Learned penalty {adjustment:.2f} for {op_id} ({reason})")
+                            break
+
+                new_score = max(0.0, score + adjustment)
+                adjusted.append((new_score, op_id))
+
+            return adjusted
+
+        except Exception as e:
+            logger.warning(f"Could not apply learned pattern boosting: {e}")
+            return scored
 
     def _apply_evaluation_adjustment(
         self,
@@ -1050,6 +1132,7 @@ class SearchEngine:
         scored = self._apply_category_boosting(query, scored, tools)
         scored = self._apply_documentation_boosting(query, scored)
         scored = self._apply_example_query_boosting(query, scored)
+        scored = self._apply_learned_pattern_boosting(query, scored)  # Feedback learning integration
         scored = self._apply_evaluation_adjustment(scored)
         scored.sort(key=lambda x: x[0], reverse=True)
 

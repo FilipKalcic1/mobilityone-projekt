@@ -1149,6 +1149,146 @@ async def get_quality_trend(
 
 
 # =============================================================================
+# FEEDBACK LEARNING SERVICE ENDPOINTS
+# =============================================================================
+
+@app.post(
+    "/admin/learning/run-cycle",
+    summary="Run complete learning cycle",
+    description="Analyze feedback and apply learned patterns to search boosting"
+)
+async def run_learning_cycle(
+    min_occurrences: int = 2,
+    confidence_threshold: float = 0.70,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Run a complete learning cycle.
+
+    This endpoint:
+    1. Analyzes hallucination reports with corrections
+    2. Extracts query→tool patterns
+    3. Applies high-confidence patterns as search boosts
+    4. Saves learned boosts to cache
+
+    Args:
+        min_occurrences: Minimum pattern occurrences to learn
+        confidence_threshold: Minimum confidence for auto-apply (0.0-1.0)
+        limit: Maximum reports to analyze
+
+    Returns:
+        Learning result with statistics
+    """
+    try:
+        from services.feedback_learning_service import get_feedback_learning_service
+
+        service = get_feedback_learning_service(db)
+        result = await service.learn_and_apply(
+            min_occurrences=min_occurrences,
+            confidence_threshold=confidence_threshold,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error running learning cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/admin/learning/statistics",
+    summary="Get learning statistics",
+    description="Statistics about learned patterns and search boosts"
+)
+async def get_learning_statistics(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get statistics about learned patterns."""
+    try:
+        from services.feedback_learning_service import get_feedback_learning_service
+
+        service = get_feedback_learning_service(db)
+        stats = await service.get_statistics()
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting learning statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(
+    "/admin/learning/export-documentation",
+    summary="Export learned patterns to documentation",
+    description="Export high-confidence patterns to tool_documentation.json"
+)
+async def export_to_documentation(
+    confidence_threshold: float = 0.85,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Export learned patterns to tool documentation.
+
+    This enables automatic improvement of tool descriptions with
+    real user query examples.
+
+    Args:
+        confidence_threshold: Minimum confidence to export (0.0-1.0)
+
+    Returns:
+        Number of tools updated
+    """
+    try:
+        from services.feedback_learning_service import get_feedback_learning_service
+
+        service = get_feedback_learning_service(db)
+        updates = await service.export_to_documentation(
+            confidence_threshold=confidence_threshold
+        )
+
+        return {
+            "success": True,
+            "tools_updated": updates,
+            "confidence_threshold": confidence_threshold,
+        }
+
+    except Exception as e:
+        logger.error(f"Error exporting to documentation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete(
+    "/admin/learning/clear",
+    summary="Clear all learned boosts",
+    description="Reset learning - use with caution"
+)
+async def clear_learned_boosts(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Clear all learned boosts (for testing/reset)."""
+    try:
+        from services.feedback_learning_service import get_feedback_learning_service
+
+        service = get_feedback_learning_service(db)
+        service.clear_learned_boosts()
+
+        return {
+            "success": True,
+            "message": "All learned boosts cleared",
+        }
+
+    except Exception as e:
+        logger.error(f"Error clearing learned boosts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
