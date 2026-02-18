@@ -112,51 +112,32 @@ async def whatsapp_webhook(request: Request):
             return {"status": "ok"}
 
         for result in results:
-            # Infobip uses "from" for sender phone number
-            # Fallback to "sender" for older API versions
-            sender = result.get("from", "") or result.get("sender", "")
+            sender = result.get("sender", "")
+            content_list = result.get("content", [])
             message_id = result.get("messageId", "")
 
-            # Skip delivery/seen reports (no "from" field)
+            # CRITICAL v2.0: Validate sender is present
+            # Without sender, we cannot reply - this would cause 400 error
             if not sender:
-                logger.info(
-                    f"No sender in webhook result (delivery/seen report?) "
-                    f"message_id={message_id}, keys={list(result.keys())}"
+                logger.error(
+                    "MISSING SENDER in webhook! "
+                    f"message_id={message_id}, content_types={[c.get('type') for c in content_list]}"
                 )
                 continue
 
-            # Extract text - try all known Infobip formats
+            # Extract text from content
             text = ""
-
-            # Format 1: "message" object (standard Infobip WhatsApp incoming)
-            # {"message": {"type": "TEXT", "text": "Hello"}}
-            msg = result.get("message")
-            if isinstance(msg, dict):
-                text = msg.get("text", "")
-
-            # Format 2: "content" as list of objects
-            # {"content": [{"type": "TEXT", "text": "Hello"}]}
-            if not text:
-                content = result.get("content")
-                if isinstance(content, list):
-                    for item in content:
-                        if isinstance(item, dict) and item.get("type") == "TEXT":
-                            text = item.get("text", "")
-                            break
-                elif isinstance(content, dict):
-                    # "content" as single object: {"content": {"type": "TEXT", "text": "Hello"}}
-                    if content.get("type") == "TEXT":
-                        text = content.get("text", "")
-
-            # Format 3: direct "text" field (some Infobip integrations)
-            if not text:
-                text = result.get("text", "")
+            for content in content_list:
+                if content.get("type") == "TEXT":
+                    text = content.get("text", "")
+                    break
 
             if not text:
-                msg_type = msg.get("type", "UNKNOWN") if isinstance(msg, dict) else "N/A"
+                # Log what type of content we received (image, location, etc.)
+                content_types = [c.get("type") for c in content_list]
                 logger.warning(
-                    f"No text in message from {sender[-4:]}... "
-                    f"type={msg_type}, keys={list(result.keys())}"
+                    f"No text content in message from {sender[-4:]}... "
+                    f"Content types: {content_types}"
                 )
                 continue
 
@@ -184,24 +165,19 @@ async def whatsapp_webhook_verify(request: Request):
     """
     WhatsApp webhook verification endpoint.
 
-    Infobip sends GET to verify the webhook URL is reachable.
-    If WHATSAPP_VERIFY_TOKEN is configured, validates hub.verify_token.
-    Otherwise, returns 200 OK to pass Infobip's reachability check.
+    Uses WHATSAPP_VERIFY_TOKEN from environment for security.
     """
+    # WhatsApp verification
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
+    # Get expected token from environment
     expected_token = settings.WHATSAPP_VERIFY_TOKEN
-
-    # No verify token configured - just confirm the URL is reachable
     if not expected_token:
-        logger.info("Webhook verification: no token configured, returning OK")
-        if challenge:
-            return int(challenge)
-        return {"status": "ok", "webhook": "active"}
+        logger.error("WHATSAPP_VERIFY_TOKEN not configured!")
+        raise HTTPException(status_code=500, detail="Verify token not configured")
 
-    # Token configured - validate it
     if mode == "subscribe" and token == expected_token:
         logger.info("WhatsApp webhook verified successfully")
         return int(challenge)

@@ -370,7 +370,6 @@ class ToolRegistry:
                 from services.intent_classifier import detect_action_intent
 
                 faiss_store = get_faiss_store()
-                logger.debug(f"FAISS store initialized: {faiss_store.is_initialized()}")
 
                 if faiss_store.is_initialized():
                     # Detect ACTION INTENT
@@ -384,16 +383,8 @@ class ToolRegistry:
                         top_k=faiss_top_k,
                         action_filter=action_filter
                     )
-                    logger.debug(f"FAISS returned {len(faiss_results) if faiss_results else 0} results")
 
                     if faiss_results:
-                        # v4.1: Apply semantic entity boosting (driver→persons, etc.)
-                        try:
-                            faiss_results = self._apply_faiss_semantic_boosting(query, faiss_results)
-                            logger.debug(f"After semantic boosting: {len(faiss_results)} results, top={faiss_results[0].tool_id if faiss_results else 'N/A'}")
-                        except Exception as e:
-                            logger.warning(f"Semantic boosting failed: {e}")
-
                         # v4.0: LLM RERANKING - pick best from FAISS candidates
                         if use_llm_rerank and len(faiss_results) > 1:
                             faiss_results = await self._apply_llm_reranking(
@@ -450,76 +441,6 @@ class ToolRegistry:
             prefer_retrieval=prefer_retrieval,
             prefer_mutation=prefer_mutation
         )
-
-    def _apply_faiss_semantic_boosting(self, query: str, faiss_results: List) -> List:
-        """
-        v4.2: Apply semantic entity boosting to FAISS results.
-
-        Handles FAISS-specific injection of missing tools AND boosting of existing ones.
-        Boost values and patterns are aligned with SearchEngine._apply_semantic_entity_boosting.
-        """
-        from services.faiss_vector_store import SearchResult
-
-        query_lower = query.lower()
-
-        # Semantic mappings: (query_keywords, inject_tools, boost_patterns, boost_value)
-        # Values aligned with search_engine.py::_apply_semantic_entity_boosting
-        SEMANTIC_MAPPINGS = [
-            (["vozač", "vozac", "vozača", "vozaca", "vozači", "vozaci", "šofer", "sofer"],
-             ["get_Persons"],
-             ["get_persons", "post_persons", "patch_persons", "delete_persons"],
-             0.12),
-            (["lokacij", "lokacija", "lokacije", "poslovnic", "poslovnica", "poslovnice"],
-             ["get_Companies"],
-             ["get_companies", "post_companies", "patch_companies"],
-             0.10),
-            (["rezervacij", "rezervacija", "rezervacije", "booking", "najam"],
-             ["get_LatestVehicleCalendar", "get_VehicleCalendar"],
-             ["get_vehiclecalendar", "get_latestvehiclecalendar", "delete_vehiclecalendar"],
-             0.08),
-        ]
-
-        existing_tools = {r.tool_id for r in faiss_results}
-        injected_tools = []
-
-        # Step 1: Inject missing semantic tools into FAISS results
-        for keywords, inject_tools, _, boost_value in SEMANTIC_MAPPINGS:
-            if any(kw in query_lower for kw in keywords):
-                for tool_id in inject_tools:
-                    if tool_id not in existing_tools:
-                        base_score = faiss_results[0].score if faiss_results else 0.8
-                        method = "GET" if tool_id.startswith("get_") else \
-                                 "POST" if tool_id.startswith("post_") else \
-                                 "PATCH" if tool_id.startswith("patch_") else \
-                                 "DELETE" if tool_id.startswith("delete_") else "GET"
-                        injected_tools.append(SearchResult(
-                            tool_id=tool_id,
-                            score=base_score + boost_value,
-                            method=method
-                        ))
-                        logger.info(f"Injected semantic tool: {tool_id} (score={base_score + boost_value:.3f})")
-
-        # Step 2: Boost existing matching tools
-        boosted_results = []
-        for r in faiss_results:
-            boost = 0.0
-            tool_id_lower = r.tool_id.lower()
-
-            for keywords, _, tool_patterns, boost_value in SEMANTIC_MAPPINGS:
-                if any(kw in query_lower for kw in keywords):
-                    if any(pattern in tool_id_lower for pattern in tool_patterns):
-                        boost = boost_value
-                        break
-
-            boosted_results.append(SearchResult(
-                tool_id=r.tool_id,
-                score=r.score + boost,
-                method=r.method
-            ))
-
-        all_results = injected_tools + boosted_results
-        all_results.sort(key=lambda x: x.score, reverse=True)
-        return all_results
 
     async def _apply_llm_reranking(
         self,

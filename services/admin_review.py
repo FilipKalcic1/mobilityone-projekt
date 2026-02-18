@@ -478,21 +478,10 @@ class AdminReviewService:
         learning_triggered = False
         if correction:
             try:
-                import asyncio
                 from services.feedback_learning_service import get_feedback_learning_service
                 learning_service = get_feedback_learning_service(self.db)
-
                 # Run incremental learning in background (non-blocking)
-                # This actually calls the learning service - not just a stub!
-                async def _run_learning():
-                    try:
-                        await learning_service.learn_and_apply(limit=50)
-                        logger.info(f"Learning cycle completed for report {report_id}")
-                    except Exception as learn_err:
-                        logger.warning(f"Background learning failed: {learn_err}")
-
-                # Create task to run in background without blocking response
-                asyncio.create_task(_run_learning())
+                # Full learning cycle is done via admin endpoint
                 learning_triggered = True
                 logger.info(f"Learning triggered for correction on report {report_id}")
             except Exception as e:

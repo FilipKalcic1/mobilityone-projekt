@@ -114,21 +114,5 @@
   "DELETE_CASE": {
     "action": "DELETE",
     "tool": "delete_Cases_id"
-  },
-  "GET_PERSONS": {
-    "action": "GET",
-    "tool": "get_Persons"
-  },
-  "GET_COMPANIES": {
-    "action": "GET",
-    "tool": "get_Companies"
-  },
-  "UPDATE_VEHICLE": {
-    "action": "PATCH",
-    "tool": "patch_Vehicles_id"
-  },
-  "DELETE_VEHICLE": {
-    "action": "DELETE",
-    "tool": "delete_Vehicles_id"
   }
 }

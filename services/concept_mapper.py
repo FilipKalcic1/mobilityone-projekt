@@ -15,29 +15,11 @@ Examples:
 - "unesi km" -> "unesi km kilometraža mileage dodaj kreiraj post"
 """
 
-import json
 import logging
-import os
 import re
-import threading
 from typing import Dict, List, Set, Optional
 
 logger = logging.getLogger(__name__)
-
-
-def _load_concept_map_from_config() -> Dict[str, List[str]]:
-    """Load concept map from config/croatian_mappings.json."""
-    base_path = os.path.dirname(os.path.dirname(__file__))
-    config_path = os.path.join(base_path, "config", "croatian_mappings.json")
-
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        raw = data.get("concept_map", {})
-        return {k: v for k, v in raw.items() if k != "_comments"}
-    except Exception as e:
-        logger.error(f"Could not load concept_map from config: {e}")
-        return {}
 
 
 class ConceptMapper:
@@ -50,8 +32,128 @@ class ConceptMapper:
     - Domain-specific - fleet management vocabulary
     """
 
-    # Loaded from config/croatian_mappings.json
-    CONCEPT_MAP: Dict[str, List[str]] = {}
+    # Jargon -> Standard terms mapping
+    # Key: informal term (lowercase, without Croatian diacritics for matching)
+    # Value: list of standard terms to ADD to the query
+    CONCEPT_MAP: Dict[str, List[str]] = {
+        # Vehicle terms
+        "auto": ["vozilo", "vehicle"],
+        "auti": ["vozila", "vehicles"],
+        "kola": ["vozilo", "vehicle"],
+        "karavan": ["vozilo", "kombi", "vehicle"],
+        "kombi": ["vozilo", "dostavno", "vehicle"],
+        "kamion": ["vozilo", "teretno", "vehicle"],
+
+        # Action terms - GET
+        "daj": ["prikaži", "dohvati", "get", "prikazi"],
+        "daj mi": ["prikaži", "dohvati", "get"],
+        "pokaži": ["prikaži", "dohvati", "get", "list"],
+        "pokazi": ["prikaži", "dohvati", "get", "list"],
+        "kaj ima": ["prikaži", "dohvati", "lista", "popis", "get"],
+        "sta ima": ["prikaži", "dohvati", "lista", "popis", "get"],
+        "što ima": ["prikaži", "dohvati", "lista", "popis", "get"],
+        "trebam": ["dohvati", "prikaži", "get", "potrebno"],
+        "treba mi": ["dohvati", "prikaži", "get", "potrebno"],
+        "treba": ["dohvati", "prikaži", "get"],
+        "ima li": ["provjeri", "dostupnost", "available", "get"],
+
+        # Action terms - CREATE/POST
+        "unesi": ["dodaj", "kreiraj", "post", "add", "create"],
+        "upiši": ["dodaj", "kreiraj", "post", "add", "create"],
+        "upisi": ["dodaj", "kreiraj", "post", "add", "create"],
+        "stavi": ["dodaj", "unesi", "post", "add"],
+        "napravi": ["kreiraj", "dodaj", "post", "create"],
+        "otvori": ["kreiraj", "dodaj", "post", "create"],
+        "prijavi": ["kreiraj", "dodaj", "case", "post"],
+
+        # Action terms - UPDATE
+        "promijeni": ["ažuriraj", "update", "patch", "izmijeni"],
+        "promjeni": ["ažuriraj", "update", "patch", "izmijeni"],
+        "izmjeni": ["ažuriraj", "update", "patch"],
+        "izmijeni": ["ažuriraj", "update", "patch"],
+        "popravi": ["ažuriraj", "update", "patch", "ispravak"],
+
+        # Action terms - DELETE
+        "makni": ["obriši", "ukloni", "delete", "remove"],
+        "briši": ["obriši", "delete", "remove"],
+        "brisi": ["obriši", "delete", "remove"],
+        "izbaci": ["obriši", "ukloni", "delete", "remove"],
+
+        # Measurement terms
+        "km": ["kilometraža", "mileage", "kilometri"],
+        "kilasa": ["kilometraža", "mileage"],
+        "prijeđeno": ["kilometraža", "mileage", "udaljenost"],
+        "prijedeno": ["kilometraža", "mileage", "udaljenost"],
+        "kolko je prešo": ["kilometraža", "mileage", "get"],
+        "koliko ima km": ["kilometraža", "mileage", "get"],
+
+        # Registration terms
+        "reg": ["registracija", "registration", "tablice"],
+        "tablice": ["registracija", "registration", "licencePlate"],
+        "tablica": ["registracija", "registration", "licencePlate"],
+        "registracija": ["registration", "licencePlate"],
+        "istek": ["datum", "expiration", "istječe", "validnost"],
+
+        # Case/Issue terms
+        "šteta": ["slučaj", "case", "kvar", "oštećenje"],
+        "steta": ["slučaj", "case", "kvar", "oštećenje"],
+        "kvar": ["slučaj", "case", "problem", "defekt"],
+        "problem": ["slučaj", "case", "kvar", "issue"],
+        "guma": ["slučaj", "case", "servis", "gume"],
+        "nesreća": ["slučaj", "case", "nezgoda", "accident"],
+        "nesreca": ["slučaj", "case", "nezgoda", "accident"],
+        "prometna": ["slučaj", "case", "nezgoda", "accident"],
+
+        # Person/Role terms
+        "šef": ["voditelj", "manager", "nadređeni"],
+        "sef": ["voditelj", "manager", "nadređeni"],
+        "gazda": ["voditelj", "manager", "vlasnik"],
+        "vozač": ["driver", "osoba", "korisnik"],
+        "vozac": ["driver", "osoba", "korisnik"],
+        "ja": ["moje", "korisnik", "person", "moj"],
+        "meni": ["moje", "korisnik", "person", "moj"],
+
+        # Organization terms
+        "firma": ["kompanija", "company", "tvrtka", "tenant"],
+        "posao": ["kompanija", "company", "organizacija"],
+        "odjel": ["organizacijska jedinica", "orgUnit", "department"],
+        "služba": ["organizacijska jedinica", "orgUnit", "department"],
+        "sluzba": ["organizacijska jedinica", "orgUnit", "department"],
+
+        # Booking/Calendar terms
+        "rezerviraj": ["rezervacija", "booking", "calendar", "post"],
+        "zakaži": ["rezervacija", "booking", "calendar", "post"],
+        "zakazi": ["rezervacija", "booking", "calendar", "post"],
+        "zauzmi": ["rezervacija", "booking", "calendar", "post"],
+        "slobodno": ["dostupno", "available", "slobodna vozila"],
+        "slobodan": ["dostupan", "available"],
+        "termin": ["vrijeme", "period", "calendar", "slot"],
+
+        # Leasing/Contract terms
+        "lizing": ["leasing", "najam", "ugovor", "contract"],
+        "rata": ["mjesečna rata", "monthly", "payment"],
+        "ugovor": ["contract", "leasing", "najam"],
+        "najam": ["leasing", "rent", "contract"],
+
+        # Document terms
+        "dokument": ["documents", "file", "prilog", "attachment"],
+        "papir": ["dokument", "documents", "file"],
+        "prilog": ["dokument", "attachment", "file"],
+        "slika": ["dokument", "image", "photo", "attachment"],
+        "fotografija": ["dokument", "image", "photo", "attachment"],
+
+        # Time terms
+        "sutra": ["datum", "tomorrow", "time"],
+        "danas": ["datum", "today", "time"],
+        "ovaj tjedan": ["period", "this week", "time"],
+        "sljedeći tjedan": ["period", "next week", "time"],
+        "sljedeci tjedan": ["period", "next week", "time"],
+
+        # Status terms
+        "status": ["stanje", "state", "status"],
+        "stanje": ["status", "state"],
+        "gdje je": ["lokacija", "location", "status", "get"],
+    }
 
     # Phrase patterns that should trigger concept expansion
     # These are regex patterns that capture common query structures
@@ -80,13 +182,6 @@ class ConceptMapper:
             enabled: If False, expand_query returns original query unchanged
         """
         self.enabled = enabled
-
-        # Load concept map from config file
-        loaded = _load_concept_map_from_config()
-        if loaded:
-            self.CONCEPT_MAP = loaded
-        # else: keeps class-level empty dict as fallback
-
         self._build_normalized_map()
         logger.info(f"ConceptMapper initialized with {len(self.CONCEPT_MAP)} concept mappings")
 
@@ -219,19 +314,15 @@ class ConceptMapper:
         return added_part.split() if added_part else []
 
 
-# Singleton instance (thread-safe)
+# Singleton instance
 _concept_mapper: Optional[ConceptMapper] = None
-_concept_mapper_lock = threading.Lock()
 
 
 def get_concept_mapper(enabled: bool = True) -> ConceptMapper:
-    """Get or create singleton ConceptMapper instance (thread-safe)."""
+    """Get or create singleton ConceptMapper instance."""
     global _concept_mapper
-    if _concept_mapper is not None:
-        return _concept_mapper
-    with _concept_mapper_lock:
-        if _concept_mapper is None:
-            _concept_mapper = ConceptMapper(enabled=enabled)
+    if _concept_mapper is None:
+        _concept_mapper = ConceptMapper(enabled=enabled)
     return _concept_mapper
 
 

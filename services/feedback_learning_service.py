@@ -739,15 +739,10 @@ _feedback_learning_service: Optional[FeedbackLearningService] = None
 
 
 def get_feedback_learning_service(db: AsyncSession) -> FeedbackLearningService:
-    """Get or create feedback learning service instance.
-
-    Updates the db session each call to avoid stale sessions.
-    """
+    """Get or create feedback learning service instance."""
     global _feedback_learning_service
     if _feedback_learning_service is None:
         _feedback_learning_service = FeedbackLearningService(db)
-    else:
-        _feedback_learning_service.db = db
     return _feedback_learning_service
 
 

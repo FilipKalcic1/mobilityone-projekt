@@ -199,7 +199,6 @@ class SearchEngine:
         scored = self._apply_documentation_boosting(query, scored)
         scored = self._apply_example_query_boosting(query, scored)  # NEW: Match against example_queries_hr
         scored = self._apply_learned_pattern_boosting(query, scored)  # NEW: Feedback learning integration
-        scored = self._apply_semantic_entity_boosting(query, scored)  # Entity relationship boosting
         scored = self._apply_evaluation_adjustment(scored)
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -250,61 +249,11 @@ class SearchEngine:
         logger.info(f"Returning {len(result)} tools with scores and origin guides")
         return result
 
-    def _enhance_query_with_croatian_translations(self, query: str) -> str:
-        """
-        Enhance Croatian query with English translations for better embedding matching.
-
-        Expands Croatian terms to include English equivalents that match API tool names.
-        Uses stem matching (e.g., "vozil" matches "vozilo", "vozila", "vozilu").
-        """
-        from services.registry.embedding_engine import _get_croatian_mappings
-
-        enhanced_parts = [query]
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-
-        mappings = _get_croatian_mappings()
-        croatian_synonyms = {k: v for k, v in mappings.get("croatian_synonyms", {}).items() if k != "_comments"}
-        path_entity_map = {k: v for k, v in mappings.get("path_entity_map", {}).items() if k != "_comments"}
-
-        # Check each Croatian synonym group (stem-based matching)
-        for croatian_stem, english_terms in croatian_synonyms.items():
-            stem_lower = croatian_stem.lower()
-            # Check if any word in query starts with or contains the stem
-            match = any(stem_lower in word or word.startswith(stem_lower[:4])
-                       for word in query_words if len(word) >= 3)
-            if match:
-                # Add English equivalents
-                if isinstance(english_terms, (list, tuple)):
-                    for term in english_terms[:3]:  # Limit to top 3 synonyms
-                        if term.lower() not in query_lower:
-                            enhanced_parts.append(term)
-                elif str(english_terms).lower() not in query_lower:
-                    enhanced_parts.append(str(english_terms))
-
-        # Also check path_entity_map for direct Croatian->English mappings
-        for croatian, english in path_entity_map.items():
-            cro_lower = croatian.lower()
-            if len(cro_lower) >= 3 and cro_lower in query_lower:
-                # Handle both tuple and list [nominative, genitive] and string values
-                eng_str = english[0] if isinstance(english, (tuple, list)) else str(english)
-                if eng_str.lower() not in query_lower:
-                    enhanced_parts.append(eng_str)
-
-        enhanced = " ".join(enhanced_parts)
-        if enhanced != query:
-            logger.debug(f"Enhanced query: '{query}' -> '{enhanced[:150]}...'")
-
-        return enhanced
-
     async def _get_query_embedding(self, query: str) -> Optional[List[float]]:
-        """Get embedding for query text with Croatian enhancement."""
+        """Get embedding for query text."""
         try:
-            # Enhance query with English translations for better matching
-            enhanced_query = self._enhance_query_with_croatian_translations(query)
-
             response = await self.openai.embeddings.create(
-                input=[enhanced_query[:8000]],
+                input=[query[:8000]],
                 model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
             )
             return response.data[0].embedding
@@ -459,55 +408,71 @@ class SearchEngine:
     ) -> List[Tuple[float, str]]:
         """
         INTENT-AWARE WILDCARD INJECTION
-
-        Uses ML classifier (detect_action_intent) instead of hardcoded keyword lists.
-        Ensures tools matching detected intent are always in the candidate list.
+        
+        Ensures that tools matching detected intent are ALWAYS in candidate list,
+        even if they don't have training examples. This prevents training bias
+        from completely excluding correct tools.
+        
+        Example:
+        - Query: "obriši vozilo" (DELETE intent)
+        - Training only has examples for VehicleMgt_UpdateVehicle
+        - Without this: delete_Vehicles_id might not reach LLM
+        - With this: delete_Vehicles_id is injected with minimum score
+        
+        The LLM (not embeddings) should make the final decision!
         """
+        query_lower = query.lower().strip()
         scored_tools = {op_id for _, op_id in scored}
-
-        # Use ML classifier for intent detection (single source of truth)
-        intent_result = detect_action_intent(query)
-        intent = intent_result.intent
-
-        is_delete_intent = intent == ActionIntent.DELETE
-        is_create_intent = intent == ActionIntent.CREATE
-        is_update_intent = intent in (ActionIntent.UPDATE, ActionIntent.PATCH)
-
-        # Skip injection for READ/UNKNOWN intents
-        if not (is_delete_intent or is_create_intent or is_update_intent):
-            return scored
-
-        injected = list(scored)
-        injection_score = 0.50
-        max_injections = 5
+        
+        # Detect DELETE intent
+        delete_keywords = ["obriši", "obrisi", "delete", "ukloni", "makni", "izbriši", "izbrisi"]
+        is_delete_intent = any(kw in query_lower for kw in delete_keywords)
+        
+        # Detect CREATE/POST intent  
+        create_keywords = ["dodaj", "kreiraj", "napravi", "novi", "nova", "prijavi", "unesi"]
+        is_create_intent = any(kw in query_lower for kw in create_keywords)
+        
+        # Detect UPDATE intent
+        update_keywords = ["ažuriraj", "azuriraj", "promijeni", "izmijeni", "update", "edit"]
+        is_update_intent = any(kw in query_lower for kw in update_keywords)
+        
+        injected = list(scored)  # Copy
+        injection_score = 0.50  # Minimum score to be considered
+        max_injections = 5  # Don't flood with wildcards
         injections_count = 0
-
+        
         for op_id in search_pool:
             if op_id in scored_tools:
-                continue
+                continue  # Already in results
             if injections_count >= max_injections:
                 break
-
+                
             tool = tools.get(op_id)
             if not tool:
                 continue
-
+            
             should_inject = False
-
+            
+            # DELETE intent → inject delete_ tools
             if is_delete_intent and (tool.method == "DELETE" or "delete" in op_id.lower()):
                 should_inject = True
+                
+            # CREATE intent → inject post_ tools (but not search POSTs)
             elif is_create_intent and tool.method == "POST":
                 is_search_post = any(x in op_id.lower() for x in ["search", "query", "filter", "find"])
                 if not is_search_post:
                     should_inject = True
+                    
+            # UPDATE intent → inject put_/patch_ tools
             elif is_update_intent and tool.method in ("PUT", "PATCH"):
                 should_inject = True
-
+            
             if should_inject:
                 injected.append((injection_score, op_id))
                 injections_count += 1
-                logger.info(f"WILDCARD INJECT: {op_id} (ML intent={intent.value})")
-
+                logger.info(f"WILDCARD INJECT: {op_id} (intent match, no training)")
+        
+        # Re-sort after injection
         injected.sort(key=lambda x: x[0], reverse=True)
         return injected
 
@@ -647,60 +612,6 @@ class SearchEngine:
         except Exception as e:
             logger.warning(f"Could not apply learned pattern boosting: {e}")
             return scored
-
-    def _apply_semantic_entity_boosting(
-        self,
-        query: str,
-        scored: List[Tuple[float, str]]
-    ) -> List[Tuple[float, str]]:
-        """
-        Apply semantic entity relationship boosting.
-
-        This handles cases where user queries use domain-specific terms
-        that map to different API entities. For example:
-        - "vozač" (driver) queries should boost "Persons" endpoints
-        - "lokacija" (location) queries should boost "Companies" endpoints
-
-        This is necessary because embeddings don't capture these business-specific
-        relationships (drivers are stored as persons in the database).
-        """
-        query_lower = query.lower()
-
-        # Define semantic mappings: (query_keywords, target_tool_patterns, boost_value)
-        SEMANTIC_MAPPINGS = [
-            # Driver queries → Persons (drivers are stored as persons)
-            (["vozač", "vozac", "vozača", "vozaca", "vozači", "vozaci", "šofer", "sofer"],
-             ["get_persons", "post_persons", "patch_persons", "delete_persons"],
-             0.12),
-
-            # Location queries → Companies (companies represent physical locations)
-            (["lokacij", "lokacija", "lokacije", "poslovnic", "poslovnica", "poslovnice"],
-             ["get_companies", "post_companies", "patch_companies"],
-             0.10),
-
-            # Reservation queries → VehicleCalendar (bookings are stored in calendar)
-            (["rezervacij", "rezervacija", "rezervacije", "booking", "najam"],
-             ["get_vehiclecalendar", "get_latestvehiclecalendar", "delete_vehiclecalendar"],
-             0.08),
-        ]
-
-        adjusted = []
-        for score, op_id in scored:
-            boost = 0.0
-            op_id_lower = op_id.lower()
-
-            for keywords, tool_patterns, boost_value in SEMANTIC_MAPPINGS:
-                # Check if query contains any of the keywords
-                if any(kw in query_lower for kw in keywords):
-                    # Check if tool matches any of the target patterns
-                    if any(pattern in op_id_lower for pattern in tool_patterns):
-                        boost = boost_value
-                        logger.debug(f"Semantic boost +{boost:.2f} for {op_id}")
-                        break
-
-            adjusted.append((score + boost, op_id))
-
-        return adjusted
 
     def _apply_evaluation_adjustment(
         self,

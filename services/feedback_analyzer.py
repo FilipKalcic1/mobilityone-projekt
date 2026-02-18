@@ -272,44 +272,26 @@ class FeedbackAnalyzer:
         """Load Croatian terms from existing dictionaries."""
         try:
             if embedding_engine:
-                # Use provided engine instance (e.g., from tests)
-                path_entity_map = embedding_engine.PATH_ENTITY_MAP
-                output_key_map = embedding_engine.OUTPUT_KEY_MAP
-                croatian_synonyms = embedding_engine.CROATIAN_SYNONYMS
+                engine = embedding_engine
             else:
-                # Load directly from config (avoids class-level attribute access)
-                from services.registry.embedding_engine import _get_croatian_mappings
-                mappings = _get_croatian_mappings()
-                # PATH_ENTITY_MAP: JSON stores lists, convert to tuples
-                raw_path = mappings.get("path_entity_map", {})
-                path_entity_map = {
-                    k: (v[0], v[1]) for k, v in raw_path.items()
-                    if k != "_comments" and isinstance(v, list) and len(v) == 2
-                }
-                output_key_map = {
-                    k: v for k, v in mappings.get("output_key_map", {}).items()
-                    if k != "_comments"
-                }
-                croatian_synonyms = {
-                    k: v for k, v in mappings.get("croatian_synonyms", {}).items()
-                    if k != "_comments"
-                }
+                from services.registry.embedding_engine import EmbeddingEngine
+                engine = EmbeddingEngine
 
             # Extract Croatian terms from PATH_ENTITY_MAP
-            for eng, (cro_nom, cro_gen) in path_entity_map.items():
+            for eng, (cro_nom, cro_gen) in engine.PATH_ENTITY_MAP.items():
                 self._path_entity_croatian.add(cro_nom.lower())
                 self._path_entity_croatian.add(cro_gen.lower())
                 if len(cro_nom) >= 4:
                     self._path_entity_croatian.add(cro_nom[:4].lower())
 
             # Extract Croatian terms from OUTPUT_KEY_MAP
-            for eng, cro in output_key_map.items():
+            for eng, cro in engine.OUTPUT_KEY_MAP.items():
                 self._output_key_croatian.add(cro.lower())
                 if len(cro) >= 4:
                     self._output_key_croatian.add(cro[:4].lower())
 
             # Extract all synonym words
-            for root, synonyms in croatian_synonyms.items():
+            for root, synonyms in engine.CROATIAN_SYNONYMS.items():
                 self._synonym_words.add(root.lower())
                 for syn in synonyms:
                     self._synonym_words.add(syn.lower())
