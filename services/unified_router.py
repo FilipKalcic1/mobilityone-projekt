@@ -303,17 +303,7 @@ class UnifiedRouter:
 
         # Quick checks before LLM
 
-        # 1. Check for greeting
-        greeting_response = self._check_greeting(query)
-        if greeting_response:
-            return RouterDecision(
-                action="direct_response",
-                response=greeting_response,
-                reasoning="Greeting detected",
-                confidence=1.0
-            )
-
-        # 2. Check for exit signal when in flow
+        # 1. Check for exit signal when in flow
         in_flow = conversation_state and conversation_state.get("flow")
         if in_flow and self._check_exit_signal(query):
             return RouterDecision(
@@ -322,7 +312,7 @@ class UnifiedRouter:
                 confidence=1.0
             )
 
-        # 3. CRITICAL: Handle in-flow continue signals explicitly
+        # 2. CRITICAL: Handle in-flow continue signals explicitly
         # This prevents LLM hallucination for common in-flow actions
         if in_flow:
             query_lower = query.lower()
@@ -364,13 +354,15 @@ class UnifiedRouter:
                         confidence=1.0
                     )
 
-        # 4. QUERY ROUTER - Brza staza za poznate patterne (0 tokena, <1ms)
+        # 3. QUERY ROUTER - Single call handles greetings AND tool routing
+        # Brza staza za poznate patterne (0 tokena, <1ms)
         # Ovo štedi ~80% LLM poziva za jednostavne upite
         logger.info(f"UNIFIED ROUTER: Trying QueryRouter for query='{query[:50]}'")
         qr_result = self.query_router.route(query, user_context)
         logger.info(f"UNIFIED ROUTER: QR result: matched={qr_result.matched}, conf={qr_result.confidence}, flow={qr_result.flow_type if qr_result.matched else None}")
         if qr_result.matched and qr_result.confidence >= ML_CONFIDENCE_THRESHOLD:
-            # High-confidence ML match bypasses LLM for speed (saves ~80% LLM calls)
+            # High-confidence ML match bypasses LLM for speed
+            # This handles greetings (direct_response), tool routing, and flows
             logger.info(
                 f"UNIFIED ROUTER: Fast path via QueryRouter → "
                 f"{qr_result.tool_name or qr_result.flow_type} (conf={qr_result.confidence})"

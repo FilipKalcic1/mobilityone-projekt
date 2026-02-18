@@ -455,28 +455,28 @@ class ToolRegistry:
         """
         v4.2: Apply semantic entity boosting to FAISS results.
 
-        Delegates to SearchEngine._apply_semantic_entity_boosting for scoring logic
-        (single source of truth), and handles FAISS-specific injection of missing tools.
+        Handles FAISS-specific injection of missing tools AND boosting of existing ones.
+        Boost values and patterns are aligned with SearchEngine._apply_semantic_entity_boosting.
         """
         from services.faiss_vector_store import SearchResult
 
         query_lower = query.lower()
 
         # Semantic mappings: (query_keywords, inject_tools, boost_patterns, boost_value)
-        # Single source - used for both injection and boosting
+        # Values aligned with search_engine.py::_apply_semantic_entity_boosting
         SEMANTIC_MAPPINGS = [
             (["vozač", "vozac", "vozača", "vozaca", "vozači", "vozaci", "šofer", "sofer"],
              ["get_Persons"],
              ["get_persons", "post_persons", "patch_persons", "delete_persons"],
-             0.15),
+             0.12),
             (["lokacij", "lokacija", "lokacije", "poslovnic", "poslovnica", "poslovnice"],
              ["get_Companies"],
              ["get_companies", "post_companies", "patch_companies"],
-             0.12),
+             0.10),
             (["rezervacij", "rezervacija", "rezervacije", "booking", "najam"],
              ["get_LatestVehicleCalendar", "get_VehicleCalendar"],
-             ["get_vehiclecalendar", "get_latestvehiclecalendar"],
-             0.10),
+             ["get_vehiclecalendar", "get_latestvehiclecalendar", "delete_vehiclecalendar"],
+             0.08),
         ]
 
         existing_tools = {r.tool_id for r in faiss_results}

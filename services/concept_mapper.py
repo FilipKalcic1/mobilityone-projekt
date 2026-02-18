@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import threading
 from typing import Dict, List, Set, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ def _load_concept_map_from_config() -> Dict[str, List[str]]:
         raw = data.get("concept_map", {})
         return {k: v for k, v in raw.items() if k != "_comments"}
     except Exception as e:
-        logger.warning(f"Could not load concept_map from config: {e}")
+        logger.error(f"Could not load concept_map from config: {e}")
         return {}
 
 
@@ -218,15 +219,19 @@ class ConceptMapper:
         return added_part.split() if added_part else []
 
 
-# Singleton instance
+# Singleton instance (thread-safe)
 _concept_mapper: Optional[ConceptMapper] = None
+_concept_mapper_lock = threading.Lock()
 
 
 def get_concept_mapper(enabled: bool = True) -> ConceptMapper:
-    """Get or create singleton ConceptMapper instance."""
+    """Get or create singleton ConceptMapper instance (thread-safe)."""
     global _concept_mapper
-    if _concept_mapper is None:
-        _concept_mapper = ConceptMapper(enabled=enabled)
+    if _concept_mapper is not None:
+        return _concept_mapper
+    with _concept_mapper_lock:
+        if _concept_mapper is None:
+            _concept_mapper = ConceptMapper(enabled=enabled)
     return _concept_mapper
 
 

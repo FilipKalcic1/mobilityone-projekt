@@ -257,14 +257,18 @@ class SearchEngine:
         Expands Croatian terms to include English equivalents that match API tool names.
         Uses stem matching (e.g., "vozil" matches "vozilo", "vozila", "vozilu").
         """
-        from services.registry.embedding_engine import EmbeddingEngine
+        from services.registry.embedding_engine import _get_croatian_mappings
 
         enhanced_parts = [query]
         query_lower = query.lower()
         query_words = set(query_lower.split())
 
+        mappings = _get_croatian_mappings()
+        croatian_synonyms = {k: v for k, v in mappings.get("croatian_synonyms", {}).items() if k != "_comments"}
+        path_entity_map = {k: v for k, v in mappings.get("path_entity_map", {}).items() if k != "_comments"}
+
         # Check each Croatian synonym group (stem-based matching)
-        for croatian_stem, english_terms in EmbeddingEngine.CROATIAN_SYNONYMS.items():
+        for croatian_stem, english_terms in croatian_synonyms.items():
             stem_lower = croatian_stem.lower()
             # Check if any word in query starts with or contains the stem
             match = any(stem_lower in word or word.startswith(stem_lower[:4])
@@ -278,12 +282,12 @@ class SearchEngine:
                 elif str(english_terms).lower() not in query_lower:
                     enhanced_parts.append(str(english_terms))
 
-        # Also check PATH_ENTITY_MAP for direct Croatian->English mappings
-        for croatian, english in EmbeddingEngine.PATH_ENTITY_MAP.items():
+        # Also check path_entity_map for direct Croatian->English mappings
+        for croatian, english in path_entity_map.items():
             cro_lower = croatian.lower()
             if len(cro_lower) >= 3 and cro_lower in query_lower:
-                # Handle both tuple (nominative, genitive) and string values
-                eng_str = english[0] if isinstance(english, tuple) else str(english)
+                # Handle both tuple and list [nominative, genitive] and string values
+                eng_str = english[0] if isinstance(english, (tuple, list)) else str(english)
                 if eng_str.lower() not in query_lower:
                     enhanced_parts.append(eng_str)
 

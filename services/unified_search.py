@@ -278,7 +278,7 @@ class UnifiedSearch:
                 boosted_results.insert(0, SearchResult(
                     tool_id=exact_match_tool,
                     score=100.0,
-                    method=self._tool_methods.get(exact_match_tool, "GET") if hasattr(self, '_tool_methods') else "GET"
+                    method="GET"
                 ))
 
         # Step 5: Sort by final score (boost system already applied entity/suffix boosts)

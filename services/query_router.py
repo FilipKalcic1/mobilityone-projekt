@@ -12,6 +12,7 @@ Uses ML model instead of regex patterns for 99%+ accuracy.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
@@ -196,6 +197,54 @@ INTENT_METADATA = {
         ),
         "flow_type": "direct_response",
     },
+    "GET_AVAILABLE_VEHICLES": {
+        "tool": "get_AvailableVehicles",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "list",
+    },
+    "GET_EXPENSES": {
+        "tool": "get_Expenses",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "list",
+    },
+    "GET_VEHICLES": {
+        "tool": "get_Vehicles",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "list",
+    },
+    "DELETE_CASE": {
+        "tool": "delete_Cases_id",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "delete_case",
+    },
+    "GET_PERSONS": {
+        "tool": "get_Persons",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "list",
+    },
+    "GET_COMPANIES": {
+        "tool": "get_Companies",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "list",
+    },
+    "UPDATE_VEHICLE": {
+        "tool": "patch_Vehicles_id",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "update_vehicle",
+    },
+    "DELETE_VEHICLE": {
+        "tool": "delete_Vehicles_id",
+        "extract_fields": [],
+        "response_template": None,
+        "flow_type": "delete_vehicle",
+    },
 }
 
 # v16.0: Confidence threshold for DETERMINISTIC routing (bypasses LLM)
@@ -368,13 +417,17 @@ class QueryRouter:
         return str(value)
 
 
-# Singleton
+# Singleton (thread-safe)
 _router = None
+_router_lock = threading.Lock()
 
 
 def get_query_router() -> QueryRouter:
-    """Get singleton instance."""
+    """Get singleton instance (thread-safe)."""
     global _router
-    if _router is None:
-        _router = QueryRouter()
+    if _router is not None:
+        return _router
+    with _router_lock:
+        if _router is None:
+            _router = QueryRouter()
     return _router

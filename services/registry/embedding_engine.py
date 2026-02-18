@@ -50,7 +50,7 @@ def _load_croatian_mappings() -> dict:
         logger.info(f"Loaded Croatian mappings from {config_path}")
         return data
     except Exception as e:
-        logger.warning(f"Could not load Croatian mappings: {e}. Using empty defaults.")
+        logger.error(f"Could not load Croatian mappings: {e}. Using empty defaults.")
         return {}
 
 

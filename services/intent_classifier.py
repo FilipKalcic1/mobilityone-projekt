@@ -37,7 +37,7 @@ def _load_intent_synonyms() -> Dict[str, str]:
         raw = data.get("intent_synonyms", {})
         return {k: v for k, v in raw.items() if k != "_comments"}
     except Exception as e:
-        logger.warning(f"Could not load intent_synonyms from config: {e}")
+        logger.error(f"Could not load intent_synonyms from config: {e}")
         return {}
 
 
@@ -273,7 +273,16 @@ class IntentClassifier:
         elif self.algorithm == "fasttext":
             return self._predict_fasttext(text_clean)
         elif self.algorithm == "azure_embedding":
-            return self._predict_azure_embedding(text_clean)
+            try:
+                return self._predict_azure_embedding(text_clean)
+            except Exception as e:
+                logger.error(f"Azure embedding prediction failed: {e}")
+                return IntentPrediction(
+                    intent="UNKNOWN",
+                    action="NONE",
+                    tool=None,
+                    confidence=0.0
+                )
 
         return IntentPrediction(
             intent="UNKNOWN",
@@ -608,14 +617,18 @@ class IntentClassifier:
     def _get_azure_client(self):
         """Get or create cached Azure OpenAI client."""
         if self._azure_client is None:
-            from openai import AzureOpenAI
-            from config import get_settings
-            settings = get_settings()
-            self._azure_client = AzureOpenAI(
-                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-                api_key=settings.AZURE_OPENAI_API_KEY,
-                api_version="2024-02-15-preview"
-            )
+            try:
+                from openai import AzureOpenAI
+                from config import get_settings
+                settings = get_settings()
+                self._azure_client = AzureOpenAI(
+                    azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+                    api_key=settings.AZURE_OPENAI_API_KEY,
+                    api_version="2024-02-15-preview"
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize Azure OpenAI client: {e}")
+                raise
         return self._azure_client
 
     def _predict_azure_embedding(self, text: str) -> IntentPrediction:

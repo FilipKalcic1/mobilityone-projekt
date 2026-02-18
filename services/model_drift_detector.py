@@ -84,10 +84,14 @@ class ModelDriftDetector:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=ANALYSIS_HOURS)
 
         # Get recent metrics
-        recent = [
-            m for m in self._metrics
-            if datetime.fromisoformat(m["ts"].replace('Z', '+00:00')) > cutoff
-        ]
+        recent = []
+        for m in self._metrics:
+            try:
+                ts = datetime.fromisoformat(m["ts"].replace('Z', '+00:00'))
+                if ts > cutoff:
+                    recent.append(m)
+            except (ValueError, AttributeError, KeyError):
+                continue
 
         if model_version:
             recent = [m for m in recent if m.get("model") == model_version]
@@ -180,12 +184,16 @@ class ModelDriftDetector:
 
         # Calculate from in-memory metrics
         cutoff = datetime.now(timezone.utc) - timedelta(days=BASELINE_DAYS)
-        baseline_metrics = [
-            m for m in self._metrics
-            if datetime.fromisoformat(m["ts"].replace('Z', '+00:00')) > cutoff
-        ]
+        baseline_metrics = []
+        for m in self._metrics:
+            try:
+                ts = datetime.fromisoformat(m["ts"].replace('Z', '+00:00'))
+                if ts > cutoff:
+                    baseline_metrics.append(m)
+            except (ValueError, AttributeError, KeyError):
+                continue
 
-        if len(baseline_metrics) >= MIN_SAMPLES:
+        if len(baseline_metrics) >= max(MIN_SAMPLES, 1):
             total = len(baseline_metrics)
             errors = sum(1 for m in baseline_metrics if not m["success"])
             hallucinations = sum(1 for m in baseline_metrics if m.get("hallucination"))

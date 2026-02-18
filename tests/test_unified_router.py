@@ -221,40 +221,69 @@ class TestCheckExitSignal:
 # ==========================================================================
 
 class TestCheckGreeting:
-    def test_exact_greeting(self):
+    """Tests for _check_greeting which delegates to QueryRouter (ML-based).
+
+    _check_greeting now uses QueryRouter.route() which relies on ML classifier.
+    Tests configure the mock QueryRouter to return appropriate RouteResult.
+    """
+
+    def _make_greeting_router(self, response_template, matched=True):
+        """Helper: create router with mock QueryRouter returning a greeting result."""
+        from services.query_router import RouteResult
         router = _make_router()
+        route_result = RouteResult(
+            matched=matched,
+            flow_type="direct_response",
+            response_template=response_template,
+            confidence=0.99,
+            reason="ML: GREETING"
+        )
+        router.query_router.route.return_value = route_result
+        return router
+
+    def _make_non_greeting_router(self):
+        """Helper: create router with mock QueryRouter returning no match."""
+        from services.query_router import RouteResult
+        router = _make_router()
+        route_result = RouteResult(matched=False, confidence=0.3, reason="no match")
+        router.query_router.route.return_value = route_result
+        return router
+
+    def test_exact_greeting(self):
+        router = self._make_greeting_router("Pozdrav! Kako vam mogu pomoci?")
         resp = router._check_greeting("bok")
         assert resp is not None
-        assert "Bok" in resp
+        assert "Pozdrav" in resp
 
     def test_greeting_with_prefix(self):
-        router = _make_router()
+        router = self._make_greeting_router("Pozdrav! Kako vam mogu pomoci?")
         resp = router._check_greeting("bok svima")
         assert resp is not None
 
     def test_greeting_dobar_dan(self):
-        router = _make_router()
+        router = self._make_greeting_router("Pozdrav! Kako vam mogu pomoci?")
         resp = router._check_greeting("dobar dan")
-        assert "Dobar dan" in resp
+        assert resp is not None
+        assert "Pozdrav" in resp
 
     def test_hvala_response(self):
-        router = _make_router()
+        router = self._make_greeting_router("Nema na cemu! Ako trebate jos nesto, slobodno pitajte.")
         resp = router._check_greeting("hvala")
         assert resp is not None
         assert "Nema na" in resp
 
     def test_help_response(self):
-        router = _make_router()
+        router = self._make_greeting_router("Mogu vam pomoci s:\n* Kilometraza\n* Rezervacije")
         resp = router._check_greeting("help")
         assert "Mogu vam" in resp
 
     def test_not_a_greeting(self):
-        router = _make_router()
+        router = self._make_non_greeting_router()
         assert router._check_greeting("koliko imam km") is None
         assert router._check_greeting("") is None
 
     def test_case_insensitive(self):
-        router = _make_router()
+        router = self._make_greeting_router("Pozdrav! Kako vam mogu pomoci?")
         resp = router._check_greeting("BOK")
         assert resp is not None
 
@@ -369,11 +398,20 @@ class TestGetRelevantTools:
 class TestRouteGreeting:
     @pytest.mark.asyncio
     async def test_greeting_returns_direct_response(self):
+        from services.query_router import RouteResult
         router = _make_router()
+        # Configure mock QueryRouter to return a greeting match
+        router.query_router.route.return_value = RouteResult(
+            matched=True,
+            flow_type="direct_response",
+            response_template="Pozdrav! Kako vam mogu pomoci?",
+            confidence=0.99,
+            reason="ML: GREETING"
+        )
         result = await router.route("bok", _user_context())
         assert result.action == "direct_response"
-        assert result.confidence == 1.0
-        assert "Bok" in result.response
+        assert result.response is not None
+        assert "Pozdrav" in result.response
 
 
 # ==========================================================================
