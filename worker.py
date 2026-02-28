@@ -35,9 +35,11 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)],
     force=True  # Override any existing configuration
 )
-# Prevent duplicate logs from propagating to root logger
-for handler in logging.root.handlers[:]:
-    handler.setLevel(logging.WARNING)  # Only show warnings+ from Python logging
+# Allow WARNING+ from most libraries, but let key services log at INFO
+# This prevents noisy spam while keeping important service logs visible
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
 
 import redis.asyncio as aioredis
 
@@ -348,7 +350,6 @@ class Worker:
         from services.context_service import ContextService
         from services.message_engine import MessageEngine
         from services.whatsapp_service import WhatsAppService
-        from database import AsyncSessionLocal
 
         self._gateway = APIGateway(redis_client=self.redis)
         self._registry = ToolRegistry(redis_client=self.redis)
@@ -385,16 +386,18 @@ class Worker:
                 raise RuntimeError("Tool Registry initialization failed")
 
         log("info", "message_engine_init")
-        async with AsyncSessionLocal() as temp_db:
-            self._message_engine = MessageEngine(
-                gateway=self._gateway,
-                registry=self._registry,
-                context_service=self._context,
-                queue_service=self._queue,
-                cache_service=self._cache,
-                db_session=temp_db
-            )
-            log("info", "message_engine_ready")
+        # NOTE: db_session=None at init time. Each request gets its own
+        # db session via process(db_session=...) to prevent race conditions
+        # when MAX_CONCURRENT > 1.
+        self._message_engine = MessageEngine(
+            gateway=self._gateway,
+            registry=self._registry,
+            context_service=self._context,
+            queue_service=self._queue,
+            cache_service=self._cache,
+            db_session=None
+        )
+        log("info", "message_engine_ready")
 
         # Initialize RAG scheduler for periodic embedding refresh
         try:
@@ -440,6 +443,59 @@ class Worker:
             if "BUSYGROUP" not in str(e):
                 raise
             log("info", "consumer_group_exists", {"group": self.group_name})
+
+        # Clean up stale pending messages from previous worker runs
+        await self._cleanup_stale_pending()
+
+    async def _cleanup_stale_pending(self):
+        """
+        Clean up stale pending messages from previous worker runs.
+
+        On restart, old messages that were claimed but not ACKed by dead consumers
+        would be reprocessed indefinitely. This ACKs and removes them.
+        """
+        try:
+            # Check for pending messages in the consumer group
+            pending = await self.redis.xpending(
+                "whatsapp_stream_inbound",
+                self.group_name
+            )
+
+            total_pending = pending.get("pending", 0) if isinstance(pending, dict) else (pending[0] if pending else 0)
+
+            if not total_pending:
+                log("info", "no_stale_pending")
+                return
+
+            log("warn", "stale_pending_found", {"count": total_pending})
+
+            # Get details of pending messages (up to 100)
+            detailed = await self.redis.xpending_range(
+                "whatsapp_stream_inbound",
+                self.group_name,
+                min="-",
+                max="+",
+                count=100
+            )
+
+            cleaned = 0
+            for entry in detailed:
+                msg_id = entry.get("message_id") or (entry[0] if isinstance(entry, (list, tuple)) else None)
+                if not msg_id:
+                    continue
+
+                # ACK and delete stale messages
+                try:
+                    await self.redis.xack("whatsapp_stream_inbound", self.group_name, msg_id)
+                    await self.redis.xdel("whatsapp_stream_inbound", msg_id)
+                    cleaned += 1
+                except Exception:
+                    pass
+
+            log("info", "stale_pending_cleaned", {"cleaned": cleaned, "total": total_pending})
+
+        except Exception as e:
+            log("warn", "stale_cleanup_failed", {"error": str(e)})
 
     async def _process_inbound_loop(self):
         log("info", "inbound_processor_started")
@@ -531,6 +587,24 @@ class Worker:
             "text_preview": text[:30] if text else ""
         })
 
+        # Handle non-text messages (images, locations, voice, etc.)
+        # These come from webhook as [NON_TEXT:TYPE] markers
+        if text.startswith("[NON_TEXT:"):
+            original_type = data.get("original_type", "UNKNOWN")
+            log("info", "non_text_message", {
+                "sender": sender[-4:] if sender else "",
+                "type": original_type
+            })
+            # Send friendly response without going through AI pipeline
+            response = (
+                "Trenutno mogu obraditi samo tekstualne poruke. "
+                "Molimo posaljite svoju poruku kao tekst."
+            )
+            await self._enqueue_outbound(sender, response)
+            self._messages_processed += 1
+            await self._ack_message(msg_id)
+            return
+
         if not await self._acquire_message_lock(sender, message_id):
             self._duplicates_skipped += 1
             log("warn", "skipping_duplicate", {
@@ -572,14 +646,12 @@ class Worker:
             log("info", "processed", {"elapsed_ms": int(elapsed * 1000)})
 
     async def _process_message(self, sender: str, text: str, message_id: str) -> Optional[str]:
-        """Process message through MessageEngine singleton."""
+        """Process message through MessageEngine with per-request db session."""
         from database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            self._message_engine.db = db
-
             try:
-                response = await self._message_engine.process(sender, text, message_id)
+                response = await self._message_engine.process(sender, text, message_id, db_session=db)
 
                 log("debug", "response_generated", {
                     "length": len(response) if response else 0,
@@ -595,18 +667,68 @@ class Worker:
                 })
                 raise
 
+    async def _requeue_abandoned_outbound(self):
+        """Re-queue messages left in processing list from previous crashes."""
+        try:
+            count = await self.redis.llen("whatsapp_outbound_processing")
+            if count > 0:
+                log("warn", "requeue_abandoned_outbound", {"count": count})
+                requeued = 0
+                while True:
+                    item = await self.redis.lmove(
+                        "whatsapp_outbound_processing",
+                        "whatsapp_outbound",
+                        src="RIGHT",
+                        dest="LEFT"
+                    )
+                    if not item:
+                        break
+                    requeued += 1
+                log("info", "requeued_abandoned_outbound", {"requeued": requeued})
+        except Exception as e:
+            log("warn", "requeue_abandoned_failed", {"error": str(e)})
+
     async def _process_outbound_loop(self):
         log("info", "outbound_processor_started")
 
+        # Re-queue any messages abandoned by a previous crash
+        await self._requeue_abandoned_outbound()
+
         while not self.shutdown.is_shutting_down():
             try:
-                result = await self.redis.blpop("whatsapp_outbound", timeout=1)
-                if not result:
+                # Atomically move from outbound to processing list
+                # If we crash after this but before send, the message
+                # survives in whatsapp_outbound_processing and gets
+                # re-queued on next startup.
+                data = await self.redis.blmove(
+                    "whatsapp_outbound",
+                    "whatsapp_outbound_processing",
+                    timeout=1,
+                    src="LEFT",
+                    dest="RIGHT"
+                )
+                if not data:
                     continue
 
-                _, data = result
                 payload = json.loads(data)
+
+                # Idempotency check: skip if already sent (crash recovery scenario)
+                idem_key = payload.get("idempotency_key", "")
+                if idem_key:
+                    already_sent = await self.redis.get(f"sent:{idem_key}")
+                    if already_sent:
+                        log("warn", "skipping_already_sent", {"key": idem_key[:30]})
+                        await self.redis.lrem("whatsapp_outbound_processing", 1, data)
+                        continue
+
                 await self._send_whatsapp(to=payload.get("to"), text=payload.get("text"))
+
+                # Mark as sent for idempotency (TTL 10 min)
+                if idem_key:
+                    await self.redis.setex(f"sent:{idem_key}", 600, "1")
+
+                # Successfully sent - remove from processing list
+                await self.redis.lrem("whatsapp_outbound_processing", 1, data)
 
             except asyncio.CancelledError:
                 break
@@ -704,8 +826,63 @@ class Worker:
             log("error", "queue_delayed_failed", {"error": str(e)})
 
     async def _enqueue_outbound(self, to: str, text: str):
-        payload = {"to": to, "text": text}
-        await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
+        # Split long messages to respect WhatsApp's 4096 char limit
+        MAX_WA_LENGTH = 4000  # Leave margin for encoding overhead
+        if len(text) > MAX_WA_LENGTH:
+            chunks = self._split_message(text, MAX_WA_LENGTH)
+            log("info", "message_split", {"chunks": len(chunks), "original_len": len(text)})
+            for chunk in chunks:
+                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}
+                await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
+        else:
+            payload = {"to": to, "text": text, "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}
+            await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
+
+    @staticmethod
+    def _split_message(text: str, max_length: int) -> list:
+        """Split message at paragraph boundaries, respecting max length."""
+        if len(text) <= max_length:
+            return [text]
+
+        chunks = []
+        current_chunk = ""
+
+        # Try to split at double newlines (paragraphs) first
+        paragraphs = text.split("\n\n")
+
+        for para in paragraphs:
+            if len(current_chunk) + len(para) + 2 <= max_length:
+                if current_chunk:
+                    current_chunk += "\n\n" + para
+                else:
+                    current_chunk = para
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                # If single paragraph is too long, split at newlines
+                if len(para) > max_length:
+                    lines = para.split("\n")
+                    current_chunk = ""
+                    for line in lines:
+                        if len(current_chunk) + len(line) + 1 <= max_length:
+                            current_chunk = current_chunk + "\n" + line if current_chunk else line
+                        else:
+                            if current_chunk:
+                                chunks.append(current_chunk)
+                            # Hard split if single line is too long
+                            if len(line) > max_length:
+                                for i in range(0, len(line), max_length):
+                                    chunks.append(line[i:i + max_length])
+                                current_chunk = ""
+                            else:
+                                current_chunk = line
+                else:
+                    current_chunk = para
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks if chunks else [text[:max_length]]
 
     async def _ack_message(self, msg_id: str):
         with suppress(Exception):
