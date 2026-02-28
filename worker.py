@@ -478,9 +478,11 @@ class Worker:
                 if name == self.consumer_name:
                     continue
 
-                # Remove consumers with 0 pending messages (safe to remove)
-                # or idle for more than 5 minutes (300000ms)
-                if pending == 0 or idle > 300000:
+                # Multi-worker safe: remove ONLY if BOTH conditions met:
+                # - 0 pending messages (not processing anything)
+                # - AND idle for more than 5 minutes (not actively reading)
+                # This prevents removing a live worker that just finished a batch
+                if pending == 0 and idle > 300000:
                     try:
                         await self.redis.xgroup_delconsumer(
                             "whatsapp_stream_inbound",
