@@ -119,105 +119,73 @@ class UserService:
         """
         Try to auto-onboard user from MobilityOne API.
 
-        GRACEFUL DEGRADATION (v2.1):
-        - If Mobile field returns 500 (unsupported), skip it
-        - Only use supported fields (Phone)
-        - Log API errors separately from bot errors
+        OPTIMIZED (v2.2):
+        - Only 2 key phone variations (international + local) instead of 6
+        - Stops on first match (no redundant calls)
+        - Fast path: ~1 API call for most cases
         """
         if not self.gateway:
-            logger.error(f"ONBOARD FAIL: Gateway is None! Cannot auto-onboard user {phone}")
+            logger.error(f"ONBOARD FAIL: Gateway is None!")
             return None
-        
-        logger.info(f"AUTO-ONBOARD START for {phone}, gateway={type(self.gateway).__name__}")
+
+        logger.info(f"AUTO-ONBOARD START for {phone[-4:]}...")
 
         try:
-            # Generate phone variations to maximize match chance
             digits_only = "".join(c for c in phone if c.isdigit())
-            variations = {phone, digits_only}
-            if phone.startswith("+"):
-                variations.add(phone[1:])
-            if phone.startswith("385"):
-                variations.add("+" + phone)
+
+            # Only 2 key variations: international (385...) and local (0...)
+            # These cover 99% of cases without redundant API calls
+            variations = []
             if digits_only.startswith("385"):
-                variations.add("0" + digits_only[3:])
-            if digits_only.startswith("0"):
-                variations.add("385" + digits_only[1:])
+                variations.append(digits_only)                        # 385991234567
+                variations.append("0" + digits_only[3:])             # 0991234567
+            elif digits_only.startswith("0") and len(digits_only) >= 9:
+                variations.append("385" + digits_only[1:])           # 385991234567
+                variations.append(digits_only)                        # 0991234567
+            else:
+                variations.append(digits_only)                        # as-is
 
             from services.api_gateway import HttpMethod
 
-            # Fields to try - Phone first, Mobile as fallback
-            # NOTE: Some MobilityOne versions return 500 for Mobile - handled gracefully
-            fields_to_try = ["Phone", "Mobile"]
+            for phone_var in variations:
+                logger.info(f"Lookup: Phone(=){phone_var}")
 
-            # Track API errors for monitoring
-            api_errors = []
-
-            for field in fields_to_try:
-                for phone_var in variations:
-                    logger.info(f"Tražim korisnika po polju '{field}' s brojem: {phone_var}")
-
-                    filter_str = f"{field}(=){phone_var}"
-
-                    response = await self.gateway.execute(
-                        method=HttpMethod.GET,
-                        path="/tenantmgt/Persons",
-                        params={"Filter": filter_str}
-                    )
-
-                    # GRACEFUL DEGRADATION: Handle API errors gracefully
-                    if not response.success:
-                        error_msg = response.error_message or "Unknown error"
-
-                        # Log API error for monitoring (not as hallucination!)
-                        if response.status_code == 500:
-                            logger.warning(
-                                f"⚠️ API Error (external): {field} filter returned 500 - "
-                                f"'{error_msg[:100]}' - skipping this field"
-                            )
-                            api_errors.append({
-                                "field": field,
-                                "status": 500,
-                                "message": error_msg,
-                                "category": "api_error"
-                            })
-                            # Skip this field entirely - it's not supported
-                            break  # Move to next field
-                        continue
-
-                    if response.success:
-                        data = response.data
-                        # BUGFIX: API returns 'Data', not 'Items'
-                        items = data if isinstance(data, list) else data.get("Data", [])
-
-                        if items:
-                            person = items[0]
-                            person_id = person.get("Id")
-                            display_name = person.get("DisplayName", "Korisnik")
-                            
-                            # CRITICAL: Validate phone matches!
-                            api_phone = str(person.get("Phone") or person.get("Mobile") or "")
-                            if not self._phones_match(phone, api_phone):
-                                logger.warning(
-                                    f"⚠️ Phone mismatch! Input: {phone[-4:]}, API: {api_phone[-4:] if api_phone else 'N/A'}. "
-                                    f"Skipping person {person_id[:8]}..."
-                                )
-                                continue  # Try next variation
-
-                            logger.info(f"Korisnik pronađen i validiran preko polja '{field}': {display_name}")
-
-                            # Spremanje u bazu
-                            await self._upsert_mapping(phone, person_id, display_name)
-                            vehicle_info = await self._get_vehicle_info(person_id)
-                            return (display_name, vehicle_info)
-
-            # Log summary of API errors if any occurred
-            if api_errors:
-                logger.warning(
-                    f"📊 API errors during lookup: {len(api_errors)} errors - "
-                    f"These are EXTERNAL issues, not bot errors"
+                response = await self.gateway.execute(
+                    method=HttpMethod.GET,
+                    path="/tenantmgt/Persons",
+                    params={"Filter": f"Phone(=){phone_var}"},
+                    max_retries=0  # Fail fast - don't retry on auth/network errors
                 )
 
-            logger.warning(f"Korisnik nije pronađen na API-ju niti s jednom varijacijom: {variations}")
+                if not response.success:
+                    if response.status_code in (0, 500):
+                        # 0 = network/auth error, 500 = server error - no point retrying other variations
+                        logger.warning(f"API error {response.status_code} for Phone={phone_var} - stopping lookup")
+                        break
+                    continue
+
+                data = response.data
+                items = data if isinstance(data, list) else data.get("Data", [])
+
+                if items:
+                    person = items[0]
+                    person_id = person.get("Id")
+                    display_name = person.get("DisplayName", "Korisnik")
+
+                    # Validate phone matches
+                    api_phone = str(person.get("Phone") or person.get("Mobile") or "")
+                    if not self._phones_match(phone, api_phone):
+                        logger.warning(
+                            f"Phone mismatch! Input: {phone[-4:]}, API: {api_phone[-4:] if api_phone else 'N/A'}"
+                        )
+                        continue
+
+                    logger.info(f"User found: {display_name}")
+                    await self._upsert_mapping(phone, person_id, display_name)
+                    vehicle_info = await self._get_vehicle_info(person_id)
+                    return (display_name, vehicle_info)
+
+            logger.info(f"User not in MobilityOne: {phone[-4:]}...")
             return None
 
         except Exception as e:
@@ -290,7 +258,8 @@ class UserService:
             response = await self.gateway.execute(
                 method=HttpMethod.GET,
                 path="/automation/MasterData",
-                params={"personId": person_id}
+                params={"personId": person_id},
+                max_retries=0
             )
             
             if not response.success:
@@ -315,8 +284,9 @@ class UserService:
                     path="/vehiclemgt/Vehicles",
                     params={
                         "Filter": [f"DriverId={person_id}"],
-                        "Rows": 20  # Get more vehicles in case person has multiple
-                    }
+                        "Rows": 20
+                    },
+                    max_retries=0
                 )
                 
                 if vehicles_response.success and vehicles_response.data:

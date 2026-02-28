@@ -166,10 +166,43 @@ class TestInit:
 
 class TestProcess:
     @pytest.mark.asyncio
-    async def test_user_not_found(self, engine):
-        engine._user_handler.identify_user = AsyncMock(return_value=None)
-        result = await engine.process("sender123", "hello")
-        assert "nije pronaden" in result.lower()
+    async def test_guest_user_gets_response(self, engine):
+        """identify_user always returns a context (guest if not in MobilityOne)."""
+        guest_ctx = {
+            "person_id": None,
+            "phone": "+385000000000",
+            "tenant_id": "default",
+            "display_name": "Korisnik",
+            "vehicle": {},
+            "is_new": False,
+            "is_guest": True,
+        }
+        engine._user_handler.identify_user = AsyncMock(return_value=guest_ctx)
+
+        conv = AsyncMock()
+        conv.is_timed_out.return_value = False
+        conv.get_state.return_value = MagicMock(value="idle")
+        conv.is_in_flow.return_value = False
+        conv.get_current_flow.return_value = None
+        conv.get_current_tool.return_value = None
+        conv.get_missing_params.return_value = []
+        conv.get_displayed_items.return_value = []
+        conv.reset = AsyncMock()
+        conv.save = AsyncMock()
+
+        with patch("services.engine.ConversationManager") as MockCM:
+            MockCM.load_for_user = AsyncMock(return_value=conv)
+            engine._hallucination_handler.check_hallucination_feedback = AsyncMock(return_value=None)
+
+            with patch("services.engine.UserContextManager") as MockUCM:
+                ucm_inst = MagicMock()
+                ucm_inst.is_new = False
+                ucm_inst.is_guest = True
+                MockUCM.return_value = ucm_inst
+
+                engine._process_with_state = AsyncMock(return_value="Guest response")
+                result = await engine.process("sender123", "hello")
+                assert result == "Guest response"
 
     @pytest.mark.asyncio
     async def test_user_found_normal_flow(self, engine):

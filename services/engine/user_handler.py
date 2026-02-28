@@ -37,21 +37,22 @@ class UserHandler:
         self.gateway = gateway
         self.cache = cache_service
 
-    async def identify_user(self, phone: str) -> Optional[Dict[str, Any]]:
+    async def identify_user(self, phone: str, db_session=None) -> Optional[Dict[str, Any]]:
         """
         Identify user and build context with dynamic tenant resolution.
 
-        MULTI-TENANCY (v11.1):
-        - Passes UserMapping to build_context for tenant resolution
-        - Tenant is resolved from: UserMapping -> Phone prefix -> Default
+        ALWAYS returns a context - never None.
+        If user is not in MobilityOne, returns guest context so bot still works.
 
         Args:
             phone: User phone number
+            db_session: Database session for this request (required for concurrency safety)
 
         Returns:
-            User context dict or None if not found
+            User context dict (always non-None)
         """
-        user_service = UserService(self.db, self.gateway, self.cache)
+        db = db_session or self.db
+        user_service = UserService(db, self.gateway, self.cache)
 
         user = await user_service.get_active_identity(phone)
 
@@ -75,7 +76,18 @@ class UserHandler:
                 ctx["is_new"] = True
                 return ctx
 
-        return None
+        # User not found in MobilityOne - return guest context
+        # Bot still works, just without vehicle-specific features
+        logger.info(f"Guest user: {phone[-4:]}... - not in MobilityOne, creating guest context")
+        return {
+            "person_id": None,
+            "phone": phone,
+            "tenant_id": user_service.default_tenant_id,
+            "display_name": "Korisnik",
+            "vehicle": {},
+            "is_new": True,
+            "is_guest": True
+        }
 
     def build_greeting(self, user_context: Dict[str, Any]) -> str:
         """
@@ -87,6 +99,16 @@ class UserHandler:
         Returns:
             Greeting message
         """
+        # Guest user greeting
+        if user_context.get("is_guest"):
+            return (
+                "Pozdrav!\n\n"
+                "Ja sam MobilityOne AI asistent.\n\n"
+                "Vas broj nije registriran u sustavu, ali svejedno vam mogu pomoci "
+                "s opcim informacijama.\n\n"
+                "Kako vam mogu pomoci?"
+            )
+
         ctx = UserContextManager(user_context)
         vehicle = ctx.vehicle
 

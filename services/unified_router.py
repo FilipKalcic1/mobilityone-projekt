@@ -38,14 +38,22 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from pathlib import Path
 
-from openai import AsyncAzureOpenAI
-
 from config import get_settings
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
 from services.query_router import QueryRouter, RouteResult
 from services.ambiguity_detector import (
     AmbiguityDetector, AmbiguityResult, get_ambiguity_detector
 )
 from services.context import UserContextManager
+from services.flow_phrases import (
+    matches_show_more,
+    matches_confirm_yes,
+    matches_confirm_no,
+    matches_exit_signal,
+    matches_item_selection,
+    matches_greeting,
+)
 
 if TYPE_CHECKING:
     from services.registry import ToolRegistry
@@ -111,13 +119,7 @@ FLOW_TRIGGERS = {
     "post_AddCase": "case",
 }
 
-# Exit signals - phrases that indicate user wants to exit current flow
-EXIT_SIGNALS = [
-    "ne želim", "necu", "nećem", "nećeš", "odustani", "odustajem",
-    "zapravo", "ipak", "ne treba", "nemoj", "stani", "stop",
-    "nešto drugo", "drugo pitanje", "promijeni", "cancel",
-    "hoću nešto drugo", "želim nešto drugo"
-]
+# Exit signals moved to services/flow_phrases.py (centralized)
 
 
 class UnifiedRouter:
@@ -133,13 +135,9 @@ class UnifiedRouter:
 
     def __init__(self, registry: Optional["ToolRegistry"] = None):
         """Initialize router with optional tool registry for semantic search."""
-        self.client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-            max_retries=2,
-            timeout=30.0
-        )
+        # Shared client: rate limiting + connection pooling across all services
+        self.client = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
         self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
 
         # Tool Registry for semantic search (injected)
@@ -254,44 +252,12 @@ class UnifiedRouter:
         return tools
 
     def _check_exit_signal(self, query: str) -> bool:
-        """Check if query contains exit/cancellation signal."""
-        query_lower = query.lower()
-
-        # CRITICAL: "pokaži ostala" and similar are NOT exit signals!
-        # They mean user wants to see more options within the current flow
-        continue_signals = [
-            "pokaz", "ostala", "druga", "više", "vise", "jos",
-            "sva vozila", "lista", "popis"
-        ]
-        if any(signal in query_lower for signal in continue_signals):
-            return False
-
-        return any(signal in query_lower for signal in EXIT_SIGNALS)
+        """Check if query contains exit/cancellation signal (word-boundary safe)."""
+        return matches_exit_signal(query)
 
     def _check_greeting(self, query: str) -> Optional[str]:
-        """Check if query is a greeting and return response."""
-        query_lower = query.lower().strip()
-
-        greetings = {
-            "bok": "Bok! Kako vam mogu pomoći?",
-            "hej": "Hej! Kako vam mogu pomoći?",
-            "pozdrav": "Pozdrav! Kako vam mogu pomoći?",
-            "zdravo": "Zdravo! Kako vam mogu pomoći?",
-            "dobar dan": "Dobar dan! Kako vam mogu pomoći?",
-            "dobro jutro": "Dobro jutro! Kako vam mogu pomoći?",
-            "dobra večer": "Dobra večer! Kako vam mogu pomoći?",
-            "hvala": "Nema na čemu! Trebate li još nešto?",
-            "thanks": "You're welcome! Need anything else?",
-            "help": "Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
-            "pomoc": "Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
-            "pomoć": "Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
-        }
-
-        for greeting, response in greetings.items():
-            if query_lower == greeting or query_lower.startswith(greeting + " "):
-                return response
-
-        return None
+        """Check if query is a greeting and return response (centralized)."""
+        return matches_greeting(query)
 
     async def route(
         self,
@@ -336,13 +302,12 @@ class UnifiedRouter:
             )
 
         # 3. CRITICAL: Handle in-flow continue signals explicitly
-        # This prevents LLM hallucination for common in-flow actions
+        # Uses centralized flow_phrases with word-boundary matching
         if in_flow:
-            query_lower = query.lower()
             state = conversation_state.get("state", "")
 
             # "pokaži ostala" type requests in CONFIRMING/SELECTING state
-            if any(s in query_lower for s in ["pokaz", "ostala", "druga", "više", "vise", "sva vozila", "lista"]):
+            if matches_show_more(query):
                 logger.info(f"UNIFIED ROUTER: 'show more' detected in flow, returning continue_flow")
                 return RouterDecision(
                     action="continue_flow",
@@ -350,16 +315,16 @@ class UnifiedRouter:
                     confidence=1.0
                 )
 
-            # Confirmation responses (da/ne) in CONFIRMING state
+            # Confirmation responses in CONFIRMING state (word-boundary safe)
             if state == "confirming":
-                if any(w in query_lower for w in ["da", "potvrdi", "ok", "yes", "može", "moze"]):
+                if matches_confirm_yes(query):
                     logger.info(f"UNIFIED ROUTER: Confirmation 'yes' detected, returning continue_flow")
                     return RouterDecision(
                         action="continue_flow",
                         reasoning="User confirmed in confirming state",
                         confidence=1.0
                     )
-                if any(w in query_lower for w in ["ne", "odustani", "cancel", "no"]):
+                if matches_confirm_no(query):
                     logger.info(f"UNIFIED ROUTER: Confirmation 'no' detected, returning continue_flow")
                     return RouterDecision(
                         action="continue_flow",
@@ -367,13 +332,13 @@ class UnifiedRouter:
                         confidence=1.0
                     )
 
-            # Numeric selection in SELECTING state
+            # Numeric/ordinal selection in SELECTING state
             if state == "selecting":
-                if query.strip().isdigit():
-                    logger.info(f"UNIFIED ROUTER: Numeric selection detected, returning continue_flow")
+                if matches_item_selection(query):
+                    logger.info(f"UNIFIED ROUTER: Item selection detected, returning continue_flow")
                     return RouterDecision(
                         action="continue_flow",
-                        reasoning="User selected item by number",
+                        reasoning="User selected item by number/ordinal",
                         confidence=1.0
                     )
 
@@ -522,7 +487,9 @@ class UnifiedRouter:
         user_prompt = f'Korisnikov upit: "{query}"'
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await self._circuit_breaker.call(
+                f"llm_router:{self.model}",
+                self.client.chat.completions.create,
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -581,6 +548,10 @@ class UnifiedRouter:
                 ambiguity_detected=ambiguity_result.is_ambiguous if ambiguity_result else False
             )
 
+        except CircuitOpenError as e:
+            logger.warning(f"Circuit breaker OPEN for router - falling back: {e}")
+            return self._fallback_route(query, user_context)
+
         except Exception as e:
             logger.error(f"LLM routing failed: {e}")
             # Fallback - try to detect basic intent
@@ -594,20 +565,29 @@ class UnifiedRouter:
         """Fallback routing when LLM fails - uses QueryRouter's regex rules."""
         logger.warning(f"LLM routing failed, using QueryRouter fallback for: '{query[:50]}...'")
 
-        # Koristi Query Router - ima 51 regex pravilo, puno bolje od basic keyword matching
+        # Koristi Query Router - ima 51 regex pravilo
         qr_result = self.query_router.route(query, user_context)
 
         if qr_result.matched:
-            logger.info(f"FALLBACK: QueryRouter matched → {qr_result.tool_name or qr_result.flow_type}")
+            logger.info(f"FALLBACK: QueryRouter matched -> {qr_result.tool_name or qr_result.flow_type}")
             return self._query_result_to_decision(qr_result, user_context, is_fallback=True)
 
-        # Ultimate fallback - samo ako ni QueryRouter ne match-uje
-        logger.warning(f"FALLBACK: QueryRouter no match, defaulting to get_MasterData")
+        # Ultimate fallback - ask for clarification instead of guessing
+        logger.warning(f"FALLBACK: QueryRouter no match, asking for clarification")
         return RouterDecision(
-            action="simple_api",
-            tool="get_MasterData",
-            reasoning="Ultimate fallback: QueryRouter no match, default to vehicle info",
-            confidence=0.3
+            action="direct_response",
+            response=(
+                "Nisam siguran sto trazite. Mozete pitati za:\n"
+                "* Rezervaciju vozila\n"
+                "* Kilometrazu\n"
+                "* Prijavu stete\n"
+                "* Informacije o vozilu\n"
+                "* Troskove\n"
+                "* Putovanja\n\n"
+                "Mozete li pojasniti sto tocno trebate?"
+            ),
+            reasoning="Ultimate fallback: No match found, asking user to clarify",
+            confidence=0.1
         )
 
     def _query_result_to_decision(

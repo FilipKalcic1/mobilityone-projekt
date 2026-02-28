@@ -603,7 +603,7 @@ LLM_FALLBACK_EXPECTED = [
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class TestResult:
+class AccuracyResult:
     """Result of a single test."""
     passed: bool
     query: str
@@ -694,7 +694,7 @@ def run_intent_classification_tests(
                 results["per_intent"][expected_intent]["wrong"] += 1
                 results["confidence_wrong"].append(pred.confidence)
                 results["confusion"][expected_intent][pred.intent] += 1
-                results["failures"].append(TestResult(
+                results["failures"].append(AccuracyResult(
                     passed=False,
                     query=query,
                     expected=expected_intent,
@@ -743,7 +743,7 @@ def run_test_set_evaluation(classifier, test_set_path: Path, verbose: bool = Fal
                 results["wrong"] += 1
                 results["per_intent"][expected_intent]["wrong"] += 1
                 results["confusion"][expected_intent][pred.intent] += 1
-                results["failures"].append(TestResult(
+                results["failures"].append(AccuracyResult(
                     passed=False,
                     query=query,
                     expected=expected_intent,
@@ -798,7 +798,7 @@ def run_tool_selection_tests(query_router, verbose: bool = False) -> Dict[str, A
             else:
                 results["wrong"] += 1
                 results["per_intent"][expected_intent]["wrong"] += 1
-                results["failures"].append(TestResult(
+                results["failures"].append(AccuracyResult(
                     passed=False,
                     query=query,
                     expected=f"{expected_intent} -> {expected_tool}",

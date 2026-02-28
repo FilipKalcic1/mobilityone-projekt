@@ -22,17 +22,20 @@ settings = get_settings()
 class TokenManager:
     """
     Thread-safe OAuth2 token manager.
-    
+
     Features:
     - Automatic refresh before expiry
     - Lock to prevent concurrent refreshes
     - Redis caching for distributed systems
+    - Failure cooldown to avoid hammering unreachable auth server
     """
-    
+
+    FAILURE_COOLDOWN_SECONDS = 30  # Don't retry for 30s after a failure
+
     def __init__(self, redis_client=None):
         """
         Initialize token manager.
-        
+
         Args:
             redis_client: Optional Redis client for caching
         """
@@ -40,24 +43,25 @@ class TokenManager:
         self._expires_at: datetime = datetime.min
         self._refresh_lock = asyncio.Lock()
         self._redis = redis_client
-        
+        self._last_failure: Optional[datetime] = None
+
         # Configuration
         self.auth_url = settings.MOBILITY_AUTH_URL
         self.client_id = settings.MOBILITY_CLIENT_ID
         self.client_secret = settings.MOBILITY_CLIENT_SECRET
         self.scope = settings.MOBILITY_SCOPE
-        
+
         self._cache_key = "mobility:access_token"
-        
+
         logger.info(f"TokenManager initialized: {self.auth_url}")
     
     async def get_token(self) -> str:
         """
         Get valid access token.
-        
+
         Returns:
             Valid access token
-            
+
         Raises:
             Exception if unable to obtain token
         """
@@ -65,7 +69,7 @@ class TokenManager:
         buffer = timedelta(seconds=60)
         if self._token and datetime.now(timezone.utc) < self._expires_at - buffer:
             return self._token
-        
+
         # Try Redis cache
         if self._redis:
             try:
@@ -73,17 +77,24 @@ class TokenManager:
                 if cached:
                     self._token = cached
                     self._expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    self._last_failure = None
                     logger.debug("Token loaded from Redis")
                     return self._token
             except Exception as e:
                 logger.warning(f"Redis cache read failed: {e}")
-        
+
+        # Fail fast if auth server was recently unreachable
+        if self._last_failure:
+            elapsed = (datetime.now(timezone.utc) - self._last_failure).total_seconds()
+            if elapsed < self.FAILURE_COOLDOWN_SECONDS:
+                raise Exception(f"Auth server unreachable (cooldown {self.FAILURE_COOLDOWN_SECONDS - elapsed:.0f}s remaining)")
+
         # Refresh token (with lock)
         async with self._refresh_lock:
             # Double-check after lock
             if self._token and datetime.now(timezone.utc) < self._expires_at - buffer:
                 return self._token
-            
+
             return await self._fetch_new_token()
     
     async def _fetch_new_token(self) -> str:
@@ -108,7 +119,7 @@ class TokenManager:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(
                     self.auth_url,
                     data=payload,
@@ -125,7 +136,8 @@ class TokenManager:
                 self._token = data["access_token"]
                 expires_in = int(data.get("expires_in", 3600))
                 self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-                
+                self._last_failure = None  # Clear failure state on success
+
                 logger.info(f"Token acquired, expires in {expires_in}s")
                 
                 # Cache in Redis
@@ -140,9 +152,11 @@ class TokenManager:
                 return self._token
                 
         except httpx.TimeoutException:
+            self._last_failure = datetime.now(timezone.utc)
             logger.error("Token fetch timeout")
             raise Exception("Authentication timeout")
         except httpx.RequestError as e:
+            self._last_failure = datetime.now(timezone.utc)
             logger.error(f"Token fetch network error: {e}")
             raise Exception(f"Authentication network error: {e}")
     

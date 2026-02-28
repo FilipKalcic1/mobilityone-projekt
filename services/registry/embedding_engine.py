@@ -437,8 +437,6 @@ class EmbeddingEngine:
         "extras": ("dodatak", "dodataka"),
         "feature": ("značajka", "značajke"),
         "features": ("značajka", "značajki"),
-        "option": ("opcija", "opcije"),
-        "options": ("opcija", "opcija"),
         "spec": ("specifikacija", "specifikacije"),
         "specification": ("specifikacija", "specifikacije"),
         "specifications": ("specifikacija", "specifikacija"),

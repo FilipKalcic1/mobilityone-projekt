@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional
 
-from openai import AsyncAzureOpenAI
-
 from config import get_settings
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
 from services.context import UserContextManager
 
 logger = logging.getLogger(__name__)
@@ -77,12 +77,10 @@ class ChainPlanner:
     """
 
     def __init__(self):
-        """Initialize with OpenAI client."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        """Initialize with shared OpenAI client."""
+        # Shared client: rate limiting + connection pooling across all services
+        self.openai = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
 
     async def create_plan(
         self,
@@ -416,7 +414,9 @@ DOSTUPNI ALATI:
 Napravi CHAIN PLAN izvršenja u JSON formatu."""
 
         try:
-            response = await self.openai.chat.completions.create(
+            response = await self._circuit_breaker.call(
+                f"llm_planner:{settings.AZURE_OPENAI_DEPLOYMENT_NAME}",
+                self.openai.chat.completions.create,
                 model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -429,6 +429,10 @@ Napravi CHAIN PLAN izvršenja u JSON formatu."""
 
             content = response.choices[0].message.content
             return json.loads(content)
+
+        except CircuitOpenError as e:
+            logger.warning(f"ChainPlanner circuit breaker OPEN: {e}")
+            return None
 
         except Exception as e:
             logger.error(f"ChainPlanner LLM error: {e}")

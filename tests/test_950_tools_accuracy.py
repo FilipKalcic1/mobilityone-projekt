@@ -173,7 +173,9 @@ def test_flow_phrases():
         else:
             results["fail"] += 1
 
-    return results
+    if results["fail"] > 0:
+        failure_report = "\n".join(results["failures"])
+        assert False, f"Phrase matching: {results['fail']} failures:\n{failure_report}"
 
 
 def load_tool_documentation() -> Dict[str, Any]:

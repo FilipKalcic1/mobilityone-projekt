@@ -130,11 +130,13 @@ class APIGateway:
             params = {}
 
         # For GET requests, set a sensible default Rows limit if not specified
+        # Using 100 to reduce chance of missing data; response formatter
+        # should indicate if more results exist
         if method == HttpMethod.GET:
             # Case-insensitive check for 'Rows'
             if not any(k.lower() == 'rows' for k in params):
-                params['Rows'] = 50
-                logger.debug("Default 'Rows=50' added for GET request.")
+                params['Rows'] = 100
+                logger.debug("Default 'Rows=100' added for GET request.")
         
         url = self._build_url(path, params)
         effective_tenant = tenant_id or self.tenant_id
@@ -161,21 +163,15 @@ class APIGateway:
                 if headers:
                     request_headers.update(headers)
                 
-                # DETAILED LOGGING for debugging
-                logger.info(f"API Request: {method.value} {url}")
-                if params:
-                    logger.info(f"Query params: {params}")
-                if body:
-                    logger.info(f"Body: {json.dumps(body)[:500]}")
+                logger.debug(f"API: {method.value} {url} params={params}")
                 
                 # Execute
                 response = await self._do_request(method, url, request_headers, body)
                 
-                # Handle 401
+                # Handle 401 - refresh token immediately (no delay)
                 if response.status_code == 401 and attempt < retries:
                     logger.warning("401 - Refreshing token")
                     self.token_manager.invalidate()
-                    await asyncio.sleep(0.5)
                     continue
                 
                 # Handle retryable errors

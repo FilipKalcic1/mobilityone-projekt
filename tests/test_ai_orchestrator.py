@@ -38,17 +38,28 @@ def _make_mock_settings():
     return s
 
 
+def _make_passthrough_circuit_breaker():
+    """Create a mock circuit breaker that passes calls through to the function."""
+    cb = MagicMock()
+    async def passthrough_call(endpoint_key, func, *args, **kwargs):
+        return await func(*args, **kwargs)
+    cb.call = AsyncMock(side_effect=passthrough_call)
+    return cb
+
+
 def _make_orchestrator(mock_settings=None):
     """Instantiate AIOrchestrator with all external deps mocked."""
     if mock_settings is None:
         mock_settings = _make_mock_settings()
 
     with patch("services.ai_orchestrator.settings", mock_settings):
-        with patch("services.ai_orchestrator.AsyncAzureOpenAI") as MockClient:
-            mock_client_instance = MagicMock()
-            MockClient.return_value = mock_client_instance
-            from services.ai_orchestrator import AIOrchestrator
-            orch = AIOrchestrator()
+        with patch("services.ai_orchestrator.get_openai_client") as MockGetClient:
+            with patch("services.ai_orchestrator.get_llm_circuit_breaker") as MockGetCB:
+                mock_client_instance = MagicMock()
+                MockGetClient.return_value = mock_client_instance
+                MockGetCB.return_value = _make_passthrough_circuit_breaker()
+                from services.ai_orchestrator import AIOrchestrator
+                orch = AIOrchestrator()
     return orch
 
 
@@ -99,19 +110,15 @@ class TestInit:
     """Tests for AIOrchestrator.__init__."""
 
     def test_init_creates_client(self):
-        """Client is created with correct Azure parameters."""
+        """Client is obtained from shared openai_client singleton."""
         ms = _make_mock_settings()
+        mock_client = MagicMock()
         with patch("services.ai_orchestrator.settings", ms):
-            with patch("services.ai_orchestrator.AsyncAzureOpenAI") as MockClient:
-                from services.ai_orchestrator import AIOrchestrator
-                orch = AIOrchestrator()
-                MockClient.assert_called_once_with(
-                    azure_endpoint="https://test.openai.azure.com",
-                    api_key="test-key",
-                    api_version="2024-02-15",
-                    max_retries=0,
-                    timeout=30.0,
-                )
+            with patch("services.ai_orchestrator.get_openai_client", return_value=mock_client):
+                with patch("services.ai_orchestrator.get_llm_circuit_breaker", return_value=MagicMock()):
+                    from services.ai_orchestrator import AIOrchestrator
+                    orch = AIOrchestrator()
+                    assert orch.client is mock_client
 
     def test_init_sets_model(self):
         orch = _make_orchestrator()
@@ -128,11 +135,12 @@ class TestInit:
         """When tiktoken import fails, tokenizer is None."""
         ms = _make_mock_settings()
         with patch("services.ai_orchestrator.settings", ms):
-            with patch("services.ai_orchestrator.AsyncAzureOpenAI"):
-                with patch("services.ai_orchestrator.tiktoken", None):
-                    from services.ai_orchestrator import AIOrchestrator
-                    orch = AIOrchestrator()
-                    assert orch.tokenizer is None
+            with patch("services.ai_orchestrator.get_openai_client", return_value=MagicMock()):
+                with patch("services.ai_orchestrator.get_llm_circuit_breaker", return_value=MagicMock()):
+                    with patch("services.ai_orchestrator.tiktoken", None):
+                        from services.ai_orchestrator import AIOrchestrator
+                        orch = AIOrchestrator()
+                        assert orch.tokenizer is None
 
 
 # ============================================================================

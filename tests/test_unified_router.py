@@ -23,11 +23,11 @@ from services.unified_router import (
     RouterDecision,
     PRIMARY_TOOLS,
     FLOW_TRIGGERS,
-    EXIT_SIGNALS,
     UnifiedRouter,
     get_unified_router,
     _router,
 )
+from services.flow_phrases import EXIT_SIGNALS
 from services.query_router import RouteResult
 
 
@@ -78,14 +78,24 @@ def _route_result(matched=True, tool_name="get_MasterData", flow_type="simple",
     )
 
 
+def _make_passthrough_cb():
+    """Circuit breaker mock that passes calls through to the actual function."""
+    cb = MagicMock()
+    async def passthrough(endpoint_key, func, *args, **kwargs):
+        return await func(*args, **kwargs)
+    cb.call = AsyncMock(side_effect=passthrough)
+    return cb
+
+
 def _make_router(registry=None):
     """Create a UnifiedRouter with mocked external deps."""
     with patch("services.unified_router.get_settings", return_value=_mock_settings()):
-        with patch("services.unified_router.AsyncAzureOpenAI"):
-            with patch("services.unified_router.QueryRouter") as MockQR:
-                router = UnifiedRouter(registry=registry)
-                # Replace the query_router that was created in __init__
-                router.query_router = MockQR.return_value
+        with patch("services.unified_router.get_openai_client", return_value=MagicMock()):
+            with patch("services.unified_router.get_llm_circuit_breaker", return_value=_make_passthrough_cb()):
+                with patch("services.unified_router.QueryRouter") as MockQR:
+                    router = UnifiedRouter(registry=registry)
+                    # Replace the query_router that was created in __init__
+                    router.query_router = MockQR.return_value
     return router
 
 
@@ -610,15 +620,15 @@ class TestLlmRoute:
         router.client.chat.completions = MagicMock()
         router.client.chat.completions.create = AsyncMock(side_effect=Exception("LLM down"))
 
-        # Setup fallback via query_router
+        # Setup fallback via query_router — no match
         router.query_router.route.return_value = _route_result(
             matched=False, confidence=0.3
         )
 
         result = await router._llm_route("nesto", _user_context(), None)
-        # Should get fallback result
-        assert result.action == "simple_api"
-        assert result.tool == "get_MasterData"
+        # Fallback with no QR match returns direct_response asking user to clarify
+        assert result.action == "direct_response"
+        assert result.confidence == 0.1
 
     @pytest.mark.asyncio
     async def test_llm_with_conversation_state(self):
@@ -747,9 +757,9 @@ class TestFallbackRoute:
         router.query_router.route.return_value = _route_result(matched=False, confidence=0.2)
 
         result = router._fallback_route("nesto neprepoznatljivo", _user_context())
-        assert result.action == "simple_api"
-        assert result.tool == "get_MasterData"
-        assert result.confidence == 0.3
+        # No match → direct_response asking user to clarify
+        assert result.action == "direct_response"
+        assert result.confidence == 0.1
 
 
 # ==========================================================================
@@ -903,15 +913,16 @@ class TestGetUnifiedRouter:
         mod._router = None  # Reset singleton
 
         with patch("services.unified_router.get_settings", return_value=_mock_settings()):
-            with patch("services.unified_router.AsyncAzureOpenAI"):
-                with patch("services.unified_router.QueryRouter"):
-                    r = await get_unified_router()
-                    assert r is not None
-                    assert r._initialized is True
+            with patch("services.unified_router.get_openai_client", return_value=MagicMock()):
+                with patch("services.unified_router.get_llm_circuit_breaker", return_value=MagicMock()):
+                    with patch("services.unified_router.QueryRouter"):
+                        r = await get_unified_router()
+                        assert r is not None
+                        assert r._initialized is True
 
-                    # Second call returns same instance
-                    r2 = await get_unified_router()
-                    assert r2 is r
+                        # Second call returns same instance
+                        r2 = await get_unified_router()
+                        assert r2 is r
 
         # Cleanup
         mod._router = None
@@ -922,12 +933,13 @@ class TestGetUnifiedRouter:
         mod._router = None
 
         with patch("services.unified_router.get_settings", return_value=_mock_settings()):
-            with patch("services.unified_router.AsyncAzureOpenAI"):
-                with patch("services.unified_router.QueryRouter"):
-                    r1 = await get_unified_router()
-                    mod._router = None
-                    r2 = await get_unified_router()
-                    assert r1 is not r2
+            with patch("services.unified_router.get_openai_client", return_value=MagicMock()):
+                with patch("services.unified_router.get_llm_circuit_breaker", return_value=MagicMock()):
+                    with patch("services.unified_router.QueryRouter"):
+                        r1 = await get_unified_router()
+                        mod._router = None
+                        r2 = await get_unified_router()
+                        assert r1 is not r2
 
         mod._router = None
 
@@ -984,9 +996,9 @@ class TestRouteFullLLMPath:
         router.client.chat.completions.create = AsyncMock(side_effect=Exception("timeout"))
 
         result = await router.route("nesto nepoznato", _user_context())
-        # Should get ultimate fallback
-        assert result.action == "simple_api"
-        assert result.tool == "get_MasterData"
+        # No QR match → ultimate fallback asks user to clarify
+        assert result.action == "direct_response"
+        assert result.confidence == 0.1
 
 
 # ==========================================================================

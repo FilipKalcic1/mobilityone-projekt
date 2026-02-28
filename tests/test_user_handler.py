@@ -66,26 +66,35 @@ class TestIdentifyUser:
             assert result["display_name"] == "Novi"
 
     @pytest.mark.asyncio
-    async def test_user_not_found(self, handler):
+    async def test_user_not_found_returns_guest_context(self, handler):
+        """When user is not in MobilityOne, returns guest context (never None)."""
         with patch("services.engine.user_handler.UserService") as MockUS:
             svc = MagicMock()
             svc.get_active_identity = AsyncMock(return_value=None)
             svc.try_auto_onboard = AsyncMock(return_value=None)
+            svc.default_tenant_id = "default-tenant"
             MockUS.return_value = svc
 
             result = await handler.identify_user("+385000000000")
-            assert result is None
+            assert result is not None
+            assert result["is_guest"] is True
+            assert result["person_id"] is None
+            assert result["phone"] == "+385000000000"
+            assert result["display_name"] == "Korisnik"
 
     @pytest.mark.asyncio
-    async def test_auto_onboard_second_lookup_fails(self, handler):
+    async def test_auto_onboard_second_lookup_fails_returns_guest(self, handler):
+        """When auto-onboard succeeds but second lookup fails, returns guest context."""
         with patch("services.engine.user_handler.UserService") as MockUS:
             svc = MagicMock()
             svc.get_active_identity = AsyncMock(side_effect=[None, None])
             svc.try_auto_onboard = AsyncMock(return_value=("Novi", {"id": "v1"}))
+            svc.default_tenant_id = "default-tenant"
             MockUS.return_value = svc
 
             result = await handler.identify_user("+385000000000")
-            assert result is None
+            assert result is not None
+            assert result["is_guest"] is True
 
 
 class TestBuildGreeting:

@@ -206,14 +206,24 @@ app = FastAPI(
 from services.security_headers import SecurityHeadersMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS - restricted in production, permissive in development
+if settings.DEBUG:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,  # Cannot use credentials with wildcard origin
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    _cors_origins = [o.strip() for o in settings.ADMIN_CORS_ORIGINS.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Hub-Signature-256"],
+    )
 
 # Include routers
 # Simple webhook endpoint that pushes to Redis queue
@@ -230,15 +240,19 @@ if settings.DEBUG:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    IMPORTANT: Only checks LOCAL resources (DB, Redis).
+    Does NOT check external APIs (MobilityOne) - those timeouts
+    would cause Docker health checks to fail and block worker startup.
+    """
     from database import engine
-    
+
     checks = {
         "status": "healthy",
         "version": settings.APP_VERSION,
         "database": "disconnected",
         "redis": "disconnected",
-        "mobility_api": "disconnected",
         "tools": 0
     }
 
@@ -257,15 +271,11 @@ async def health_check():
         if hasattr(app.state, 'registry') and app.state.registry:
             checks["tools"] = len(app.state.registry.tools)
 
-        # Check MobilityOne API
-        try:
-            from services.token_manager import TokenManager
-            token_manager = TokenManager()
-            token = await token_manager.get_token()
-            if token:
-                checks["mobility_api"] = "connected"
-        except Exception:
-            pass  # Leave as disconnected
+        # MobilityOne API status - non-blocking, just report cached token state
+        if hasattr(app.state, 'gateway') and app.state.gateway:
+            checks["mobility_api"] = "connected" if app.state.gateway.token_manager.is_valid else "no_token"
+        else:
+            checks["mobility_api"] = "not_initialized"
 
     except Exception as e:
         checks["status"] = "unhealthy"
@@ -276,9 +286,12 @@ async def health_check():
 
 @app.get("/ready")
 async def readiness_check():
-    """Readiness probe - returns 200 only when all dependencies are available."""
+    """Readiness probe - returns 200 when local dependencies are available.
+
+    Does NOT block on external API checks. MobilityOne being down
+    should not prevent the bot from handling guest users.
+    """
     from database import engine
-    from fastapi.responses import JSONResponse
 
     try:
         async with engine.connect() as conn:
@@ -296,16 +309,6 @@ async def readiness_check():
 
     if not hasattr(app.state, 'registry') or not app.state.registry or len(app.state.registry.tools) == 0:
         return JSONResponse(status_code=503, content={"ready": False, "reason": "tool registry empty"})
-
-    # Verify MobilityOne API connectivity
-    try:
-        from services.token_manager import TokenManager
-        token_manager = TokenManager()
-        token = await token_manager.get_token()
-        if not token:
-            return JSONResponse(status_code=503, content={"ready": False, "reason": "mobility API token unavailable"})
-    except Exception as e:
-        return JSONResponse(status_code=503, content={"ready": False, "reason": f"mobility API unreachable: {str(e)[:50]}"})
 
     return {"ready": True}
 

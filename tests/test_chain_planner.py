@@ -16,6 +16,15 @@ from services.chain_planner import (
 # Fixture
 # ---------------------------------------------------------------------------
 
+def _make_passthrough_cb():
+    """Circuit breaker mock that passes calls through to the actual function."""
+    cb = MagicMock()
+    async def passthrough(endpoint_key, func, *args, **kwargs):
+        return await func(*args, **kwargs)
+    cb.call = AsyncMock(side_effect=passthrough)
+    return cb
+
+
 @pytest.fixture
 def planner():
     mock_settings = MagicMock()
@@ -25,8 +34,9 @@ def planner():
     mock_settings.AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-4"
     with patch("services.chain_planner.get_settings", return_value=mock_settings):
         with patch("services.chain_planner.settings", mock_settings):
-            with patch("services.chain_planner.AsyncAzureOpenAI"):
-                p = ChainPlanner()
+            with patch("services.chain_planner.get_openai_client", return_value=MagicMock()):
+                with patch("services.chain_planner.get_llm_circuit_breaker", return_value=_make_passthrough_cb()):
+                    p = ChainPlanner()
     return p
 
 

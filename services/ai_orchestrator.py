@@ -8,12 +8,14 @@ from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
-from openai import AsyncAzureOpenAI, RateLimitError, APIStatusError, APITimeoutError
+from openai import RateLimitError, APIStatusError, APITimeoutError
 
 from config import get_settings
 from services.sanitizer import sanitize
 from services.patterns import PatternRegistry
 from services.context import UserContextManager
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -66,18 +68,10 @@ class AIOrchestrator:
 
     def __init__(self):
         """Initialize AI orchestrator."""
-        # CRITICAL v12.1: Disable SDK's internal retry mechanism
-        # SDK default is 60s wait which is too long!
-        # We use our own exponential backoff (1-4 seconds)
-        self.client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-            max_retries=0,  # Disable SDK retry - we handle it ourselves
-            timeout=30.0    # 30 second timeout
-        )   
-        
-
+        # Shared client: rate limiting + connection pooling across all services
+        # SDK retries disabled - we use our own exponential backoff (1-4 seconds)
+        self.client = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
 
         self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
 
@@ -176,12 +170,17 @@ class AIOrchestrator:
             else:
                 call_args["tool_choice"] = "auto"
 
-        # NEW v12.0: Retry with exponential backoff
+        # NEW v12.0: Retry with exponential backoff + circuit breaker
         last_error = None
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                response = await self.client.chat.completions.create(**call_args)
+                # Circuit breaker: fail-fast if LLM is down
+                response = await self._circuit_breaker.call(
+                    f"llm:{self.model}",
+                    self.client.chat.completions.create,
+                    **call_args
+                )
                 self._total_requests += 1
 
                 if hasattr(response, 'usage') and response.usage:
@@ -211,24 +210,44 @@ class AIOrchestrator:
                     }
 
                 if message.tool_calls and len(message.tool_calls) > 0:
-                    tool_call = message.tool_calls[0]
+                    # Parse ALL tool calls from LLM response
+                    all_calls = []
+                    for tc in message.tool_calls:
+                        try:
+                            arguments = json.loads(tc.function.arguments)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Invalid tool arguments: {tc.function.arguments[:100]}")
+                            arguments = {}
+                        all_calls.append({
+                            "tool": tc.function.name,
+                            "parameters": arguments,
+                            "tool_call_id": tc.id,
+                        })
 
-                    try:
-                        arguments = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid tool arguments: {tool_call.function.arguments[:100]}")
-                        arguments = {}
+                    if len(all_calls) > 1:
+                        logger.info(
+                            f"LLM returned {len(all_calls)} parallel tool calls: "
+                            f"{[c['tool'] for c in all_calls]}"
+                        )
 
-                    logger.debug(f"Tool call: {tool_call.function.name}")
+                    # Always return first call in legacy format for compatibility
+                    # Additional calls included in "additional_calls" field
+                    first = all_calls[0]
+                    logger.debug(f"Tool call: {first['tool']}")
 
-                    return {
+                    result = {
                         "type": "tool_call",
-                        "tool": tool_call.function.name,
-                        "parameters": arguments,
-                        "tool_call_id": tool_call.id,
+                        "tool": first["tool"],
+                        "parameters": first["parameters"],
+                        "tool_call_id": first["tool_call_id"],
                         "raw_message": message,
-                        "usage": usage_data  # For cost tracking
+                        "usage": usage_data
                     }
+
+                    if len(all_calls) > 1:
+                        result["additional_calls"] = all_calls[1:]
+
+                    return result
 
                 content = message.content or ""
                 logger.debug(f"Text response: {len(content)} chars")
@@ -259,6 +278,13 @@ class AIOrchestrator:
                 if result:
                     return result
                 continue
+
+            except CircuitOpenError as e:
+                logger.warning(f"Circuit breaker OPEN - LLM unavailable: {e}")
+                return {
+                    "type": "error",
+                    "content": "AI sustav je trenutno nedostupan. Pokusajte ponovno za minutu."
+                }
 
             except Exception as e:
                 logger.error(f"AI error: {e}", exc_info=True)
