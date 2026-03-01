@@ -79,3 +79,6 @@ coverage.xml
 
 # --- 10. PLAN FILES ---
 PLAN.md
+
+# --- 11. CLAUDE CODE ---
+.claude/
