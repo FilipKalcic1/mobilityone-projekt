@@ -421,10 +421,13 @@ class Worker:
 
     async def _create_consumer_group(self):
         try:
+            # Use "0" to read ALL messages in the stream (including those
+            # that arrived while no worker was running). Using "$" would
+            # silently skip any messages pushed before the group existed.
             await self.redis.xgroup_create(
                 "whatsapp_stream_inbound",
                 self.group_name,
-                "$",
+                "0",
                 mkstream=True
             )
             log("info", "consumer_group_created", {"group": self.group_name})
@@ -433,19 +436,19 @@ class Worker:
                 raise
             log("info", "consumer_group_exists", {"group": self.group_name})
 
+        # Clean up zombie consumers and reclaim their stuck messages
+        await self._cleanup_stale_consumers()
+
         # Clean up stale pending messages from previous worker runs
         await self._cleanup_stale_pending()
-
-        # Clean up zombie consumers from previous worker restarts
-        await self._cleanup_stale_consumers()
 
     async def _cleanup_stale_consumers(self):
         """
         Remove zombie consumers from previous worker restarts.
 
         Each restart creates a new consumer (worker_{timestamp}) but never
-        removes the old one. This leads to consumer count growing indefinitely.
-        Keep only the current consumer and remove all others.
+        removes the old one. Before removing a stale consumer that has
+        pending messages, reclaim those messages so they get reprocessed.
         """
         try:
             consumers = await self.redis.xinfo_consumers(
@@ -458,6 +461,7 @@ class Worker:
                 return
 
             removed = 0
+            reclaimed = 0
             for consumer in consumers:
                 name = consumer.get("name", "")
                 pending = consumer.get("pending", 0)
@@ -467,24 +471,40 @@ class Worker:
                 if name == self.consumer_name:
                     continue
 
-                # Multi-worker safe: remove ONLY if BOTH conditions met:
-                # - 0 pending messages (not processing anything)
-                # - AND idle for more than 5 minutes (not actively reading)
-                # This prevents removing a live worker that just finished a batch
-                if pending == 0 and idle > 300000:
+                # Only touch consumers idle for more than 5 minutes
+                if idle <= 300000:
+                    continue
+
+                # Reclaim pending messages from zombie consumer before removing
+                if pending > 0:
                     try:
-                        await self.redis.xgroup_delconsumer(
+                        result = await self.redis.xautoclaim(
                             "whatsapp_stream_inbound",
                             self.group_name,
-                            name
+                            self.consumer_name,
+                            min_idle_time=300000,
+                            start_id="0",
+                            count=pending
                         )
-                        removed += 1
+                        claimed_msgs = result[1] if len(result) > 1 else []
+                        reclaimed += len(claimed_msgs)
                     except Exception:
                         pass
 
-            if removed:
+                try:
+                    await self.redis.xgroup_delconsumer(
+                        "whatsapp_stream_inbound",
+                        self.group_name,
+                        name
+                    )
+                    removed += 1
+                except Exception:
+                    pass
+
+            if removed or reclaimed:
                 log("info", "stale_consumers_removed", {
                     "removed": removed,
+                    "reclaimed": reclaimed,
                     "total_before": len(consumers),
                     "remaining": len(consumers) - removed
                 })
@@ -494,13 +514,13 @@ class Worker:
 
     async def _cleanup_stale_pending(self):
         """
-        Clean up stale pending messages from previous worker runs.
+        Reclaim stale pending messages from previous worker runs.
 
-        On restart, old messages that were claimed but not ACKed by dead consumers
-        would be reprocessed indefinitely. This ACKs and removes them.
+        On restart, messages claimed by dead consumers are reassigned to
+        this worker via XAUTOCLAIM so they get reprocessed (not deleted).
+        Only truly old messages (>10 min) are ACKed and removed.
         """
         try:
-            # Check for pending messages in the consumer group
             pending = await self.redis.xpending(
                 "whatsapp_stream_inbound",
                 self.group_name
@@ -514,7 +534,23 @@ class Worker:
 
             log("warn", "stale_pending_found", {"count": total_pending})
 
-            # Get details of pending messages (up to 100)
+            # Reclaim messages idle > 5 min to this consumer for reprocessing
+            try:
+                result = await self.redis.xautoclaim(
+                    "whatsapp_stream_inbound",
+                    self.group_name,
+                    self.consumer_name,
+                    min_idle_time=300000,
+                    start_id="0",
+                    count=100
+                )
+                claimed_msgs = result[1] if len(result) > 1 else []
+                if claimed_msgs:
+                    log("info", "stale_pending_reclaimed", {"count": len(claimed_msgs)})
+            except Exception as e:
+                log("warn", "xautoclaim_failed", {"error": str(e)})
+
+            # Only delete messages pending > 10 minutes (likely unrecoverable)
             detailed = await self.redis.xpending_range(
                 "whatsapp_stream_inbound",
                 self.group_name,
@@ -526,18 +562,21 @@ class Worker:
             cleaned = 0
             for entry in detailed:
                 msg_id = entry.get("message_id") or (entry[0] if isinstance(entry, (list, tuple)) else None)
+                idle_time = entry.get("time_since_delivered") or (entry[3] if isinstance(entry, (list, tuple)) and len(entry) > 3 else 0)
                 if not msg_id:
                     continue
 
-                # ACK and delete stale messages
-                try:
-                    await self.redis.xack("whatsapp_stream_inbound", self.group_name, msg_id)
-                    await self.redis.xdel("whatsapp_stream_inbound", msg_id)
-                    cleaned += 1
-                except Exception:
-                    pass
+                # Only remove messages stuck for more than 10 minutes
+                if idle_time > 600000:
+                    try:
+                        await self.redis.xack("whatsapp_stream_inbound", self.group_name, msg_id)
+                        await self.redis.xdel("whatsapp_stream_inbound", msg_id)
+                        cleaned += 1
+                    except Exception:
+                        pass
 
-            log("info", "stale_pending_cleaned", {"cleaned": cleaned, "total": total_pending})
+            if cleaned:
+                log("info", "stale_pending_cleaned", {"cleaned": cleaned, "total": total_pending})
 
         except Exception as e:
             log("warn", "stale_cleanup_failed", {"error": str(e)})
