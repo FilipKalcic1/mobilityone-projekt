@@ -1,6 +1,5 @@
 """
 Concept Mapper - Jargon to Standard Term Translation
-Version: 1.0
 
 Expands user queries by translating:
 1. Croatian jargon -> standard Croatian terms
@@ -162,15 +161,15 @@ class ConceptMapper:
         (r'\bdaj\s+mi\b', ["prikaži", "dohvati", "get"]),
         # "trebam [X]" patterns
         (r'\btreba(m)?\s+mi?\b', ["dohvati", "prikaži", "get", "potrebno"]),
-        # "pokaži mi [X]" patterns
+        # "pokaži mi [X]" = "show me [X]"
         (r'\bpoka[zž]i\s+mi\b', ["prikaži", "dohvati", "get", "list"]),
-        # "upiši/unesi [X]" patterns
+        # "upiši/unesi [X]" = "enter/input [X]"
         (r'\b(upi[sš]i|unesi)\b', ["dodaj", "kreiraj", "post", "add"]),
         # "koliko [X]" patterns
         (r'\bkoliko\b', ["broj", "count", "get", "količina"]),
-        # "koji/koja/koje [X]" patterns
+        # "koji/koja/koje [X]" = "which [X]"
         (r'\bkoj[aei]\b', ["lista", "popis", "get", "which"]),
-        # "ima li" patterns
+        # "ima li" = "is there / does it have"
         (r'\bima\s+li\b', ["dostupnost", "provjeri", "check", "available"]),
     ]
 

@@ -1,6 +1,5 @@
 """
 GDPR Data Masking Service
-Version: 2.1 - PII Detection & Anonymization (FIXED)
 
 LEGAL REQUIREMENT:
 - GDPR Article 17: Right to Erasure

@@ -1,6 +1,5 @@
 """
 Tool Evaluator - Performance Tracking & Learning
-Version: 1.0
 
 KRITIČNA KOMPONENTA za kvalitetu sustava.
 
@@ -19,10 +18,10 @@ Omogućava:
 PRIMJER KORIŠTENJA:
     evaluator = get_tool_evaluator()
 
-    # Nakon uspješnog poziva
+    # After a successful call
     evaluator.record_success("get_MasterData", response_time=0.5)
 
-    # Nakon neuspješnog poziva
+    # After a failed call
     evaluator.record_failure("get_Vehicles", "Wrong data returned")
 
     # Dohvat score-a za prioritizaciju

@@ -1,6 +1,5 @@
 """
 Confirmation Dialog Engine
-Version: 1.0
 
 Handles the confirmation flow with parameter modification support.
 

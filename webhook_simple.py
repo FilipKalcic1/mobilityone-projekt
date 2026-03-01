@@ -2,7 +2,6 @@
 Simple webhook endpoint for WhatsApp messages (Infobip).
 Receives messages and pushes to Redis queue for worker processing.
 
-Version: 2.0 - Production hardened
 - Handles ALL known Infobip payload formats
 - Case-insensitive type matching
 - Non-text message forwarding (image, location, voice → user gets response)
@@ -32,9 +31,9 @@ from config import get_settings
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # DIAGNOSTIC RING BUFFER - Last N webhook events for remote debugging
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 _MAX_DIAG_ENTRIES = 50
 _diag_buffer: deque = deque(maxlen=_MAX_DIAG_ENTRIES)
 _stats = {
@@ -62,9 +61,9 @@ def _diag_log(event: str, data: dict = None):
     _diag_buffer.append(entry)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # SIGNATURE VALIDATION
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
     """
@@ -99,9 +98,9 @@ def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> boo
     return hmac.compare_digest(expected.lower(), signature.lower())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # TEXT EXTRACTION - handles ALL known Infobip formats
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 def extract_text_and_type(result: dict) -> tuple:
     """
@@ -178,9 +177,9 @@ def extract_text_and_type(result: dict) -> tuple:
     return "", msg_type
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # REDIS CLIENT
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 router = APIRouter()
 
@@ -208,9 +207,9 @@ async def get_redis():
         return _redis_client
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # MAIN WEBHOOK HANDLER
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 @router.post("/whatsapp")
 async def whatsapp_webhook(request: Request):
@@ -368,9 +367,9 @@ async def whatsapp_webhook(request: Request):
         return {"status": "ok", "error": "processing_failed"}
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # VERIFICATION & HEALTH CHECK
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 @router.get("/whatsapp")
 async def whatsapp_webhook_verify(request: Request):
@@ -403,9 +402,9 @@ async def whatsapp_webhook_verify(request: Request):
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # DIAGNOSTIC ENDPOINT - for remote debugging without SSH
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 @router.get("/whatsapp/debug")
 async def webhook_debug(request: Request):

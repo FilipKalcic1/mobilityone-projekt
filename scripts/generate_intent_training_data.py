@@ -1,6 +1,5 @@
 """
 Generate Training Data for Intent Classification ML Model.
-Version: 1.0
 
 Extracts patterns from existing codebase and generates training examples.
 

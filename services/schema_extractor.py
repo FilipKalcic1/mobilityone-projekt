@@ -1,6 +1,5 @@
 """
 Schema Extractor - Extract data using Swagger schema
-Version: 1.0
 
 Extracts fields from API responses using output_keys from ToolRegistry.
 NO hardcoded field names - everything comes from Swagger spec.

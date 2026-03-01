@@ -1,6 +1,5 @@
 """
 Production Readiness Test Suite
-Version: 1.0
 
 Run this AFTER docker-compose up to verify the system works end-to-end.
 

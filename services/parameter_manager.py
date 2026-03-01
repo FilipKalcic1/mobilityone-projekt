@@ -1,6 +1,5 @@
 """
 Parameter Manager - Type Validation, Casting, and Injection
-Version: 2.0
 
 Handles parameter resolution from multiple sources:
 1. User input (FROM_USER)
@@ -249,7 +248,7 @@ class ParameterManager:
 
         logger.info(f" _inject_context_params for {tool.operation_id}")
         logger.info(f"user_context keys: {list(user_context.keys())}")
-        # v22.0: Use UserContextManager for logging
+        # Use UserContextManager for logging
         ctx = UserContextManager(user_context)
         logger.info(f"person_id in context: {ctx.person_id or 'NOT FOUND'}")
 

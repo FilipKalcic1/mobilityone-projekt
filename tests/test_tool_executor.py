@@ -1,6 +1,5 @@
 """
 Tests for ToolExecutor
-Version: 12.0 - Updated for new API
 
 Tests tool execution with UnifiedToolDefinition and ToolExecutionContext.
 """

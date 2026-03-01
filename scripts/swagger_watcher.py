@@ -1,6 +1,5 @@
 """
 Swagger Watcher - Automatic API Change Detection & Documentation Regeneration
-Version: 1.0
 
 Detects changes in Swagger specifications and automatically triggers
 documentation regeneration when APIs change.

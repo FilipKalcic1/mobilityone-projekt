@@ -1,6 +1,5 @@
 """
 Test Configuration and Fixtures
-Version: 11.0
 """
 
 import pytest

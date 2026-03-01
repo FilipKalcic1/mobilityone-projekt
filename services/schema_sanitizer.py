@@ -1,6 +1,5 @@
 """
 Schema Sanitizer - OpenAI JSON Schema Validation & Auto-Fix
-Version: 2.1
 
 FIX #13: Ensures all tool schemas are valid before sending to OpenAI.
 FIX #14: Croatian tool descriptions for better LLM selection.

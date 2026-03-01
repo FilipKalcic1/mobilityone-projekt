@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Infrastructure Verification Script
-Version: 1.0
 
 Verifies the "Split-Brain" architecture fixes:
 1. Metrics sync (API reads from Redis, Worker writes to Redis)

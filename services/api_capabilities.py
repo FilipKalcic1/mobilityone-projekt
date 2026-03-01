@@ -1,6 +1,5 @@
 """
 API Capabilities Discovery
-Version: 1.0
 
 DYNAMIC API CAPABILITY DETECTION - No hardcoding!
 

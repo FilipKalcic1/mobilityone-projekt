@@ -1,6 +1,5 @@
 """
 Planner - Chain of Thought execution planning.
-Version: 1.0
 
 Single responsibility: Analyze user intent and create execution plan.
 """
@@ -106,7 +105,7 @@ class Planner:
 
     def _summarize_context(self, user_context: Dict[str, Any]) -> str:
         """Summarize user context for planner."""
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         parts = []
 

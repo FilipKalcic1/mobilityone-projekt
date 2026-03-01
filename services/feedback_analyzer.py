@@ -1,6 +1,5 @@
 """
 Feedback Analyzer - Comprehensive feedback analysis for continuous improvement.
-Version: 2.0
 
 This service provides TWO types of analysis:
 
@@ -139,11 +138,11 @@ class FeedbackAnalysisResult:
     total_reports_analyzed: int = 0
     reports_with_corrections: int = 0
 
-    # Dictionary analysis (v1.0)
+    # Dictionary analysis
     missing_croatian_terms: Dict[str, TermFrequency] = field(default_factory=dict)
     dictionary_suggestions: List[DictionarySuggestion] = field(default_factory=list)
 
-    # Query pattern learning (v2.0)
+    # Query pattern learning
     query_tool_insights: List[QueryToolInsight] = field(default_factory=list)
     failure_analysis: List[FailureCategoryAnalysis] = field(default_factory=list)
 

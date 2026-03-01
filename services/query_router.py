@@ -1,14 +1,8 @@
 """
 Query Router - ML-based routing with response formatting.
-Version: 2.0 (ML-based, replaces regex patterns)
 
-CHANGELOG v2.0:
-- REMOVED: 51 regex rules (~500 lines of patterns)
-- ADDED: ML-based routing via IntentClassifier
-- KEPT: Response formatting utilities
-
-Single responsibility: Route queries to tools and format responses.
-Uses ML model instead of regex patterns for 99%+ accuracy.
+Routes queries to tools and formats responses.
+Uses ML model instead of regex patterns.
 """
 
 import logging
@@ -198,7 +192,7 @@ INTENT_METADATA = {
     },
 }
 
-# v16.0: Confidence threshold for DETERMINISTIC routing (bypasses LLM)
+# Confidence threshold for DETERMINISTIC routing (bypasses LLM)
 # Balanced threshold: High-confidence ML predictions bypass LLM for speed
 # Lower confidence queries still go to LLM for final decision
 ML_CONFIDENCE_THRESHOLD = 0.85  # 85%+ confidence uses ML directly (faster, cheaper)

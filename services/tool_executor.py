@@ -1,6 +1,5 @@
 """
 Tool Executor - Production-Ready Execution Engine
-Version: 3.0 (PHASE 3 - DUMB CLIENT)
 
 GATE 1: INVISIBLE INJECTION (Merge) - Auto-inject context params
 GATE 2: TYPE VALIDATION & CASTING - Strict type checking
@@ -118,7 +117,7 @@ class ToolExecutor:
                     logger.warning(f"{warning}")
 
             # PATH params like personIdOrEmail need to be in resolved_params for path substitution
-            # v22.0: Use UserContextManager for validated access
+            # Use UserContextManager for validated access
             ctx_manager = UserContextManager(execution_context.user_context)
             person_id = ctx_manager.person_id  # Returns None if missing or invalid UUID
             if person_id:
@@ -149,7 +148,7 @@ class ToolExecutor:
             # The injection happens HERE, not in message_engine, so it goes
             # directly to the API call without being filtered.
             if tool.method == "GET":
-                # v22.0: Reuse ctx_manager from above (validated access)
+                # Reuse ctx_manager from above (validated access)
                 person_id = ctx_manager.person_id
                 if person_id:
                     # Use APICapabilityRegistry to check if tool supports PersonId
@@ -234,7 +233,7 @@ class ToolExecutor:
                 query_params=query_params,
                 body=body,
                 headers=headers,
-                tenant_id=ctx_manager.tenant_id  # v22.0: Use ctx_manager from above
+                tenant_id=ctx_manager.tenant_id  # Use ctx_manager from above
             )
 
             # Process response
@@ -299,7 +298,7 @@ class ToolExecutor:
                 error_code="PARAMETER_VALIDATION_ERROR",
                 error_message=str(e),
                 ai_feedback=ai_feedback,
-                missing_params=e.missing_params,  # KRITIČNO: Proslijedi missing_params za auto-chaining
+                missing_params=e.missing_params,  # Pass missing_params for auto-chaining
                 execution_time_ms=int((time.time() - start_time) * 1000)
             )
 
@@ -420,7 +419,7 @@ class ToolExecutor:
         Returns:
             Relative URL string (APIGateway will prepend base_url)
         """
-        # MASTER PROMPT v3.1: Strict URL construction
+        # Strict URL construction
         # Formula: base_url + "/" + swagger_name + "/" + path.lstrip('/')
 
         swagger_name = tool.swagger_name

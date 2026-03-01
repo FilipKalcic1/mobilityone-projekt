@@ -1,6 +1,5 @@
 """
 Model Drift Detection Service
-Version: 2.0 - Simplified
 
 Detects AI model performance drift by comparing
 recent metrics against baseline.

@@ -1,6 +1,5 @@
 """
 Comprehensive Bot Accuracy Test Suite
-Version: 1.0
 
 Tests EVERY aspect of the bot's understanding pipeline:
 1. ML Intent Classification — all 29 intents, 483 held-out test examples
@@ -39,9 +38,9 @@ for name in ['services', 'openai', 'httpx', 'httpcore', 'sklearn']:
     logging.getLogger(name).setLevel(logging.ERROR)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # TEST CONFIGURATION
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 # Minimum acceptable accuracy thresholds
 THRESHOLDS = {
@@ -54,10 +53,10 @@ THRESHOLDS = {
 }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # SECTION 1: HARDCODED TEST CASES — Real user messages per intent
 # These simulate REAL WhatsApp messages a Croatian fleet user would send
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 # ALL 29 intents — each with 5+ realistic queries covering:
 # - Formal Croatian
@@ -342,10 +341,10 @@ INTENT_TEST_CASES: Dict[str, List[str]] = {
 }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # SECTION 2: READ vs WRITE SAFETY — Critical discrimination tests
 # The bot MUST NOT confuse "check mileage" with "input mileage"
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 READ_WRITE_SAFETY_TESTS = [
     # (query, expected_action, description)
@@ -377,9 +376,9 @@ READ_WRITE_SAFETY_TESTS = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # SECTION 3: FLOW DETECTION — Must correctly identify flow types
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 FLOW_DETECTION_TESTS = [
     # (query, expected_flow_type, description)
@@ -418,9 +417,9 @@ FLOW_DETECTION_TESTS = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # SECTION 4: PHRASE MATCHING — Word-boundary correctness
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 PHRASE_TESTS = [
     # (text, show_more, yes, no, exit, greeting_response, selection)
@@ -502,9 +501,9 @@ PHRASE_TESTS = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # SECTION 5: EDGE CASES — Adversarial and tricky inputs
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 EDGE_CASE_TESTS = [
     # ── Typos (ML only — these test if ML can handle misspellings) ──
@@ -555,11 +554,11 @@ EDGE_CASE_TESTS = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # SECTION 6: END-TO-END PIPELINE TEST
 # Tests the REAL flow: ML first -> if low confidence -> LLM catches it
 # This is what ACTUALLY happens in production
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 # Queries where ML is expected to handle directly (>= 85% confidence)
 ML_FAST_PATH_TESTS = [
@@ -598,9 +597,9 @@ LLM_FALLBACK_EXPECTED = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # TEST RUNNER
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 @dataclass
 class AccuracyResult:
@@ -1008,9 +1007,9 @@ def run_pipeline_coverage_test(classifier, query_router, verbose: bool = False) 
     return results
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # MAIN REPORT
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 def print_section(title: str, char: str = "="):
     width = 78
@@ -1236,9 +1235,9 @@ def main():
     if pipeline_results["ml_handled_wrong"] > 0:
         all_passed = False
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ---
     # FINAL SUMMARY
-    # ═══════════════════════════════════════════════════════════════════
+    # ---
     elapsed = time.perf_counter() - t0
 
     print_section("FINAL SUMMARY")

@@ -1,6 +1,5 @@
 """
 Booking API Contract Constants
-Version: 1.0
 
 Centralized booking-related constants to avoid magic numbers
 scattered across the codebase.

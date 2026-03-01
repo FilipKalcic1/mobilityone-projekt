@@ -1,6 +1,5 @@
 """
 LLM Response Extractor - Intelligent data extraction from API responses.
-Version: 1.0
 
 Single responsibility: Use LLM to extract ONLY relevant data from API response.
 NEVER fabricate data - only return what exists in the response.

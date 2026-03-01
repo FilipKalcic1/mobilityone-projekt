@@ -127,9 +127,9 @@ class EmbeddingEvaluator:
         - fuel: Fuel-related queries
         """
         test_cases = [
-            # =================================================================
+            # ---
             # VEHICLE QUERIES (30 queries - most common use case)
-            # =================================================================
+            # ---
             QueryTestCase(query="prikaži mi vozilo", expected_tool_id="get_Vehicle", category="vehicle"),
             QueryTestCase(query="daj mi podatke o autu", expected_tool_id="get_Vehicle", category="vehicle"),
             QueryTestCase(query="informacije o vozilu", expected_tool_id="get_Vehicle", category="vehicle"),
@@ -161,9 +161,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="ukloni auto", expected_tool_id="delete_Vehicle", category="vehicle"),
             QueryTestCase(query="status vozila", expected_tool_id="get_VehicleStatus", category="vehicle"),
 
-            # =================================================================
+            # ---
             # BOOKING QUERIES (20 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="rezerviraj auto", expected_tool_id="post_Booking", category="booking"),
             QueryTestCase(query="napravi rezervaciju", expected_tool_id="post_Booking", category="booking"),
             QueryTestCase(query="zakaži najam", expected_tool_id="post_Booking", category="booking"),
@@ -185,9 +185,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="prikaži booking", expected_tool_id="get_Booking", category="booking"),
             QueryTestCase(query="kalendar rezervacija", expected_tool_id="get_BookingCalendar", category="booking"),
 
-            # =================================================================
+            # ---
             # MAINTENANCE QUERIES (15 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="prijavi kvar", expected_tool_id="post_Damage", category="maintenance"),
             QueryTestCase(query="unesi štetu", expected_tool_id="post_Damage", category="maintenance"),
             QueryTestCase(query="nova šteta", expected_tool_id="post_Damage", category="maintenance"),
@@ -204,9 +204,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="tehnički pregled", expected_tool_id="get_VehicleInspection", category="maintenance"),
             QueryTestCase(query="status servisa", expected_tool_id="get_MaintenanceStatus", category="maintenance"),
 
-            # =================================================================
+            # ---
             # FINANCIAL QUERIES (15 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="cijena najma", expected_tool_id="get_BookingPrice", category="financial"),
             QueryTestCase(query="izračunaj cijenu", expected_tool_id="get_BookingPrice", category="financial"),
             QueryTestCase(query="troškovi vozila", expected_tool_id="get_VehicleCosts", category="financial"),
@@ -223,9 +223,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="stanje računa", expected_tool_id="get_AccountBalance", category="financial"),
             QueryTestCase(query="cjenik", expected_tool_id="get_Pricing", category="financial"),
 
-            # =================================================================
+            # ---
             # LOCATION QUERIES (10 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="lokacija vozila", expected_tool_id="get_VehicleLocation", category="location"),
             QueryTestCase(query="gdje je auto", expected_tool_id="get_VehicleLocation", category="location"),
             QueryTestCase(query="GPS pozicija", expected_tool_id="get_VehicleLocation", category="location"),
@@ -237,9 +237,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="zona preuzimanja", expected_tool_id="get_PickupZones", category="location"),
             QueryTestCase(query="mjesto vraćanja", expected_tool_id="get_ReturnLocations", category="location"),
 
-            # =================================================================
+            # ---
             # PERSON/DRIVER QUERIES (15 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="podaci o vozaču", expected_tool_id="get_Driver", category="person"),
             QueryTestCase(query="informacije o vozaču", expected_tool_id="get_Driver", category="person"),
             QueryTestCase(query="lista vozača", expected_tool_id="get_Drivers", category="person"),
@@ -256,9 +256,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="zaposlenici", expected_tool_id="get_Employees", category="person"),
             QueryTestCase(query="vozačka dozvola", expected_tool_id="get_DriverLicense", category="person"),
 
-            # =================================================================
+            # ---
             # SCHEDULE/AVAILABILITY QUERIES (10 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="raspored", expected_tool_id="get_Schedule", category="schedule"),
             QueryTestCase(query="kalendar", expected_tool_id="get_Calendar", category="schedule"),
             QueryTestCase(query="dostupnost vozila", expected_tool_id="get_VehicleAvailability", category="schedule"),
@@ -270,9 +270,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="plan rada", expected_tool_id="get_WorkPlan", category="schedule"),
             QueryTestCase(query="zauzetost", expected_tool_id="get_Occupancy", category="schedule"),
 
-            # =================================================================
+            # ---
             # FUEL QUERIES (10 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="stanje goriva", expected_tool_id="get_VehicleFuelLevel", category="fuel"),
             QueryTestCase(query="razina goriva", expected_tool_id="get_VehicleFuelLevel", category="fuel"),
             QueryTestCase(query="koliko ima goriva", expected_tool_id="get_VehicleFuelLevel", category="fuel"),
@@ -284,9 +284,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="kartice za gorivo", expected_tool_id="get_FuelCards", category="fuel"),
             QueryTestCase(query="troškovi goriva", expected_tool_id="get_FuelCosts", category="fuel"),
 
-            # =================================================================
+            # ---
             # DOCUMENT QUERIES (10 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="dokumenti", expected_tool_id="get_Documents", category="document"),
             QueryTestCase(query="ugovori", expected_tool_id="get_Contracts", category="document"),
             QueryTestCase(query="police osiguranja", expected_tool_id="get_InsurancePolicies", category="document"),
@@ -298,9 +298,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="dodaj bilješku", expected_tool_id="post_Note", category="document"),
             QueryTestCase(query="privici", expected_tool_id="get_Attachments", category="document"),
 
-            # =================================================================
+            # ---
             # FLEET MANAGEMENT (15 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="statistika flote", expected_tool_id="get_FleetStatistics", category="fleet"),
             QueryTestCase(query="pregled voznog parka", expected_tool_id="get_FleetOverview", category="fleet"),
             QueryTestCase(query="iskorištenost flote", expected_tool_id="get_FleetUtilization", category="fleet"),
@@ -317,9 +317,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="kombiji", expected_tool_id="get_Vans", category="fleet"),
             QueryTestCase(query="luksuzna vozila", expected_tool_id="get_LuxuryVehicles", category="fleet"),
 
-            # =================================================================
+            # ---
             # DAMAGE/ACCIDENT QUERIES (15 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="prijavi štetu", expected_tool_id="post_DamageReport", category="damage"),
             QueryTestCase(query="oštećenja vozila", expected_tool_id="get_VehicleDamages", category="damage"),
             QueryTestCase(query="štete", expected_tool_id="get_Damages", category="damage"),
@@ -336,9 +336,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="ogrebotina na autu", expected_tool_id="post_DamageReport", category="damage"),
             QueryTestCase(query="kvar vozila", expected_tool_id="post_MalfunctionReport", category="damage"),
 
-            # =================================================================
+            # ---
             # RENTAL OPERATIONS (15 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="preuzimanje vozila", expected_tool_id="post_VehiclePickup", category="rental_ops"),
             QueryTestCase(query="vraćanje auta", expected_tool_id="post_VehicleReturn", category="rental_ops"),
             QueryTestCase(query="primopredaja vozila", expected_tool_id="post_VehicleHandover", category="rental_ops"),
@@ -355,9 +355,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="dječje sjedalo", expected_tool_id="post_AddChildSeat", category="rental_ops"),
             QueryTestCase(query="dodaj dodatnog vozača", expected_tool_id="post_AddDriver", category="rental_ops"),
 
-            # =================================================================
+            # ---
             # LOYALTY/REWARDS (10 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="bodovi lojalnosti", expected_tool_id="get_LoyaltyPoints", category="loyalty"),
             QueryTestCase(query="nagrade", expected_tool_id="get_Rewards", category="loyalty"),
             QueryTestCase(query="kuponi", expected_tool_id="get_Coupons", category="loyalty"),
@@ -369,9 +369,9 @@ class EmbeddingEvaluator:
             QueryTestCase(query="iskoristi kupon", expected_tool_id="post_RedeemCoupon", category="loyalty"),
             QueryTestCase(query="iskoristi bodove", expected_tool_id="post_RedeemPoints", category="loyalty"),
 
-            # =================================================================
+            # ---
             # NOTIFICATIONS/ALERTS (10 queries)
-            # =================================================================
+            # ---
             QueryTestCase(query="obavijesti", expected_tool_id="get_Notifications", category="notifications"),
             QueryTestCase(query="upozorenja", expected_tool_id="get_Alerts", category="notifications"),
             QueryTestCase(query="poruke", expected_tool_id="get_Messages", category="notifications"),

@@ -1,6 +1,5 @@
 """
 Tests for DataSanitizer
-Version: 11.0
 
 Tests sensitive data sanitization.
 """

@@ -6,7 +6,7 @@ Having separate AsyncAzureOpenAI instances per service causes:
 - No shared rate limit tracking (each client hits limits independently)
 - Wasted connection pools (3x connections to same endpoint)
 
-v2.0: Added circuit breaker for fail-fast when Azure OpenAI is down.
+Added circuit breaker for fail-fast when Azure OpenAI is down.
 """
 
 import logging

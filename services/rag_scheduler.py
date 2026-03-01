@@ -1,6 +1,5 @@
 """
 RAG Refresh Scheduler
-Version: 1.1 - Periodic Embedding & Tool Registry Refresh (FIXED)
 
 PROBLEM SOLVED:
 - RAG embeddings only refresh on container restart

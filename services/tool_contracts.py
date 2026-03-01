@@ -1,6 +1,5 @@
 """
 Tool Contracts - Pydantic Models for Unified Tool Definition
-Version: 2.0
 
 Domain-agnostic tool metadata contracts.
 NO business logic, NO domain-specific references.
@@ -184,7 +183,7 @@ class ToolExecutionResult(BaseModel):
     error_message: Optional[str] = None
     ai_feedback: Optional[str] = None  # Croatian explanation for LLM
 
-    # KRITIČNO za auto-chaining: Lista parametara koji nedostaju
+    # Required for auto-chaining: list of missing parameters
     missing_params: List[str] = Field(
         default_factory=list,
         description="Missing required parameters (for auto-chaining)"

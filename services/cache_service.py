@@ -1,11 +1,10 @@
 """
 Cache Service
-Version: 11.0
 
 Redis caching layer with resilience.
 NO DEPENDENCIES on other services.
 
-Phase 4 (v11.0):
+Phase 4:
 - Custom JSON serializer for datetime/UUID
 - set_json() with explicit JSON handling
 - invalidate() method for cache busting

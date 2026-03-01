@@ -1,6 +1,5 @@
 """
 WhatsApp Integration Service
-Version: 1.0
 
 KRITIČNA KOMPONENTA - Rješava probleme:
 1. Phone vs UUID trap: Validira da 'to' sadrži telefonski broj, ne UUID
@@ -35,9 +34,9 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # VALIDATION PATTERNS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 # UUID pattern (v4): 8-4-4-4-12 hex characters
 UUID_PATTERN = re.compile(
@@ -137,9 +136,9 @@ class WhatsAppService:
                 "INFOBIP_API_KEY appears to be invalid (too short)."
             )
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # VALIDATION METHODS (CRITICAL FOR 400 ERROR PREVENTION)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     def validate_phone_number(self, number: str) -> Tuple[bool, str, Optional[str]]:
         """
@@ -321,9 +320,9 @@ class WhatsAppService:
 
         return text
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # PAYLOAD BUILDING (INFOBIP SPECIFIC)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     def build_payload(
         self,
@@ -381,9 +380,9 @@ class WhatsAppService:
             "Accept": "application/json"
         }
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # SENDING WITH RETRY (EXPONENTIAL BACKOFF + JITTER)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     async def send(
         self,
@@ -607,9 +606,9 @@ class WhatsAppService:
 
         return max(min_delay, exponential_delay) + jitter
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # BATCH SENDING (FOR FUTURE USE)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     async def send_batch(
         self,
@@ -635,9 +634,9 @@ class WhatsAppService:
 
         return results
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # STATS & HEALTH
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     def get_stats(self) -> Dict[str, Any]:
         """Get service statistics."""

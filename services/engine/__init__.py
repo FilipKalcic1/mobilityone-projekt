@@ -1,6 +1,5 @@
 """
 Message Engine - Public API facade.
-Version: 20.0 (Modular refactor)
 
 Coordinates message processing through:
 - User identification and context
@@ -174,7 +173,6 @@ class MessageEngine:
         messages: List[Dict],
         tools: Optional[List[Dict]] = None,
         system_prompt: Optional[str] = None,
-        forced_tool: Optional[str] = None,
         tool_scores: Optional[List[Dict]] = None,
         user_context: Optional[Dict] = None
     ) -> Dict[str, Any]:
@@ -192,7 +190,6 @@ class MessageEngine:
                 messages=messages,
                 tools=tools,
                 system_prompt=system_prompt,
-                forced_tool=forced_tool,
                 tool_scores=tool_scores
             )
 
@@ -621,26 +618,12 @@ class MessageEngine:
                         if fb_step.tool_name:
                             fallback_tools.append(fb_step.tool_name)
 
-        # v16.0: LLM DECISION MODE - Don't force tools, let LLM decide
-        # We RANK tools by score, but LLM makes the final choice
-        forced_tool = None  # DISABLED - LLM decides freely
-
         if tools_with_scores:
             best_match = max(tools_with_scores, key=lambda t: t["score"])
-            best_score = best_match["score"]
-            best_tool_name = best_match["name"]
-
-            # Log the recommendation, but don't force it
             logger.info(
-                f"Tool recommendation: {best_tool_name} (score={best_score:.3f}) "
+                f"Tool recommendation: {best_match['name']} (score={best_match['score']:.3f}) "
                 f"- LLM will decide from {len(tools_with_scores)} options"
             )
-
-            # v16.0: Only force if ACTION_THRESHOLD is set below 1.0 (disabled by default)
-            # This allows reverting to old behavior if needed
-            if best_score >= settings.ACTION_THRESHOLD:
-                forced_tool = best_tool_name
-                logger.info(f"ACTION_THRESHOLD active: forcing {best_tool_name}")
 
         # Build system prompt
         system_prompt = self.ai.build_system_prompt(
@@ -654,13 +637,10 @@ class MessageEngine:
         for iteration in range(self.MAX_ITERATIONS):
             logger.debug(f"AI iteration {iteration + 1}/{self.MAX_ITERATIONS}")
 
-            current_forced = forced_tool if iteration == 0 else None
-
             result = await self._instrumented_ai_call(
                 messages=current_messages,
                 tools=tools,
                 system_prompt=system_prompt,
-                forced_tool=current_forced,
                 tool_scores=tools_with_scores,
                 user_context=user_context
             )
@@ -869,9 +849,9 @@ class MessageEngine:
 
         return "Nisam uspio obraditi zahtjev. Pokusajte drugacije formulirati."
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ---
     # CONFIG-DRIVEN TOOL IDENTIFICATION (replaces hardcoded tool name checks)
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ---
 
     def _get_availability_tools(self) -> set:
         """Get tool names that handle vehicle availability (config-driven)."""

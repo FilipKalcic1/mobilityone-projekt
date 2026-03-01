@@ -174,10 +174,10 @@ def extract_structural_info(tool_id: str) -> str:
     parts = []
     tool_lower = tool_id.lower()
 
-    # =====================================================
+    # ---
     # ENTITY FIRST! (repeated 5x to dominate embedding)
     # This is the MOST IMPORTANT differentiator
-    # =====================================================
+    # ---
 
     # Extract entity name first
     name = regex_module.sub(r'^(get|post|put|patch|delete)_', '', tool_id, flags=regex_module.IGNORECASE)

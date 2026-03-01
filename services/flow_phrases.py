@@ -1,6 +1,5 @@
 """
 Flow Phrases - Centralized phrase matching for conversation flow.
-Version: 1.0
 
 Replaces hardcoded string matching across engine/__init__.py,
 unified_router.py, and other modules.
@@ -16,9 +15,9 @@ from typing import List, Optional, Set
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # PHRASE CATEGORIES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 # "Show more" signals - user wants to see additional options within current flow
 SHOW_MORE_PHRASES: List[str] = [
@@ -95,9 +94,9 @@ GREETING_PHRASES = {
 }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # MATCHING FUNCTIONS (Word-boundary safe)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 # Cache compiled regex patterns
 _pattern_cache: dict = {}

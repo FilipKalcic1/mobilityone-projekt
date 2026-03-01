@@ -1,6 +1,5 @@
 """
 Query Pattern Learner - Learns from user corrections to improve tool selection.
-Version: 1.0
 
 This service analyzes hallucination_reports with corrections to:
 1. Extract query patterns that led to wrong tool selection

@@ -1,6 +1,5 @@
 """
 Circuit Breaker - Endpoint Failure Protection
-Version: 2.0
 
 Prevents cascading failures by disabling failing endpoints temporarily.
 After 3 consecutive failures, endpoint is DISABLED for 60 seconds.

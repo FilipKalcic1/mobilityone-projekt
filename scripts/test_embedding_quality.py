@@ -705,7 +705,7 @@ def test_worst_case_scenarios():
 def test_synonym_extraction():
     """Test that synonyms are correctly extracted for embedding text."""
     print("\n" + "="*60)
-    print("TEST: Synonym Extraction (v3.1)")
+    print("TEST: Synonym Extraction")
     print("="*60)
 
     # Croatian synonyms map (matching the one in embedding_engine.py)

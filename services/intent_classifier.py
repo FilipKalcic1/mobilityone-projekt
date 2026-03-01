@@ -1,6 +1,5 @@
 """
 Intent Classifier - ML-based intent classification.
-Version: 2.0
 
 REPLACES:
 - action_intent_detector.py (414 lines of regex)
@@ -24,9 +23,9 @@ import re
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
+# ---
 # TEXT NORMALIZATION - Handles Croatian diacritics and synonyms
-# ============================================================
+# ---
 
 # Croatian diacritic mapping
 DIACRITIC_MAP = {
@@ -102,9 +101,9 @@ def normalize_query(text: str) -> str:
     return text
 
 
-# ============================================================
+# ---
 # ActionIntent enum - replaces action_intent_detector.py
-# ============================================================
+# ---
 
 class ActionIntent(str, Enum):
     """HTTP action intent detected from user query."""
@@ -710,9 +709,9 @@ def get_intent_classifier(algorithm: str = "tfidf_lr") -> IntentClassifier:
     return _classifier
 
 
-# ============================================================
+# ---
 # ENSEMBLE CLASSIFIER - Best of both worlds
-# ============================================================
+# ---
 
 # Cache for semantic classifier (only load when needed)
 _semantic_classifier: Optional[IntentClassifier] = None
@@ -787,10 +786,10 @@ def predict_with_ensemble(query: str) -> IntentPrediction:
     return tfidf_pred
 
 
-# ============================================================
+# ---
 # BACKWARDS COMPATIBLE INTERFACE
 # Replaces action_intent_detector.detect_action_intent()
-# ============================================================
+# ---
 
 def detect_action_intent(query: str, use_ensemble: bool = True) -> IntentDetectionResult:
     """
@@ -859,10 +858,10 @@ def filter_tools_by_intent(
     return filtered if filtered else tools  # Fallback to all if none match
 
 
-# ============================================================
+# ---
 # QUERY TYPE CLASSIFIER (ML-based)
 # Replaces regex patterns in query_type_classifier.py
-# ============================================================
+# ---
 
 QUERY_TYPE_MODEL_DIR = Path(__file__).parent.parent / "models" / "query_type"
 QUERY_TYPE_TRAINING_PATH = Path(__file__).parent.parent / "data" / "training" / "query_type.jsonl"

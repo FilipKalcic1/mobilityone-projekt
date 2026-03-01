@@ -5,9 +5,9 @@ This script analyzes current bottlenecks and provides recommendations
 for handling 1000+ concurrent users.
 """
 
-# =============================================================================
+# ---
 # CURRENT ARCHITECTURE ANALYSIS
-# =============================================================================
+# ---
 
 CURRENT_CONFIG = {
     "worker": {
@@ -26,9 +26,9 @@ CURRENT_CONFIG = {
     }
 }
 
-# =============================================================================
+# ---
 # BOTTLENECK ANALYSIS
-# =============================================================================
+# ---
 
 BOTTLENECKS = """
 1. AZURE OPENAI TPM (Tokens Per Minute)
@@ -77,9 +77,9 @@ BOTTLENECKS = """
    - Increase max_connections in PostgreSQL
 """
 
-# =============================================================================
+# ---
 # SCALABILITY RECOMMENDATIONS
-# =============================================================================
+# ---
 
 RECOMMENDATIONS = """
 ## For 1000+ Users:
@@ -150,9 +150,9 @@ RECOMMENDATIONS = """
 ⚠️ Azure TPM may be limiting factor
 """
 
-# =============================================================================
+# ---
 # PERFORMANCE METRICS
-# =============================================================================
+# ---
 
 def calculate_capacity():
     """Calculate theoretical capacity."""

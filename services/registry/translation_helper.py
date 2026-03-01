@@ -1,6 +1,5 @@
 """
 Translation Helper - Runtime fallback for unmapped terms.
-Version: 1.0
 
 Provides fallback translation mechanisms when hardcoded dictionaries
 don't have a mapping for a term.

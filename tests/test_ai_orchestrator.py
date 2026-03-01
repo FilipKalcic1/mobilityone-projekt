@@ -6,7 +6,7 @@ Tests AIOrchestrator class:
 - analyze (main method, parses OpenAI response: text, tool_call, error)
 - _count_tokens (fallback and tiktoken paths)
 - _apply_smart_history (sliding window, summarization)
-- _apply_token_budgeting (trimming, high confidence mode, forced tool)
+- _apply_token_budgeting (trimming by MAX_TOOLS_FOR_LLM)
 - _calculate_backoff (exponential backoff with jitter)
 - _handle_rate_limit / _handle_timeout (retry logic)
 - get_token_stats / get_retry_status
@@ -33,7 +33,6 @@ def _make_mock_settings():
     s.AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-4"
     s.AI_TEMPERATURE = 0.2
     s.AI_MAX_TOKENS = 1500
-    s.ACTION_THRESHOLD = 1.1
     s.MAX_TOOLS_FOR_LLM = 25
     return s
 
@@ -231,8 +230,8 @@ class TestAnalyze:
         assert orch._total_requests == 1
 
     @pytest.mark.asyncio
-    async def test_analyze_forced_tool_in_call_args(self):
-        """When forced_tool is provided and exists in tools, tool_choice is set."""
+    async def test_analyze_with_tools_uses_auto_tool_choice(self):
+        """When tools are provided, tool_choice is set to auto."""
         orch = _make_orchestrator()
         resp = _make_openai_tool_response(tool_name="get_Vehicles")
         orch.client.chat.completions.create = AsyncMock(return_value=resp)
@@ -241,27 +240,6 @@ class TestAnalyze:
         await orch.analyze(
             messages=[{"role": "user", "content": "test"}],
             tools=tools,
-            forced_tool="get_Vehicles",
-        )
-
-        call_kwargs = orch.client.chat.completions.create.call_args[1]
-        assert call_kwargs["tool_choice"] == {
-            "type": "function",
-            "function": {"name": "get_Vehicles"},
-        }
-
-    @pytest.mark.asyncio
-    async def test_analyze_forced_tool_not_in_tools_falls_back_to_auto(self):
-        """When forced_tool is NOT in tools list, fall back to auto."""
-        orch = _make_orchestrator()
-        resp = _make_openai_text_response()
-        orch.client.chat.completions.create = AsyncMock(return_value=resp)
-
-        tools = [{"type": "function", "function": {"name": "get_Other", "parameters": {}}}]
-        await orch.analyze(
-            messages=[{"role": "user", "content": "test"}],
-            tools=tools,
-            forced_tool="nonexistent_tool",
         )
 
         call_kwargs = orch.client.chat.completions.create.call_args[1]
@@ -675,16 +653,12 @@ class TestApplyTokenBudgeting:
         result = orch._apply_token_budgeting(tools, scores)
         assert result == tools
 
-    def test_high_confidence_mode_returns_best_plus_alternatives(self):
-        """Score >= SINGLE_TOOL_THRESHOLD triggers high-confidence mode."""
+    def test_small_list_with_scores_returns_unchanged(self):
+        """Tools within MAX_TOOLS_FOR_LLM are returned unchanged."""
         orch = _make_orchestrator()
-        # SINGLE_TOOL_THRESHOLD = 1.1 by default in the module
-        # We need to patch it to allow a score of e.g. 1.15 to trigger
-        # Actually the default SINGLE_TOOL_THRESHOLD is 1.1, so score must be >= 1.1
-        # Let's create 6 tools with best score of 1.15
         tools = [{"type": "function", "function": {"name": f"t{i}"}} for i in range(6)]
         scores = [
-            {"name": "t0", "score": 1.15},
+            {"name": "t0", "score": 0.95},
             {"name": "t1", "score": 0.9},
             {"name": "t2", "score": 0.8},
             {"name": "t3", "score": 0.7},
@@ -692,29 +666,7 @@ class TestApplyTokenBudgeting:
             {"name": "t5", "score": 0.5},
         ]
         result = orch._apply_token_budgeting(tools, scores)
-        # High confidence: best + MIN_TOOLS_FOR_LLM-1 = 1 + 4 = 5 tools
-        assert len(result) == 5
-        assert result[0]["function"]["name"] == "t0"
-
-    def test_forced_tool_stays_in_trimmed_list(self):
-        """Forced tool is kept even if it would fall outside the trim range."""
-        orch = _make_orchestrator()
-        # Create 30 tools, forced_tool is the last one
-        tools = [{"type": "function", "function": {"name": f"t{i}"}} for i in range(30)]
-        scores = [{"name": f"t{i}", "score": 0.9 - i * 0.01} for i in range(30)]
-        result = orch._apply_token_budgeting(tools, scores, forced_tool="t29")
-        # t29 should be included
-        names = [t["function"]["name"] for t in result]
-        assert "t29" in names
-        assert len(result) == 25  # MAX_TOOLS_FOR_LLM
-
-    def test_forced_tool_not_found_still_returns(self):
-        """forced_tool not in tools list doesn't crash."""
-        orch = _make_orchestrator()
-        tools = [{"type": "function", "function": {"name": "t0"}}]
-        scores = [{"name": "t0", "score": 0.5}]
-        result = orch._apply_token_budgeting(tools, scores, forced_tool="nonexistent")
-        assert result == tools
+        assert len(result) == 6
 
 
 # ============================================================================

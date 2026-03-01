@@ -1,6 +1,5 @@
 """
 Cache Manager - Persistent caching for tool registry.
-Version: 1.0
 
 Single responsibility: Load and save tool data to .cache/ directory.
 """
@@ -17,7 +16,7 @@ from services.tool_contracts import UnifiedToolDefinition, DependencyGraph
 logger = logging.getLogger(__name__)
 
 # Cache version - increment when tool_categories.json or other config changes require cache rebuild
-CACHE_VERSION = "2.2"  # v2.2: FORCE rebuild with enhanced booking descriptions
+CACHE_VERSION = "2.2"  # FORCE rebuild with enhanced booking descriptions
 
 # Cache file paths
 CACHE_DIR = Path.cwd() / ".cache"

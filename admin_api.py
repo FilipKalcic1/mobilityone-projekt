@@ -1,6 +1,5 @@
 """
 Admin API - DATABASE-BACKED, Physically Isolated from Bot API
-Version: 2.3 - Enterprise Security + Database + Drift Detection + Cost Tracking
 
 SIGURNOSNA ARHITEKTURA:
 - Ovaj API radi na ZASEBNOM PORTU (8080)
@@ -70,9 +69,9 @@ ADMIN_REQUESTS = Counter(
 )
 HALLUCINATIONS_PENDING = Gauge('hallucinations_pending', 'Pending hallucination reviews')
 
-# =============================================================================
+# ---
 # LIFESPAN (Database initialization)
-# =============================================================================
+# ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -130,9 +129,9 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-# =============================================================================
+# ---
 # APP CONFIGURATION
-# =============================================================================
+# ---
 
 app = FastAPI(
     title="MobilityOne Admin API",
@@ -157,9 +156,9 @@ app.add_middleware(
     allow_headers=["X-Admin-Token", "Content-Type"],
 )
 
-# =============================================================================
+# ---
 # SECURITY
-# =============================================================================
+# ---
 
 import ipaddress
 
@@ -220,9 +219,9 @@ async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
     return admin_id
 
 
-# =============================================================================
+# ---
 # RATE LIMITING
-# =============================================================================
+# ---
 
 class RedisRateLimiter:
     """Redis-based rate limiter for production."""
@@ -325,9 +324,9 @@ async def check_rate_limit(
     return admin_id
 
 
-# =============================================================================
+# ---
 # DATABASE DEPENDENCY
-# =============================================================================
+# ---
 
 async def get_db() -> AsyncSession:
     """Get database session."""
@@ -345,9 +344,9 @@ async def get_admin_service(
     return AdminReviewService(db)
 
 
-# =============================================================================
+# ---
 # SCHEMAS
-# =============================================================================
+# ---
 
 class ReviewUpdateSchema(BaseModel):
     """Schema for marking hallucination as reviewed."""
@@ -406,9 +405,9 @@ class StatisticsResponse(BaseModel):
     category_breakdown: Dict[str, int]
 
 
-# =============================================================================
+# ---
 # API ENDPOINTS
-# =============================================================================
+# ---
 
 @app.get("/health")
 async def health_check(request: Request):
@@ -901,9 +900,9 @@ async def get_drift_status(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-# =============================================================================
+# ---
 # FEEDBACK ANALYSIS ENDPOINTS
-# =============================================================================
+# ---
 
 @app.get(
     "/admin/feedback/analyze",
@@ -983,7 +982,7 @@ async def analyze_feedback_comprehensive(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Comprehensive feedback analysis (v2.0).
+    Comprehensive feedback analysis.
 
     This endpoint provides:
     1. Dictionary gap analysis (missing Croatian terms)
@@ -1148,9 +1147,9 @@ async def get_quality_trend(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# =============================================================================
+# ---
 # FEEDBACK LEARNING SERVICE ENDPOINTS
-# =============================================================================
+# ---
 
 @app.post(
     "/admin/learning/run-cycle",
@@ -1288,9 +1287,9 @@ async def clear_learned_boosts(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# =============================================================================
+# ---
 # MAIN
-# =============================================================================
+# ---
 
 if __name__ == "__main__":
     import uvicorn

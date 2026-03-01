@@ -1,6 +1,5 @@
 """
 Feedback Learning Service - Complete self-improving feedback loop.
-Version: 1.0
 
 This service closes the feedback loop by:
 1. Learning from hallucination corrections (QueryPatternLearner)

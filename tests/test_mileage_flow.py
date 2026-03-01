@@ -1,6 +1,5 @@
 """
 Test Mileage Input Flow End-to-End
-Version: 1.0
 
 Simulira mileage input flow kroz MessageEngine:
 1. Korisnik: "Unesi kilometražu 16500"

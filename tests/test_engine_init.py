@@ -15,7 +15,6 @@ def _mock_settings():
     s.AZURE_OPENAI_API_VERSION = "2024-02-15"
     s.AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-4"
     s.AZURE_OPENAI_EMBEDDING_DEPLOYMENT = "text-embedding"
-    s.ACTION_THRESHOLD = 1.0  # disabled by default
     s.RAG_REFRESH_INTERVAL_HOURS = 6
     s.RAG_LOCK_TTL_SECONDS = 600
     return s

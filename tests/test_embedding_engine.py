@@ -60,13 +60,13 @@ class TestGeneratePurpose:
     def test_vehicle_context(self, engine):
         params = {"VehicleId": _param("VehicleId")}
         purpose = engine._generate_purpose("GET", params, [])
-        # v3.0: Uses genitive form "vozila" (za vozila)
+        # Uses genitive form "vozila" (za vozila)
         assert "vozil" in purpose.lower()  # Matches vozilo, vozila
 
     def test_person_context(self, engine):
         params = {"PersonId": _param("PersonId")}
         purpose = engine._generate_purpose("GET", params, [])
-        # v3.0: Maps PersonId to osoba (not korisnik)
+        # Maps PersonId to osoba (not korisnik)
         assert "osob" in purpose.lower()  # Matches osoba, osobe
 
     def test_mileage_output(self, engine):
@@ -79,7 +79,7 @@ class TestGeneratePurpose:
 
     def test_expiration_output(self, engine):
         purpose = engine._generate_purpose("GET", {}, ["ExpirationDate"])
-        # v3.0: ExpirationDate maps to "datum isteka"
+        # ExpirationDate maps to "datum isteka"
         assert "datum isteka" in purpose
 
     def test_status_output(self, engine):
@@ -101,7 +101,7 @@ class TestGeneratePurpose:
     def test_booking_context(self, engine):
         params = {"BookingId": _param("BookingId")}
         purpose = engine._generate_purpose("GET", params, [])
-        # v3.0: Uses genitive form "rezervacije" (za rezervacije)
+        # Uses genitive form "rezervacije" (za rezervacije)
         assert "rezervacij" in purpose.lower()  # Matches rezervacija, rezervacije
 
     def test_name_output(self, engine):

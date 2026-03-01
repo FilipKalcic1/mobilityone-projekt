@@ -1,6 +1,5 @@
 """
 Hallucination Repository - Database persistence for feedback loop.
-Version: 1.1 (FIXED)
 
 Handles CRUD operations for HallucinationReport in PostgreSQL.
 Separates DB logic from business logic in ErrorLearningService.

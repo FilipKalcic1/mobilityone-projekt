@@ -1,6 +1,5 @@
 """
 Executor with Fallback - Robust tool execution with retry and alternatives.
-Version: 1.0
 
 Single responsibility: Execute tools with automatic retry, parameter fixing,
 and fallback to alternative tools when primary fails.
@@ -381,7 +380,7 @@ class ExecutorWithFallback:
 
     def _get_from_context(self, param_name: str, user_context: Dict[str, Any]) -> Optional[Any]:
         """Get parameter value from user context."""
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         param_lower = param_name.lower()
 
@@ -407,7 +406,7 @@ class ExecutorWithFallback:
         user_context: Dict[str, Any]
     ) -> Optional[str]:
         """Try to fix VehicleId parameter."""
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         if ctx.vehicle_id:
             return ctx.vehicle_id
@@ -432,7 +431,7 @@ class ExecutorWithFallback:
         user_context: Dict[str, Any]
     ) -> Optional[str]:
         """Try to fix PersonId parameter."""
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         return UserContextManager(user_context).person_id
 
     async def _fix_datetime(

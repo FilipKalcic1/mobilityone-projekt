@@ -1,6 +1,5 @@
 """
 Conflict Resolution Service
-Version: 1.1 - Optimistic Locking for Admin Operations (FIXED)
 
 PROBLEM SOLVED:
 - Two admins edit same hallucination report simultaneously
@@ -170,9 +169,9 @@ class ConflictResolver:
         else:
             logger.info("ConflictResolver initialized with Redis")
 
-    # =========================================================================
+    # ---
     # EDIT LOCKS
-    # =========================================================================
+    # ---
 
     async def acquire_edit_lock(
         self,
@@ -350,9 +349,9 @@ class ConflictResolver:
 
         return cleaned
 
-    # =========================================================================
+    # ---
     # VERSION CONTROL
-    # =========================================================================
+    # ---
 
     async def _get_version(self, record_id: str) -> int:
         """
@@ -396,9 +395,9 @@ class ConflictResolver:
         new_version = await self.redis.incr(version_key)
         return int(new_version)
 
-    # =========================================================================
+    # ---
     # CONFLICT DETECTION & RESOLUTION
-    # =========================================================================
+    # ---
 
     async def save_with_conflict_check(
         self,
@@ -583,9 +582,9 @@ class ConflictResolver:
             ip_address
         )
 
-    # =========================================================================
+    # ---
     # CHANGE HISTORY
-    # =========================================================================
+    # ---
 
     async def _record_change_history(
         self,
@@ -925,9 +924,9 @@ class ConflictResolver:
             )
             await self.db.commit()
 
-    # =========================================================================
+    # ---
     # ACTIVE EDITORS
-    # =========================================================================
+    # ---
 
     async def get_active_editors(self, record_id: str) -> List[Dict]:
         """

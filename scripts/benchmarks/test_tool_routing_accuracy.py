@@ -1,6 +1,5 @@
 """
 Tool Routing Accuracy Test
-Version: 2.0
 
 Tests if the routing algorithm correctly identifies tools based on example queries.
 
@@ -154,7 +153,7 @@ class ToolRoutingTester:
 
     async def search_faiss(self, query: str, top_k: int = 5) -> List[tuple]:
         """Search using UnifiedSearch (includes all boosts)."""
-        # v3.1: Use UnifiedSearch instead of direct FAISS for proper boost application
+        # Use UnifiedSearch instead of direct FAISS for proper boost application
         try:
             from services.unified_search import UnifiedSearch
             if not hasattr(self, '_unified_search'):

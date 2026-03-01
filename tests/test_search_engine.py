@@ -1,6 +1,5 @@
 """
 Comprehensive tests for services/registry/search_engine.py
-Version: 1.0
 
 Tests cover:
 - _load_json_file (caching, file not found, corrupt JSON)

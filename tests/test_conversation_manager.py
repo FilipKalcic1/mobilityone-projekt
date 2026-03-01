@@ -1,6 +1,5 @@
 """
 Tests for ConversationManager
-Version: 11.0
 
 Tests conversation state management and Redis persistence.
 """

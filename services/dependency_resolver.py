@@ -1,6 +1,5 @@
 """
 Dependency Resolver - Automatic Tool Chaining Engine
-Version: 2.0
 
 KRITIČNA KOMPONENTA za 10/10 ocjenu sustava.
 
@@ -8,7 +7,7 @@ Rješava probleme:
 1. Korisnik ne zna UUID-ove (VehicleId, PersonId, etc.)
 2. Korisnik daje human-readable vrijednosti (registracija, ime)
 3. Sustav mora automatski resolvati dependencies
-4. NEW v2.0: Entity Resolution za tekstualne reference ("Vozilo 1", "moje vozilo")
+4. Entity Resolution za tekstualne reference ("Vozilo 1", "moje vozilo")
 
 Primjer 1 (registracija):
     Korisnik: "Rezerviraj vozilo ZG-1234-AB za sutra"
@@ -47,7 +46,7 @@ class ResolutionResult:
     # NEW: User-facing feedback about what was resolved
     # Used for confirmations like "Razumijem: Golf (ZG-123-AB)"
     feedback: Optional[Dict[str, Any]] = None
-    # NEW v2.1: Flag to indicate user selection is needed (e.g., no default vehicle)
+    # Flag to indicate user selection is needed (e.g., no default vehicle)
     needs_user_selection: bool = False
 
 
@@ -56,7 +55,7 @@ class EntityReference:
     """
     Detected entity reference from user text.
 
-    NEW v2.0: Enables "Vozilo 1" → UUID resolution.
+    Enables "Vozilo 1" → UUID resolution.
     """
     entity_type: str  # "vehicle", "person", "location"
     reference_type: str  # "ordinal", "possessive", "name", "pattern"
@@ -74,15 +73,15 @@ class DependencyResolver:
     - Automatic provider tool selection
     - Filter query construction
     - Caching of resolved values
-    - NEW v2.0: Entity Resolution for textual references
+    - Entity Resolution for textual references
 
     KRITIČNO: Ovo omogućava da korisnik kaže "ZG-1234-AB"
               ili "Vozilo 1" ili "moje vozilo" umjesto UUID-a!
     """
 
-    # ═══════════════════════════════════════════════════════════════
-    # ENTITY REFERENCE PATTERNS (NEW v2.0)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
+    # ENTITY REFERENCE PATTERNS
+    # ---
 
     # Ordinal patterns: "Vozilo 1", "Vozilo 2", "Vehicle 1"
     ORDINAL_PATTERNS: List[Tuple[str, str]] = [
@@ -119,24 +118,11 @@ class DependencyResolver:
         # could match unintended queries like "Koje vozilo je dostupno?"
     ]
 
-    # NOTE: Vehicle name patterns are intentionally REMOVED
-    #
-    # RAZLOG: Hardkodirana lista brendova/modela je anti-pattern jer:
-    # 1. Ne može pokriti sve brendove (Tesla, Rimac, Nio, BYD, etc.)
-    # 2. Ne ažurira se automatski
-    # 3. Može dati false positives (npr. "Golf" kao sport)
-    #
-    # RJEŠENJE: Umjesto hardkodirane liste, sustav koristi:
-    # 1. Ordinal reference ("Vozilo 1") - funkcionira za SVA vozila
-    # 2. Possessive reference ("moje vozilo") - funkcionira za SVA vozila
-    # 3. Fuzzy match u _fuzzy_match_vehicle() - pretražuje STVARNE podatke
-    #
-    # Ako korisnik kaže "Golf", sustav će:
-    # - NE prepoznati kao entity reference (nema hardkodiranu listu)
-    # - ALI _fuzzy_match_vehicle() će pronaći vozilo s "Golf" u imenu
-    #   kada se pozove preko ordinal/possessive resolutionu
-    #
-    # Ovo je ROBUSNIJI pristup jer radi s bilo kojim vozilom u bazi.
+    # Vehicle name patterns are intentionally empty.
+    # A hardcoded brand/model list is fragile (can't cover all brands, doesn't
+    # auto-update, causes false positives like "Golf" the sport).
+    # Instead we rely on: ordinal references ("Vozilo 1"), possessive references
+    # ("moje vozilo"), and _fuzzy_match_vehicle() which searches actual data.
     VEHICLE_NAME_PATTERNS: List[str] = []  # Intentionally empty - use fuzzy match instead
 
     # Patterns for recognizing human-readable values
@@ -380,7 +366,7 @@ class DependencyResolver:
                 # Try as generic search/name filter
                 provider_params = {'Filter': f"Name(~){user_value}"}
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         person_id = ctx.person_id
         if person_id:
@@ -531,9 +517,9 @@ class DependencyResolver:
         self._resolution_cache.clear()
         logger.info("Resolution cache cleared")
 
-    # ═══════════════════════════════════════════════════════════════
-    # ENTITY RESOLUTION (NEW v2.0)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
+    # ENTITY RESOLUTION
+    # ---
 
     def detect_entity_reference(
         self,
@@ -543,7 +529,7 @@ class DependencyResolver:
         """
         Detect entity reference in user text.
 
-        NEW v2.0: Prepoznaje tekstualne reference poput:
+        Prepoznaje tekstualne reference poput:
         - "Vozilo 1" → ordinal (index 0)
         - "moje vozilo" → possessive (user's default)
         - "Golf" → name match
@@ -642,7 +628,7 @@ class DependencyResolver:
         """
         Resolve entity reference to actual UUID.
 
-        NEW v2.0: Koristi MasterData ili user_context za resolvanje.
+        Koristi MasterData ili user_context za resolvanje.
 
         Flow:
         1. Ako je "possessive" ("moje vozilo"):
@@ -665,7 +651,7 @@ class DependencyResolver:
 
         # STRATEGY 1: Possessive - use user's default vehicle
         if reference.is_possessive or reference.reference_type == "possessive":
-            # v22.0: Use UserContextManager for validated vehicle access
+            # Use UserContextManager for validated vehicle access
             ctx = UserContextManager(user_context)
             vehicle = ctx.vehicle
 
@@ -759,7 +745,7 @@ class DependencyResolver:
                 error_message=f"Alat {provider_tool_id} nije dostupan"
             )
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         provider_params = {}
         ctx = UserContextManager(user_context)
         person_id = ctx.person_id
@@ -909,7 +895,7 @@ class DependencyResolver:
         # Build filter for name search
         search_value = reference.value.strip()
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         person_id = ctx.person_id
 

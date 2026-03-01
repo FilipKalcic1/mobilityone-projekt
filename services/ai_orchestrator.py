@@ -27,11 +27,7 @@ except ImportError:
 
 
 # Token budgeting constants
-# v16.0: LLM DECISION MODE - Show more tools, let LLM decide
-# REMOVED single-tool mode - LLM is smarter than embeddings
-SINGLE_TOOL_THRESHOLD = 1.1  # > 1.0 = disabled, never use single-tool mode
 MAX_TOOLS_FOR_LLM = getattr(settings, 'MAX_TOOLS_FOR_LLM', 25)
-# Always show at least 5 tools - give LLM real choices
 MIN_TOOLS_FOR_LLM = 5
 MAX_HISTORY_MESSAGES = 20
 MAX_TOKEN_LIMIT = 8000
@@ -56,9 +52,9 @@ class AIOrchestrator:
     - Tool calling with forced execution
     - Parameter extraction
     - Response generation
-    - NEW v12.0: Token budgeting & tracking
-    - NEW v12.0: Exponential backoff for rate limits
-    - NEW v12.0: Smart history management
+    - Token budgeting & tracking
+    - Exponential backoff for rate limits
+    - Smart history management
     """
 
     # Retry configuration
@@ -75,7 +71,7 @@ class AIOrchestrator:
 
         self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
 
-        # NEW v12.0: Token tracking
+        # Token tracking
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
         self._total_requests = 0
@@ -114,17 +110,15 @@ class AIOrchestrator:
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
         system_prompt: Optional[str] = None,
-        forced_tool: Optional[str] = None,
         tool_scores: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
 
-        # NEW v12.0: Apply Smart History (sliding window)
+        # Apply Smart History (sliding window)
         filtered_conversation = self._apply_smart_history(messages)
 
         # Build final message list with system prompt first
         final_messages = []
 
-        # _apply_smart_history may already include a system message
         has_system_in_filtered = (
             filtered_conversation and
             len(filtered_conversation) > 0 and
@@ -136,8 +130,7 @@ class AIOrchestrator:
 
         final_messages.extend(filtered_conversation)
 
-        # NEW v12.0: Apply Token Budgeting (trim tools if top match is excellent)
-        trimmed_tools = self._apply_token_budgeting(tools, tool_scores, forced_tool)
+        trimmed_tools = self._apply_token_budgeting(tools, tool_scores)
 
         call_args = {
             "model": self.model,
@@ -148,29 +141,9 @@ class AIOrchestrator:
 
         if trimmed_tools:
             call_args["tools"] = trimmed_tools
+            call_args["tool_choice"] = "auto"
 
-            # ACTION-FIRST PROTOCOL: Force specific tool if similarity >= ACTION_THRESHOLD
-            if forced_tool:
-                # Check if forced_tool exists in trimmed_tools
-                tool_names_in_list = [t.get("function", {}).get("name") for t in trimmed_tools]
-
-                if forced_tool in tool_names_in_list:
-                    call_args["tool_choice"] = {
-                        "type": "function",
-                        "function": {"name": forced_tool}
-                    }
-                    logger.info(f"Forced tool call: {forced_tool} (similarity >= {settings.ACTION_THRESHOLD})")
-                else:
-                    # Forced tool not in trimmed list - fall back to auto
-                    logger.warning(
-                        f"Forced tool '{forced_tool}' not in trimmed tools list "
-                        f"({tool_names_in_list}). Falling back to 'auto' selection."
-                    )
-                    call_args["tool_choice"] = "auto"
-            else:
-                call_args["tool_choice"] = "auto"
-
-        # NEW v12.0: Retry with exponential backoff + circuit breaker
+        # Retry with exponential backoff + circuit breaker
         last_error = None
 
         for attempt in range(self.MAX_RETRIES):
@@ -348,25 +321,13 @@ class AIOrchestrator:
         self,
         tools: Optional[List[Dict]],
         tool_scores: Optional[List[Dict]],
-        forced_tool: Optional[str] = None
     ) -> Optional[List[Dict]]:
         """
-        Apply token budgeting - trim tools if top match is excellent.
-
-        NEW v12.0: If best tool score >= SINGLE_TOOL_THRESHOLD (0.98),
-        send only that tool to LLM. This saves ~80% of token cost for tool descriptions.
-
-        don't apply SINGLE TOOL MODE to ensure forced_tool is in the list.
-
-        CRITICAL REQUIREMENTS:
-        1. tools and tool_scores MUST be in the SAME ORDER (sorted by score DESC)
-        2. tool_scores MUST contain 'name' and 'score' fields
-        3. tools MUST be OpenAI tool schemas with structure: {"type": "function", "function": {"name": "..."}}
+        Apply token budgeting - trim tool list to MAX_TOOLS_FOR_LLM.
 
         Args:
             tools: List of tool schemas (sorted by score DESC)
             tool_scores: List of {name, score, ...} dicts (sorted by score DESC)
-            forced_tool: Optional tool name that will be forced in execution
 
         Returns:
             Trimmed list of tools (maintains sort order)
@@ -375,92 +336,20 @@ class AIOrchestrator:
             return tools
 
         if not tool_scores:
-            # No scores, apply simple limit
             if len(tools) > MAX_TOOLS_FOR_LLM:
                 logger.info(
-                    f" Token budget: Trimming {len(tools)} → {MAX_TOOLS_FOR_LLM} tools"
+                    f"Token budget: Trimming {len(tools)} -> {MAX_TOOLS_FOR_LLM} tools"
                 )
                 return tools[:MAX_TOOLS_FOR_LLM]
             return tools
 
-        # VALIDATION: Ensure tools and tool_scores are aligned
         if len(tools) != len(tool_scores):
             logger.error(
                 f"Token budgeting: tools count ({len(tools)}) != "
                 f"tool_scores count ({len(tool_scores)}). "
                 f"Returning tools without budgeting to avoid mismatch."
             )
-            return tools  # STOP processing - don't continue with misaligned data
-
-        # Find best score (tool_scores should already be sorted DESC by message_engine)
-        best = tool_scores[0] if tool_scores else None
-
-        if best and best.get("score", 0) >= SINGLE_TOOL_THRESHOLD:
-            best_name = best.get("name")
-
-            if forced_tool and forced_tool != best_name:
-                logger.info(
-                    f" Token budget: Skipping HIGH CONFIDENCE MODE - forced_tool '{forced_tool}' "
-                    f"differs from best_match '{best_name}' (score={best.get('score'):.3f})"
-                )
-                # Don't apply HIGH CONFIDENCE MODE - let it fall through to normal trimming
-            else:
-                # FIXED: Even with excellent match, include MIN_TOOLS_FOR_LLM alternatives
-                # This prevents blind spots when embedding scoring is slightly wrong
-                # The LLM can correct if the top match isn't actually the best choice
-                top_tools = []
-                best_tool = None
-
-                for t in tools:
-                    tool_name = t.get("function", {}).get("name")
-                    if tool_name == best_name:
-                        best_tool = t
-                    elif len(top_tools) < MIN_TOOLS_FOR_LLM - 1:  # Reserve 1 slot for best
-                        top_tools.append(t)
-
-                if best_tool:
-                    # Put best tool first, then alternatives
-                    result_tools = [best_tool] + top_tools
-                    logger.info(
-                        f" Token budget: HIGH CONFIDENCE MODE - "
-                        f"{best_name} (score={best.get('score'):.3f} >= {SINGLE_TOOL_THRESHOLD}) "
-                        f"+ {len(top_tools)} alternatives"
-                    )
-                    return result_tools
-                else:
-                    logger.error(
-                        f" Token budgeting: Best tool '{best_name}' not found in tools list! "
-                        f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
-                    )
-
-        # Apply limit (tools already sorted by score DESC)
-        if forced_tool:
-            # Check if forced_tool is in the list
-            tool_names = [t.get("function", {}).get("name") for t in tools]
-
-            if forced_tool in tool_names:
-                forced_tool_obj = next(
-                    (t for t in tools if t.get("function", {}).get("name") == forced_tool),
-                    None
-                )
-
-                if forced_tool_obj:
-                    # Ensure forced_tool is in the trimmed list
-                    trimmed = tools[:MAX_TOOLS_FOR_LLM]
-
-                    if forced_tool_obj not in trimmed:
-                        # Replace last tool with forced_tool to ensure it's included
-                        logger.info(
-                            f" Token budget: Adding forced_tool '{forced_tool}' to trimmed list"
-                        )
-                        trimmed = trimmed[:-1] + [forced_tool_obj]
-
-                    return trimmed
-            else:
-                logger.warning(
-                    f"Token budgeting: forced_tool '{forced_tool}' not found in tools list. "
-                    f"Available: {tool_names}"
-                )
+            return tools
 
         if len(tools) > MAX_TOOLS_FOR_LLM:
             logger.info(
@@ -477,41 +366,39 @@ class AIOrchestrator:
         messages: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
 
-        # 1. IZDVAJANJE SYSTEM PROMPTA
-
+        # 1. Extract system prompt
         system_message = None
         if messages and messages[0]["role"] == "system":
             system_message = messages[0]
-            conversation = messages[1:] # Ostatak razgovora
+            conversation = messages[1:]
         else:
             conversation = messages
 
-        # 2. PROVJERA TOKENA (Preciznije od broja poruka)
-
+        # 2. Token check
         current_tokens = self._count_tokens(messages)
-        
-        # Ako smo ispod limita, ne diraj ništa
+
+        # Under the limit, no trimming needed
         if current_tokens <= MAX_TOKEN_LIMIT:
             return messages
 
-        # 3. REZANJE KONTEKSTA
+        # 3. Trim context
         split_index = max(0, len(conversation) - MAX_HISTORY_MESSAGES)
         
         to_summarize = conversation[:split_index]
         recent_history = conversation[split_index:]
 
-        # 4. SAŽIMANJE (Bolje od samih entiteta)
+        # 4. SUMMARIZATION (better than entities alone)
         if to_summarize:
 
             summary_text = self._summarize_conversation(to_summarize)
             
-            # Ubacujemo sažetak KAO SYSTEM poruku, ali ODMAH NAKON glavnog system prompta
+            # Insert summary as a SYSTEM message right after the main system prompt
             context_message = {
                 "role": "system", 
                 "content": f"Sažetak prethodnog razgovora: {summary_text}"
             }
             
-            # 5. REKONSTRUKCIJA
+            # 5. Reconstruct
             final_messages = []
             if system_message:
                 final_messages.append(system_message)
@@ -614,7 +501,6 @@ class AIOrchestrator:
 
         return ". ".join(summary_parts)
 
-    # TODO: Expose via /admin/token-stats endpoint for monitoring
     def get_token_stats(self) -> Dict[str, Any]:
         """Get token usage statistics."""
         return {
@@ -755,7 +641,6 @@ Vrati SAMO JSON, bez drugog teksta."""
         Returns:
             System prompt
         """
-        # v22.0: Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         name = ctx.display_name
         person_id = ctx.person_id or ""
@@ -766,40 +651,39 @@ Vrati SAMO JSON, bez drugog teksta."""
         prompt = f"""Ti si MobilityOne AI asistent za upravljanje voznim parkom.
         Komuniciraj na HRVATSKOM jeziku. Budi KONCIZAN i JASAN.
 
-        ═══════════════════════════════════════════════
+        ---
         KORISNIK
-        ═══════════════════════════════════════════════
+        ---
         - Ime: {name}
         - ID: {person_id[:12]}...
         - Datum: {today.strftime('%d.%m.%Y')} ({today.strftime('%A')})
         """
 
-        # v22.0: VehicleContext has .plate, .name, .mileage properties
         if vehicle and vehicle.plate:
             prompt += f"""- Vozilo: {vehicle.name or 'N/A'} ({vehicle.plate or 'N/A'})
         - Kilometraža: {vehicle.mileage or 'N/A'} km
         """
 
         prompt += """
-        ═══════════════════════════════════════════════
+        ---
         TVOJ POSAO
-        ═══════════════════════════════════════════════
+        ---
         Sustav automatski odabire pravi alat. Tvoj posao je:
         1. IZVUĆI parametre iz korisnikove poruke
         2. POZVATI alat s ispravnim parametrima
         3. FORMATIRATI odgovor korisniku
 
-        ═══════════════════════════════════════════════
+        ---
         PRAVILA ZA DATUME
-        ═══════════════════════════════════════════════
+        ---
         - "sutra" = sutrašnji datum
         - "danas" = današnji datum
         - ISO 8601 format: YYYY-MM-DDTHH:MM:SS
         - "od 9 do 17" = FromTime: ...T09:00:00, ToTime: ...T17:00:00
 
-        ═══════════════════════════════════════════════
+        ---
         KRITIČNO: ZABRANJENO IZMIŠLJANJE PODATAKA!
-        ═══════════════════════════════════════════════
+        ---
         NIKADA ne izmišljaj NIŠTA - SVE mora doći iz API-ja! 
 
         ZABRANJENO izmišljati:
@@ -831,9 +715,9 @@ Vrati SAMO JSON, bez drugog teksta."""
         - Ako API ne vrati polje "LeasingProvider" → reci "Nemam tu informaciju"
         - NIKADA ne izmišljaj naziv leasing kuće!
 
-        ═══════════════════════════════════════════════
+        ---
         REZERVACIJA VOZILA (BOOKING FLOW)
-        ═══════════════════════════════════════════════
+        ---
         Kada korisnik traži vozilo ili želi rezervirati:
 
         !!! KRITIČNO - ZABRANJENO IZMIŠLJANJE !!!
@@ -879,9 +763,9 @@ Vrati SAMO JSON, bez drugog teksta."""
 
         6. Potvrdi uspješnu rezervaciju ili javi grešku
 
-        ═══════════════════════════════════════════════
+        ---
         STIL
-        ═══════════════════════════════════════════════
+        ---
         - KRATKI odgovori na hrvatskom
         - SVE informacije MORAJU doći iz API odgovora!
         - NE izmišljaj podatke - koristi alate!
@@ -891,9 +775,9 @@ Vrati SAMO JSON, bez drugog teksta."""
 
         if flow_context and flow_context.get("current_flow"):
             prompt += f"""
-        ═══════════════════════════════════════════════
+        ---
         TRENUTNI TOK
-        ═══════════════════════════════════════════════
+        ---
         - Flow: {flow_context.get('current_flow')}
         - Stanje: {flow_context.get('state')}
         - Parametri: {flow_context.get('parameters', {})}

@@ -1,6 +1,5 @@
 """
 Chain Planner - Multi-step execution planning with fallback paths.
-Version: 1.0
 
 Single responsibility: Create execution plans with multiple paths
 and fallback strategies for complex queries.
@@ -195,7 +194,7 @@ class ChainPlanner:
         schema = tool.get("schema", {})
         required = schema.get("parameters", {}).get("required", [])
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
 
         for param in required:
@@ -230,7 +229,7 @@ class ChainPlanner:
 
     def _summarize_context(self, user_context: Dict[str, Any]) -> str:
         """Summarize user context for planner."""
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         parts = []
 

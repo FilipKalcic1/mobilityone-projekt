@@ -1,6 +1,5 @@
 """
 Quality Tracker - Tracks search quality metrics over time.
-Version: 1.0
 
 Tracks MRR, NDCG, and Hit@K metrics from EmbeddingEvaluator runs.
 Enables trend analysis and quality regression detection.

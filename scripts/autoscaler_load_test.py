@@ -1,6 +1,5 @@
 """
 Autoscaler Load & Stress Test Suite
-Version: 1.0 - Production Testing for 2026
 
 TESTS:
 1. Gradual Ramp-up: 100 req/s -> +100 every 5 min until limit
@@ -212,9 +211,9 @@ class LoadTestRunner:
             "events": len(self.metrics.scaling_events) if self.metrics else 0
         }
 
-    # =========================================================================
+    # ---
     # TEST 1: Gradual Ramp-up
-    # =========================================================================
+    # ---
     def test_gradual_rampup(self,
                             initial_rate: int = 100,
                             increment: int = 100,
@@ -286,9 +285,9 @@ class LoadTestRunner:
         # Final report
         self._report_results()
 
-    # =========================================================================
+    # ---
     # TEST 2: Burst/Spike Test
-    # =========================================================================
+    # ---
     def test_burst_spike(self,
                          total_messages: int = 5000,
                          duration_seconds: int = 10):
@@ -384,9 +383,9 @@ class LoadTestRunner:
         self._report_results()
         return result
 
-    # =========================================================================
+    # ---
     # TEST 3: Cooldown Test
-    # =========================================================================
+    # ---
     def test_cooldown(self,
                       warmup_messages: int = 2000,
                       cooldown_timeout: int = 600):
@@ -492,9 +491,9 @@ class LoadTestRunner:
         self._report_results()
         return result
 
-    # =========================================================================
+    # ---
     # TEST 4: Soak Test (Memory Leak Detection)
-    # =========================================================================
+    # ---
     def test_soak(self,
                   duration_hours: float = 8.0,
                   rate: int = 50):

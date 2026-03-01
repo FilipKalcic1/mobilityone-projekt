@@ -36,9 +36,9 @@ class TestCase:
 
 # Comprehensive test cases
 TEST_CASES = [
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VEHICLE INFO / MILEAGE READ (GET) - QueryRouter should catch these
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("koliko imam kilometara", "get_MasterData", "GET", "mileage_read"),
     TestCase("koja je moja kilometraža", "get_MasterData", "GET", "mileage_read"),
     TestCase("koliko km ima vozilo", "get_MasterData", "GET", "mileage_read"),
@@ -49,77 +49,77 @@ TEST_CASES = [
     TestCase("do kada vrijedi registracija", "get_MasterData", "GET", "vehicle_info"),
     TestCase("koja je lizing kuća", "get_MasterData", "GET", "vehicle_info"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # MILEAGE INPUT (POST) - QueryRouter should catch these
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("unesi kilometražu", "post_AddMileage", "POST", "mileage_input"),
     TestCase("upiši km", "post_AddMileage", "POST", "mileage_input"),
     TestCase("dodaj kilometre", "post_AddMileage", "POST", "mileage_input"),
     TestCase("prijavi kilometražu", "post_AddMileage", "POST", "mileage_input"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # BOOKINGS READ (GET) - QueryRouter should catch these
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("moje rezervacije", "get_VehicleCalendar", "GET", "bookings"),
     TestCase("pokaži moje bookinge", "get_VehicleCalendar", "GET", "bookings"),
     TestCase("kada imam auto", "get_VehicleCalendar", "GET", "bookings"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # AVAILABILITY (GET) - QueryRouter should catch these
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("slobodna vozila", "get_AvailableVehicles", "GET", "availability"),
     TestCase("koja vozila su dostupna", "get_AvailableVehicles", "GET", "availability"),
     TestCase("ima li slobodnih auta", "get_AvailableVehicles", "GET", "availability"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # BOOKING CREATE (POST) - QueryRouter triggers booking flow
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("rezerviraj vozilo", "get_AvailableVehicles", "POST", "booking_create"),
     TestCase("trebam auto", "get_AvailableVehicles", "POST", "booking_create"),
     TestCase("napravi rezervaciju", "get_AvailableVehicles", "POST", "booking_create"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # BOOKING CANCEL (DELETE) - QueryRouter should catch these
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("otkaži rezervaciju", "delete_VehicleCalendar_id", "DELETE", "booking_cancel"),
     TestCase("obriši booking", "delete_VehicleCalendar_id", "DELETE", "booking_cancel"),
     TestCase("ne trebam više auto", "delete_VehicleCalendar_id", "DELETE", "booking_cancel"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # CASE/DAMAGE CREATE (POST) - QueryRouter should catch these
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("prijavi štetu", "post_AddCase", "POST", "case_create"),
     TestCase("imam kvar na autu", "post_AddCase", "POST", "case_create"),
     TestCase("udario sam auto", "post_AddCase", "POST", "case_create"),
     TestCase("ogrebao sam vozilo", "post_AddCase", "POST", "case_create"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # CASES LIST (GET) - UnifiedSearch handles
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("prijavljene štete", "get_Cases", "GET", "cases_list"),
     TestCase("moje prijave", "get_Cases", "GET", "cases_list"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # EXPENSES (GET) - UnifiedSearch handles
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("troškovi", "get_Expenses", "GET", "expenses"),
     TestCase("pregled troškova", "get_Expenses", "GET", "expenses"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # TRIPS (GET) - UnifiedSearch handles
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("moja putovanja", "get_Trips", "GET", "trips"),
     TestCase("putni nalozi", "get_Trips", "GET", "trips"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # PERSON INFO (GET) - QueryRouter should catch some, UnifiedSearch others
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("moji podaci", "get_PersonData_personIdOrEmail", "GET", "person_info"),
     TestCase("tko sam ja", "get_PersonData_personIdOrEmail", "GET", "person_info"),
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # ENTITY LISTS (GET) - UnifiedSearch handles
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     TestCase("sva vozila", "get_Vehicles", "GET", "vehicle_list"),
     TestCase("lista vozila", "get_Vehicles", "GET", "vehicle_list"),
     TestCase("sve kompanije", "get_Companies", "GET", "companies"),

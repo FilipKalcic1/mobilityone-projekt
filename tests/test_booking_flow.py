@@ -1,6 +1,5 @@
 """
 Test Booking Flow End-to-End
-Version: 1.0
 
 Simulira cijeli booking flow kroz MessageEngine:
 1. Korisnik: "Trebam vozilo sutra od 8 do 17"

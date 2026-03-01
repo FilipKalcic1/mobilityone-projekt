@@ -1,6 +1,5 @@
 """
 MobilityOne WhatsApp Bot - FastAPI Application
-Version: 11.0
 
 Main entry point with automatic database initialization.
 """

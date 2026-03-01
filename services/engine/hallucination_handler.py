@@ -1,6 +1,5 @@
 """
 Hallucination Handler - Detects and records user feedback about wrong answers.
-Version: 1.0
 
 Extracted from engine/__init__.py for better modularity.
 """

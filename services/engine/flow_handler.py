@@ -1,6 +1,5 @@
 """
 Flow Handler - Multi-turn conversation flows.
-Version: 2.0
 
 Single responsibility: Handle selection, confirmation, gathering, and availability flows.
 
@@ -195,7 +194,7 @@ class FlowHandler:
         """
         Request confirmation for critical operation.
 
-        v2.0: Uses ConfirmationDialog for human-readable parameter display.
+        Uses ConfirmationDialog for human-readable parameter display.
         - Vehicle IDs shown as names with plates
         - Dates shown in Croatian format
         - Users can modify params with "Bilješka: tekst" syntax
@@ -323,7 +322,7 @@ class FlowHandler:
 
             return "Trenutno nema drugih dostupnih vozila."
 
-        # NEW v2.0: Check for parameter modifications
+        # Check for parameter modifications
         # Examples: "Bilješka: službeni put", "Od: 10:00", "Note: xyz"
         modification = self.confirmation_dialog.parse_modification(text)
         if modification:
@@ -387,7 +386,7 @@ class FlowHandler:
                 await conv_manager.reset()
                 return "Greska: Nedostaje vrijeme rezervacije. Pokusajte ponovno."
 
-            # v22.0: Use UserContextManager for validated access
+            # Use UserContextManager for validated access
             ctx = UserContextManager(user_context)
             params = {
                 "AssignedToId": ctx.person_id,
@@ -497,7 +496,7 @@ class FlowHandler:
             translator = get_error_translator()
             return translator.get_user_message(error, tool_name)
 
-    # Semantički opisi parametara za AI extraction
+    # Semantic parameter descriptions for AI extraction
     PARAM_DESCRIPTIONS = {
         # Mileage parameters
         "Value": "Kilometraža vozila u km (npr. 14000, 50000)",
@@ -538,7 +537,7 @@ class FlowHandler:
             param = missing[0]
             context = f"Bot je pitao korisnika za '{param}'. Korisnikov odgovor je vjerojatno vrijednost za taj parametar."
 
-        # Dodaj semantički kontekst za svaki parametar
+        # Add semantic context for each parameter
         extracted = await self.ai.extract_parameters(
             text,
             [{"name": p, "type": "string", "description": self.PARAM_DESCRIPTIONS.get(p, p)} for p in missing],
@@ -547,18 +546,17 @@ class FlowHandler:
 
         logger.info(f"GATHERING: extracted={extracted}")
 
-        # FALLBACK: Ako extrakcija nije uspjela i tražimo samo jedan parametar,
-        # koristi cijeli tekst kao vrijednost (smart assumption)
+        # FALLBACK: If extraction failed and we need only one parameter,
+        # use entire text as value (smart assumption)
         if len(missing) == 1 and not extracted.get(missing[0]):
             param = missing[0]
-            # Za vremenske parametre, pokušaj parsirati tekst
+            # For time parameters, try to parse the text
             if param.lower() in ['totime', 'fromtime', 'to', 'from']:
-                # Korisnik je vjerovatno dao vrijeme/datum
-                # Prihvati ga kao vrijednost
-                if text.strip() and len(text.strip()) < 50:  # Razumna duljina za datum
+                # User likely provided a time/date value
+                if text.strip() and len(text.strip()) < 50:
                     extracted[param] = text.strip()
                     logger.info(f"GATHERING FALLBACK: Using raw text '{text.strip()}' as {param}")
-            # Za Value (kilometraža), pokušaj parsirati broj
+            # For Value (mileage), try to parse the number
             elif param.lower() in ['value', 'mileage']:
                 import re
                 numbers = re.findall(r'\d+', text)
@@ -631,7 +629,7 @@ class FlowHandler:
         subject = params.get("Subject", "Prijava slučaja")
         description = params.get("Description") or params.get("Message", "")
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         vehicle = ctx.vehicle
         vehicle_name = vehicle.name if vehicle else ""

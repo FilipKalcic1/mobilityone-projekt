@@ -1,6 +1,5 @@
 """
 Tenant Service - Dynamic multi-tenant routing.
-Version: 1.0
 
 Manages tenant identification and routing for multi-tenant deployments.
 

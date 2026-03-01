@@ -1,6 +1,5 @@
 """
 Parameter Prompts
-Version: 1.0
 
 Centralized prompts for missing parameters.
 
@@ -16,9 +15,9 @@ Usage:
 
 from typing import Optional, Dict
 
-# =============================================================================
+# ---
 # PARAMETER PROMPTS - Croatian user-friendly messages
-# =============================================================================
+# ---
 
 PARAM_PROMPTS: Dict[str, str] = {
     # === TIME/DATE PARAMETERS ===
@@ -83,9 +82,9 @@ PARAM_PROMPTS: Dict[str, str] = {
 }
 
 
-# =============================================================================
+# ---
 # PARAMETER CATEGORIES
-# =============================================================================
+# ---
 
 CATEGORY_PROMPTS: Dict[str, str] = {
     "time": "Trebam informacije o vremenu.",

@@ -1,6 +1,5 @@
 """
 Redis Stress Test
-Version: 1.0
 
 Performance and load testing for Redis-dependent services.
 Tests the conflict_resolver, rag_scheduler, and other Redis-heavy components.

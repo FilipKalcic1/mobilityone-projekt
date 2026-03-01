@@ -1,6 +1,5 @@
 """
 Search Engine - Semantic and keyword search for tool discovery.
-Version: 2.0 (With Category-Based Search)
 
 Single responsibility: Find relevant tools using embeddings, categories, and scoring.
 """
@@ -100,11 +99,8 @@ class SearchEngine:
         )
 
         # Load category and documentation data
-        # v4.0: REMOVED training_queries.json (unreliable, only 55% coverage)
-        # Now uses ONLY tool_documentation.json which has 100% tool coverage
         self._tool_categories = _load_json_file("tool_categories.json")
         self._tool_documentation = _load_json_file("tool_documentation.json")
-        # DEPRECATED: self._training_queries - no longer used in v4.0
 
         # Build reverse lookup: tool_id -> category
         self._tool_to_category: Dict[str, str] = {}
@@ -783,7 +779,7 @@ class SearchEngine:
         """
         Boost tools whose documentation matches the query.
 
-        v4.0: Uses ONLY tool_documentation.json (100% coverage).
+        Uses ONLY tool_documentation.json (100% coverage).
         Removed training_queries.json dependency (was unreliable, 55% coverage).
         """
         if not self._tool_documentation:
@@ -794,9 +790,6 @@ class SearchEngine:
 
         config = self.CATEGORY_CONFIG
         doc_boost = config["documentation_boost"]
-
-        # v4.0: REMOVED training_queries matching - now uses only documentation
-        # training_queries.json had only 55% tool coverage and inconsistent quality
 
         adjusted = []
         for score, op_id in scored:
@@ -927,9 +920,9 @@ class SearchEngine:
         cat_data = self._tool_categories["categories"].get(category_name, {})
         return cat_data.get("tools", [])
 
-    # =========================================================================
+    # ---
     # FILTERING METHODS FOR OPTIMIZED SEARCH
-    # =========================================================================
+    # ---
 
     def detect_intent(self, query: str) -> str:
         """

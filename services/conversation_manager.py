@@ -1,6 +1,5 @@
 """
 Conversation Manager
-Version: 11.0
 
 Multi-turn conversation state machine with REDIS PERSISTENCE.
 
@@ -92,7 +91,7 @@ class ConversationState(str, Enum):
     COMPLETED = "completed"
 
 
-# Mapiranje sinonima parametara - rješava problem kad AI izvuče "mileage" ali missing_params ima "Value"
+# Parameter alias mapping - solves mismatch when AI extracts "mileage" but missing_params has "Value"
 KEY_ALIASES = {
     # Mileage variations (Swagger field is "Value")
     "mileage": ["kilometraža", "km", "Value", "Mileage", "mileage_value"],
@@ -133,7 +132,7 @@ class ConversationContext:
     started_at: Optional[str] = None
     last_updated: Optional[str] = None
 
-    # KRITIČNO: tool_outputs za dependency chaining
+    # Tool outputs for dependency chaining
     # Sprema output vrijednosti iz prethodnih tool poziva
     # Npr: {"VehicleId": "uuid-123", "PersonId": "uuid-456"}
     tool_outputs: Dict[str, Any] = field(default_factory=dict)
@@ -148,7 +147,7 @@ class ConversationContext:
         self.displayed_items = []
         self.selected_item = None
         self.confirmation_message = None
-        self.tool_outputs = {}  # KRITIČNO: Reset tool outputs
+        self.tool_outputs = {}  # Reset tool outputs
 
 
 class ConversationManager:
@@ -322,8 +321,7 @@ class ConversationManager:
             if value is not None:
                 self.context.parameters[key] = value
 
-                # Ukloni iz missing_params - provjeri i aliase
-                # Ovo rješava problem kad AI izvuče "mileage" ali missing_params ima "Value"
+                # Remove from missing_params, checking aliases too
                 keys_to_check = [key] + KEY_ALIASES.get(key, [])
                 for k in keys_to_check:
                     if k in self.context.missing_params:

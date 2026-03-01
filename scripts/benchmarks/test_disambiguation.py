@@ -1,6 +1,5 @@
 """
 Test LLM Disambiguation Logic
-Version: 1.0
 
 Tests the new AmbiguityDetector and disambiguation features in UnifiedRouter.
 

@@ -1,6 +1,5 @@
 """
 Tests for services/intent_classifier.py
-Version: 1.0
 
 Covers:
 - ActionIntent enum

@@ -1,6 +1,5 @@
 """
 Dead Code Analyzer for MobilityOne Bot
-Version: 1.0 - Python Static Analysis
 
 FEATURES:
 1. Vulture-style dead code detection

@@ -1,17 +1,7 @@
 """
 Background Worker
-Version: 15.1 - Fixed duplicate logging
 
 Processes messages from Redis queue.
-
-CHANGES v15.1:
-- Fixed duplicate logging issue by configuring root logger
-- Prevents handler duplication when services are imported
-
-CHANGES v15.0:
-- Added automatic Redis reconnection on connection loss
-- Added socket_keepalive and health_check_interval
-- Fixed crash when Redis closes connection
 """
 
 import asyncio
@@ -48,12 +38,11 @@ from services.rag_scheduler import RAGScheduler, get_rag_scheduler
 
 settings = get_settings()
 
-# === KONFIGURACIJA ===
-MAX_CONCURRENT = 5              # Ograničeno Azure TPM limitom
-MESSAGE_LOCK_TTL = 300          # 5 min - dovoljno za najduže LLM pozive
-REDIS_MAX_RETRIES = 30          # 30 x 2s = 60s max čekanja na Redis
+MAX_CONCURRENT = 5              # Constrained by Azure TPM limit
+MESSAGE_LOCK_TTL = 300          # 5 min - enough for longest LLM calls
+REDIS_MAX_RETRIES = 30          # 30 x 2s = 60s max wait for Redis
 REDIS_RETRY_DELAY = 2
-HEALTH_REPORT_INTERVAL = 60     # Svake minute
+HEALTH_REPORT_INTERVAL = 60     # Every minute
 STREAM_BLOCK_MS = 1000          # 1s blocking read
 MEMORY_WARNING_MB = 800         # Warn when memory exceeds this
 

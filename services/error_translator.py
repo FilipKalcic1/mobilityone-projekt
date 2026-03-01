@@ -1,6 +1,5 @@
 """
 Error Translation Service
-Version: 1.0
 
 UNIFIED ERROR HANDLING - Consolidates all error translation logic.
 

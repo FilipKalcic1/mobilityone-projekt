@@ -26,9 +26,9 @@ async def main():
     print("ANALYSIS: Generic & Overlapping Query Patterns")
     print("=" * 70)
 
-    # =========================================================================
+    # ---
     # 1. GENERIC QUERY PATTERNS (match many tools)
-    # =========================================================================
+    # ---
     generic_patterns = defaultdict(list)
 
     # Find queries that are too generic
@@ -86,9 +86,9 @@ async def main():
             if len(items) > 5:
                 print(f"    ... and {len(items) - 5} more")
 
-    # =========================================================================
+    # ---
     # 2. OVERLAPPING TOOL SUFFIXES
-    # =========================================================================
+    # ---
     print("\n" + "=" * 70)
     print("2. OVERLAPPING TOOL CATEGORIES (similar operations)")
     print("=" * 70)
@@ -121,9 +121,9 @@ async def main():
         if len(tools) > 3:
             print(f"    ... and {len(tools) - 3} more")
 
-    # =========================================================================
+    # ---
     # 3. ENTITY CONFUSION (similar entities)
-    # =========================================================================
+    # ---
     print("\n" + "=" * 70)
     print("3. ENTITY CONFUSION (similar entity names)")
     print("=" * 70)
@@ -158,9 +158,9 @@ async def main():
             print(f"    - {e1}: {count1} tools")
             print(f"    - {e2}: {count2} tools")
 
-    # =========================================================================
+    # ---
     # 4. CRUD OVERLAP (get/put/delete for same entity)
-    # =========================================================================
+    # ---
     print("\n" + "=" * 70)
     print("4. CRUD OVERLAP (queries don't specify action clearly)")
     print("=" * 70)
@@ -190,9 +190,9 @@ async def main():
         if len(crud_confusion) > 10:
             print(f"    ... and {len(crud_confusion) - 10} more")
 
-    # =========================================================================
+    # ---
     # 5. RECOMMENDATIONS
-    # =========================================================================
+    # ---
     print("\n" + "=" * 70)
     print("5. RECOMMENDATIONS")
     print("=" * 70)

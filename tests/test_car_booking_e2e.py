@@ -1,6 +1,5 @@
 """
 End-to-End Car Booking Integration Test
-Version: 1.0
 
 Comprehensive test simulating a real car booking scenario:
 1. User wants to book a car for a specific time

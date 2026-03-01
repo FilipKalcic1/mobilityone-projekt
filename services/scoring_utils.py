@@ -1,6 +1,5 @@
 """
 Scoring Utilities Module
-Version: 1.0
 
 Pure mathematical functions for tool scoring, extracted from tool_registry.py.
 These are stateless functions that can be easily tested and reused.

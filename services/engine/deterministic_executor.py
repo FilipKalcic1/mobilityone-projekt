@@ -1,6 +1,5 @@
 """
 Deterministic Executor - Fast path execution without LLM.
-Version: 1.0
 
 Extracted from engine/__init__.py for better modularity.
 """

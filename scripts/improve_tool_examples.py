@@ -1,6 +1,5 @@
 """
 Improve Tool Documentation Example Queries
-Version: 1.0
 
 Automatically enhances example queries to be more distinctive
 based on tool suffix patterns.

@@ -1,6 +1,5 @@
 """
 Tests for ConflictResolver service.
-Version: 1.0
 
 Covers:
 - EditLock dataclass and expiration logic

@@ -1,35 +1,11 @@
 """
 Unified Router - Single LLM makes ALL routing decisions.
-Version: 2.0
-
-This replaces the complex multi-layer routing with a single, reliable LLM decision.
-
-v2.0 CHANGELOG:
-- ADDED: AmbiguityDetector for disambiguation of generic queries
-- ADDED: Disambiguation hints in LLM prompt when ambiguity detected
-- ADDED: Clarification question fallback for highly ambiguous queries
 
 Architecture:
 1. Gather context (current state, user info, tools)
-2. Detect ambiguity in search results (NEW)
+2. Detect ambiguity in search results
 3. Single LLM call decides everything (with disambiguation hints if needed)
 4. Execute based on decision OR ask clarification
-
-The LLM receives:
-- User query
-- Current conversation state (flow, missing params)
-- User context (vehicle, person)
-- Available primary tools (30 most common)
-- Disambiguation hints (NEW - when ambiguity detected)
-
-The LLM outputs:
-- action: "continue_flow" | "exit_flow" | "start_flow" | "simple_api" | "direct_response" | "clarify"
-- tool: tool name or null
-- params: extracted parameters
-- flow_type: booking | mileage | case | None
-- response: direct response text (for direct_response action)
-- clarification: question to ask user (for clarify action)
-- reasoning: explanation
 """
 
 import json
@@ -70,10 +46,10 @@ class RouterDecision:
     params: Dict[str, Any] = field(default_factory=dict)
     flow_type: Optional[str] = None  # booking, mileage, case
     response: Optional[str] = None  # For direct_response
-    clarification: Optional[str] = None  # For clarify action (v2.0)
+    clarification: Optional[str] = None  # For clarify action
     reasoning: str = ""
     confidence: float = 0.0
-    ambiguity_detected: bool = False  # v2.0: Was ambiguity detected?
+    ambiguity_detected: bool = False  # Was ambiguity detected?
 
 
 # Primary tools - the 30 most common operations
@@ -129,7 +105,7 @@ class UnifiedRouter:
     This is the ONLY decision point - no keyword matching, no filtering.
     The LLM sees everything and decides.
     
-    v2.0: Uses semantic search to find relevant tools from ALL 950+ tools,
+    Uses semantic search to find relevant tools from ALL 950+ tools,
     not just hardcoded PRIMARY_TOOLS.
     """
 
@@ -146,7 +122,7 @@ class UnifiedRouter:
         # Query Router - brza staza za poznate patterne
         self.query_router = QueryRouter()
 
-        # v2.0: Ambiguity detector for disambiguation
+        # Ambiguity detector for disambiguation
         self._ambiguity_detector: Optional[AmbiguityDetector] = None
 
         self._initialized = False
@@ -172,7 +148,7 @@ class UnifiedRouter:
         """
         Use UnifiedSearch to find relevant tools and detect ambiguity.
 
-        v2.0: Now also detects ambiguity in results for disambiguation.
+        Now also detects ambiguity in results for disambiguation.
 
         Returns:
             Tuple of (tools_dict, ambiguity_result)
@@ -184,7 +160,7 @@ class UnifiedRouter:
             return PRIMARY_TOOLS, None
 
         try:
-            # v4.0: Use UnifiedSearch for consistent results
+            # Use UnifiedSearch for consistent results
             from services.unified_search import get_unified_search
 
             unified = get_unified_search()
@@ -203,7 +179,7 @@ class UnifiedRouter:
                     if tool_name not in relevant_tools:
                         relevant_tools[tool_name] = desc
 
-                # v2.0: Detect ambiguity in results
+                # Detect ambiguity in results
                 ambiguity_result = None
                 if self._ambiguity_detector is None:
                     self._ambiguity_detector = get_ambiguity_detector()
@@ -342,20 +318,20 @@ class UnifiedRouter:
                         confidence=1.0
                     )
 
-        # 4. QUERY ROUTER - Brza staza za poznate patterne (0 tokena, <1ms)
-        # Ovo štedi ~80% LLM poziva za jednostavne upite
+        # 4. QUERY ROUTER - fast path for known patterns (0 tokens, <1ms)
+        # Saves ~80% of LLM calls for simple queries
         logger.info(f"UNIFIED ROUTER: Trying QueryRouter for query='{query[:50]}'")
         qr_result = self.query_router.route(query, user_context)
         logger.info(f"UNIFIED ROUTER: QR result: matched={qr_result.matched}, conf={qr_result.confidence}, flow={qr_result.flow_type if qr_result.matched else None}")
         if qr_result.matched and qr_result.confidence >= 1.0:
-            # Samo ako je SIGURAN match (confidence=1.0) - izbjegavamo false positives
+            # Only for confident matches (confidence=1.0) to avoid false positives
             logger.info(
                 f"UNIFIED ROUTER: Fast path via QueryRouter → "
                 f"{qr_result.tool_name or qr_result.flow_type} (conf={qr_result.confidence})"
             )
             return self._query_result_to_decision(qr_result, user_context)
 
-        # 5. LLM poziv - za kompleksne upite koje Query Router ne prepoznaje
+        # 5. LLM call - for complex queries that Query Router can't handle
         return await self._llm_route(query, user_context, conversation_state)
 
     async def _llm_route(
@@ -364,10 +340,10 @@ class UnifiedRouter:
         user_context: Dict[str, Any],
         conversation_state: Optional[Dict]
     ) -> RouterDecision:
-        """Make routing decision using LLM with disambiguation support (v2.0)."""
+        """Make routing decision using LLM with disambiguation support."""
 
         # Build context description - use UserContextManager for validated access
-        # v22.0: Use UserContextManager
+        # Use UserContextManager
         ctx = UserContextManager(user_context)
         vehicle = ctx.vehicle
         vehicle_info = ""
@@ -396,7 +372,7 @@ class UnifiedRouter:
                     f"  - Nedostaju parametri: {missing}"
                 )
 
-        # v2.0: Get relevant tools WITH ambiguity detection
+        # Get relevant tools WITH ambiguity detection
         relevant_tools, ambiguity_result = await self._get_relevant_tools_with_ambiguity(
             query, user_context, top_k=25
         )
@@ -406,7 +382,7 @@ class UnifiedRouter:
         for tool_name, description in relevant_tools.items():
             tools_desc += f"  - {tool_name}: {description}\n"
 
-        # v2.0: Build disambiguation hints if ambiguity detected
+        # Build disambiguation hints if ambiguity detected
         disambiguation_section = ""
         if ambiguity_result and ambiguity_result.is_ambiguous:
             disambiguation_section = f"""
@@ -422,7 +398,7 @@ class UnifiedRouter:
         - Primjer: "prosječna kilometraža" → entitet je vozila → get_Vehicles_Agg ili get_MasterData
         """
 
-        # Build system prompt with disambiguation support (v2.0)
+        # Build system prompt with disambiguation support
         system_prompt = f"""Ti si routing sustav za MobilityOne fleet management bot.
 
         TVOJ ZADATAK: Odluči što napraviti s korisnikovim upitom.
@@ -467,7 +443,7 @@ class UnifiedRouter:
         - mileage: za unos kilometraže
         - case: za prijavu štete/kvara
 
-        5. CLARIFY (v2.0):
+        5. CLARIFY:
         - Koristi action="clarify" SAMO kada je upit previše generičan
         - U "clarification" polju postavi pitanje koje će pomoći identificirati pravi alat
         - Primjer: "Za koje podatke želite izračunati statistiku? (vozila, troškovi, putovanja)"
@@ -506,7 +482,7 @@ class UnifiedRouter:
             action = result.get("action", "simple_api")
 
             logger.info(
-                f"UNIFIED ROUTER v2.0: '{query[:30]}...' → "
+                f"UNIFIED ROUTER: '{query[:30]}...' → "
                 f"action={action}, tool={result.get('tool')}, "
                 f"flow={result.get('flow_type')}, "
                 f"ambiguous={ambiguity_result.is_ambiguous if ambiguity_result else False}"
@@ -522,7 +498,7 @@ class UnifiedRouter:
                 if not result.get("tool"):
                     result["tool"] = "get_MasterData"
 
-            # v2.0: Handle clarify action
+            # Handle clarify action
             if action == "clarify":
                 clarification_text = result.get("clarification")
                 if not clarification_text and ambiguity_result:
@@ -565,7 +541,7 @@ class UnifiedRouter:
         """Fallback routing when LLM fails - uses QueryRouter's regex rules."""
         logger.warning(f"LLM routing failed, using QueryRouter fallback for: '{query[:50]}...'")
 
-        # Koristi Query Router - ima 51 regex pravilo
+        # Use Query Router
         qr_result = self.query_router.route(query, user_context)
 
         if qr_result.matched:
@@ -618,7 +594,7 @@ class UnifiedRouter:
             # FORMAT the template with user context
             response_text = qr_result.response_template
             if response_text and user_context:
-                # v22.0: Use UserContextManager for validated access
+                # Use UserContextManager for validated access
                 ctx = UserContextManager(user_context)
                 # Direct extraction for context queries (person_id, phone, tenant_id)
                 if 'person_id' in response_text:

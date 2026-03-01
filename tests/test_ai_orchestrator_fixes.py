@@ -41,7 +41,7 @@ class MockAIOrchestrator:
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """Azure-safe token counting with improved fallback."""
         if not self.tokenizer:
-            # MEDIUM FIX v12.2: Improved fallback for Croatian language
+            # Improved fallback for Croatian language
             total_chars = sum(len(m.get("content", "")) for m in messages)
             return int(total_chars / 4.6) + len(messages) * MESSAGE_TOKEN_OVERHEAD
         return 0
@@ -59,7 +59,6 @@ class MockAIOrchestrator:
         if not tool_scores:
             return tools
 
-        # CRITICAL FIX v12.2: Tool/score alignment enforcement
         if len(tools) != len(tool_scores):
             return tools  # Return unchanged on mismatch
 

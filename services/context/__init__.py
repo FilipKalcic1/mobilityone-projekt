@@ -1,6 +1,5 @@
 """
 Context Management Module
-Version: 1.0
 
 Centralized user context management - SINGLE SOURCE OF TRUTH.
 

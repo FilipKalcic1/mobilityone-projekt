@@ -1,13 +1,7 @@
 """
 Unified Search - Single entry point for all tool discovery.
-Version: 2.0
 
-CHANGELOG v2.0:
-- ADDED: Query Type Classifier for suffix-based filtering
-- REMOVED: training_queries.json boost (unreliable)
-- IMPROVED: Better differentiation of similar tools
-
-Consolidates all search paths into ONE consistent interface:
+Consolidates all search paths into one consistent interface:
 1. ACTION INTENT GATE (detect GET/POST/PUT/DELETE from query)
 2. QUERY TYPE CLASSIFIER (detect suffix type: _id, _documents, _metadata, etc.)
 3. FAISS semantic search with intent filter
@@ -30,12 +24,12 @@ from services.intent_classifier import (
     detect_action_intent,
     ActionIntent,
     IntentDetectionResult,
-    # v3.0: ML-based query type classification (replaces regex)
+    # ML-based query type classification (replaces regex)
     classify_query_type_ml,
     QueryTypePrediction
 )
 from services.faiss_vector_store import get_faiss_store, SearchResult
-# v3.0: Keep old imports for backwards compatibility, but use ML
+# Keep old imports for backwards compatibility, but use ML
 from services.query_type_classifier import (
     get_query_type_classifier,
     classify_query_type,
@@ -137,7 +131,7 @@ class UnifiedSearch:
             logger.warning(f"Failed to load tool categories: {e}")
             self._tool_categories = {}
 
-        # NOTE: training_queries.json is NO LONGER USED (v2.0)
+        # NOTE: training_queries.json is NO LONGER USED
         # It was unreliable and caused confusion in tool selection
 
         self._initialized = True
@@ -164,7 +158,7 @@ class UnifiedSearch:
         # Step 1: ACTION INTENT DETECTION (v16.0: less aggressive filtering)
         intent_result = detect_action_intent(query)
 
-        # v16.0: Only filter by intent if confidence is very high (95%+)
+        # Only filter by intent if confidence is very high (95%+)
         # Otherwise, show all tools and let LLM decide
         # This prevents filtering out valid tools when ML is uncertain
         INTENT_FILTER_THRESHOLD = 0.95
@@ -176,7 +170,7 @@ class UnifiedSearch:
         )
 
         # Step 2: QUERY TYPE CLASSIFICATION
-        # v3.0: Use ML-based classifier (replaces 91 regex patterns)
+        # Use ML-based classifier (replaces 91 regex patterns)
         ml_query_type = classify_query_type_ml(query)
 
         # Convert ML result to QueryTypeResult for backwards compatibility
@@ -383,7 +377,7 @@ class UnifiedSearch:
             "keywords": ["moji podaci", "moj profil", "moje ime", "tko sam"],
             "boost": 1.5
         },
-        # v3.0: Added more primary tools
+        # Added more primary tools
         "get_cases": {
             "keywords": ["slučaj", "slucaj", "štete", "stete", "prijave", "kvarovi", "moji slučajevi"],
             "boost": 1.5
@@ -428,7 +422,7 @@ class UnifiedSearch:
         excluded_suffixes = query_type_result.excluded_suffixes
         query_type_confidence = query_type_result.confidence
 
-        # v3.1: ENTITY DETECTION - boost tools that match entity mentioned in query
+        # ENTITY DETECTION - boost tools that match entity mentioned in query
         ENTITY_KEYWORDS = {
             "companies": ["kompanij", "tvrtk", "firm", "poduzeć"],
             "vehicles": ["vozil", "auto", "automobil", "flot"],
@@ -464,7 +458,7 @@ class UnifiedSearch:
                     result.score *= tool_config["boost"]
                     boosts.append("primary_action")
 
-            # v3.1: ENTITY MATCH BOOST - AGGRESSIVE
+            # ENTITY MATCH BOOST - AGGRESSIVE
             # If query mentions specific entity, strongly boost/penalize tools
             if detected_entity:
                 # Extract entity from tool_id (e.g., get_Companies_id -> companies)
@@ -518,7 +512,7 @@ class UnifiedSearch:
                     boosts.append("doc")
 
             # Query Type boost (NEW in v2.0) - replaces example boost
-            # v3.1: Lowered threshold from 0.7 to 0.4 for broader coverage
+            # Lowered threshold from 0.7 to 0.4 for broader coverage
             if query_type_confidence >= 0.4 and preferred_suffixes:
                 # Boost if tool matches preferred suffix
                 is_preferred = any(

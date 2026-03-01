@@ -1,6 +1,5 @@
 """
 User Handler - User identification and greeting.
-Version: 1.0
 
 Extracted from engine/__init__.py for better modularity.
 """

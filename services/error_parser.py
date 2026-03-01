@@ -1,6 +1,5 @@
 """
 Error Parser - AI Feedback Generator
-Version: 2.0
 
 Converts API errors into Croatian explanations for LLM self-correction.
 

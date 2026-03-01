@@ -1,6 +1,5 @@
 """
 Error Learning Service - Self-Correction Engine
-Version: 1.0
 
 KRITIČNA KOMPONENTA za robustan sustav.
 
@@ -58,11 +57,11 @@ class HallucinationReport:
              Bot odgovara "5000 EUR" ali je zapravo 3000 EUR.
     """
     timestamp: str
-    user_query: str  # Što je korisnik pitao
-    bot_response: str  # Što je bot odgovorio (halucinacija)
-    user_feedback: str  # "krivo" ili detaljni feedback
-    retrieved_chunks: List[str]  # RAG chunk ID-evi korišteni
-    model: str  # Koji model je producirao odgovor
+    user_query: str  # What the user asked
+    bot_response: str  # Bot response (hallucination)
+    user_feedback: str  # "krivo" or detailed feedback
+    retrieved_chunks: List[str]  # RAG chunk IDs used
+    model: str  # Model that produced the response
     api_raw_response: Optional[Dict[str, Any]] = None  # Sirovi API response
     conversation_id: Optional[str] = None
     tenant_id: Optional[str] = None
@@ -225,11 +224,11 @@ class ErrorLearningService:
             http_status: HTTP status code (for False Positive detection)
             response_data: Raw API response (for False Positive detection)
         """
-        # =====================================================================
-        # FALSE POSITIVE ZAŠTITA
-        # 200 + prazan odgovor = "Data Not Found", NE greška modela
-        # Primjer: GET /Persons?Filter=Phone(=)099... vraća [] jer osoba ne postoji
-        # =====================================================================
+        # ---
+        # FALSE POSITIVE PROTECTION
+        # 200 + empty response = "Data Not Found", NOT a model error
+        # Example: GET /Persons?Filter=Phone(=)099... returns [] because person doesn't exist
+        # ---
         if self._is_false_positive(http_status, response_data, error_code):
             self._false_positives_skipped += 1
             logger.debug(
@@ -495,9 +494,9 @@ class ErrorLearningService:
                     f"{pattern.correction} (from {pattern.occurrence_count} occurrences)"
                 )
 
-    # =========================================================================
+    # ---
     # FALSE POSITIVE DETEKCIJA
-    # =========================================================================
+    # ---
 
     def _is_false_positive(
         self,
@@ -515,15 +514,15 @@ class ErrorLearningService:
 
         NE uči iz ovoga jer model je radio ispravno!
         """
-        # Ako nema HTTP statusa, ne možemo odlučiti
+        # Without HTTP status, we can't determine the outcome
         if http_status is None:
             return False
 
-        # Samo 2xx statusni kodovi mogu biti false positives
+        # Only 2xx status codes can be false positives
         if not (200 <= http_status < 300):
             return False
 
-        # Prazan odgovor na uspješan request = Data Not Found, ne greška
+        # Empty response on successful request = Data Not Found, not an error
         if response_data is None:
             return True
 
@@ -538,9 +537,9 @@ class ErrorLearningService:
 
         return False
 
-    # =========================================================================
+    # ---
     # HALLUCINATION REPORTING ("krivo" feedback)
-    # =========================================================================
+    # ---
 
     async def record_hallucination(
         self,
@@ -635,7 +634,7 @@ class ErrorLearningService:
                 tenant_id=tenant_id
             )
 
-        # Generiraj follow-up pitanje za više konteksta
+        # Generate follow-up question for more context
         follow_up = self._generate_hallucination_followup(user_feedback, bot_response)
 
         return {
@@ -655,14 +654,14 @@ class ErrorLearningService:
         Umjesto da bot šuti, pitamo što je točno bilo pogrešno.
         To nam daje "zlato" za fine-tuning i RAG poboljšanja.
         """
-        # Ako je feedback kratak ("krivo", "ne"), pitaj za detalje
+        # If feedback is short ("krivo", "ne"), ask for details
         if len(user_feedback.strip()) < 20:
             return (
                 "Zabilježio sam grešku i proslijedio je timu na analizu. "
                 "Možete li mi reći što je točno bilo pogrešno kako bih brže naučio?"
             )
 
-        # Ako je feedback detaljniji, zahvali i potvrdi
+        # If feedback is more detailed, thank and confirm
         return (
             "Hvala na povratnoj informaciji! Zabilježio sam detalje i "
             "proslijedio ih timu. Ispričavam se za neugodnost."
@@ -683,9 +682,9 @@ class ErrorLearningService:
         except Exception as e:
             logger.warning(f"Failed to persist hallucination report: {e}")
 
-    # =========================================================================
+    # ---
     # JSON FILE PERSISTENCE (za analizu trendova)
-    # =========================================================================
+    # ---
 
     def save_to_file(self) -> None:
         """

@@ -1,6 +1,5 @@
 """
 Admin Review Service - DATABASE-BACKED Review System
-Version: 2.1 - Enterprise Security + Database Integration (FIXED)
 
 SIGURNOSNA NAPOMENA:
 Ova klasa NIKADA ne smije biti dostupna botu/LLM-u!
@@ -8,7 +7,7 @@ Ova klasa NIKADA ne smije biti dostupna botu/LLM-u!
 - Ne importaj je u message engine
 - Pristup samo kroz Admin API s autentifikacijom
 
-ARHITEKTURA (v2.0):
+ARHITEKTURA:
 - Svi podaci dolaze iz PostgreSQL baze (hallucination_reports tablica)
 - Admin API koristi admin_user koji ima puni pristup
 - Bot koristi bot_user koji može samo INSERT u hallucination_reports
@@ -101,11 +100,11 @@ class AdminReviewService:
     ALLOWED_CATEGORIES = frozenset([
         "wrong_data",      # Bot dao krive podatke
         "outdated",        # Podaci zastarjeli
-        "misunderstood",   # Bot krivo razumio pitanje
+        "misunderstood",   # Bot misunderstood the question
         "api_error",       # API je vratio krivu vrijednost
-        "rag_failure",     # RAG dohvatio krivi dokument
-        "hallucination",   # Čista halucinacija
-        "user_error",      # Korisnik je rekao "krivo" greškom
+        "rag_failure",     # RAG retrieved wrong document
+        "hallucination",   # Pure hallucination
+        "user_error",      # User said "krivo" by mistake
     ])
 
     def __init__(self, db: AsyncSession):
@@ -272,9 +271,9 @@ class AdminReviewService:
             if self._check_dangerous_patterns(check_text):
                 return False
 
-        # Dodatna provjera za previše specijalne znakove
+        # Additional check for excessive special characters
         special_chars = sum(1 for c in text if c in '<>{}[]()$`\\')
-        if len(text) > 0 and special_chars > len(text) * 0.1:  # Više od 10% specijalnih znakova
+        if len(text) > 0 and special_chars > len(text) * 0.1:  # More than 10% special characters
             logger.warning("SECURITY: Too many special characters")
             return False
 
@@ -410,7 +409,7 @@ class AdminReviewService:
         # Validate IP address
         validated_ip = self._validate_ip_address(ip_address)
 
-        # 1. Validiraj correction (KRITIČNO!)
+        # 1. Validate correction
         if correction and not self.is_safe_text(correction):
             await self._audit("SECURITY_VIOLATION", admin_id, {
                 "report_id": report_id,

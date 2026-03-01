@@ -1,6 +1,5 @@
 """
 FAISS Vector Store - In-memory semantic search for tool selection.
-Version: 1.0
 
 ZERO DATABASE IMPACT - All operations in memory.
 
@@ -434,10 +433,10 @@ class FAISSVectorStore:
         parts = []
         tool_lower = tool_id.lower()
 
-        # =====================================================
+        # ---
         # ENTITY FIRST! (repeated 5x to dominate embedding)
         # This is the MOST IMPORTANT differentiator
-        # =====================================================
+        # ---
         import re
         name = re.sub(r'^(get|post|put|patch|delete)_', '', tool_id, flags=re.IGNORECASE)
         for suffix in SUFFIX_MEANINGS.keys():

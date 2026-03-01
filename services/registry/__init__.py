@@ -1,6 +1,5 @@
 """
 Tool Registry - Public API facade.
-Version: 2.1 (With Documentation Merge - Pillar 5)
 
 This module provides backward-compatible interface to the refactored registry.
 All existing imports from services.tool_registry should work unchanged.
@@ -99,9 +98,9 @@ class ToolRegistry:
         else:
             logger.info("No tool_documentation.json found - run generate_documentation.py first")
 
-    # ═══════════════════════════════════════════════
+    # ---
     # BACKWARD COMPATIBILITY PROPERTIES
-    # ═══════════════════════════════════════════════
+    # ---
 
     @property
     def tools(self) -> Dict[str, UnifiedToolDefinition]:
@@ -134,9 +133,9 @@ class ToolRegistry:
         """Access context param fallback for backward compatibility."""
         return self._parser.context_param_fallback
 
-    # ═══════════════════════════════════════════════
+    # ---
     # INITIALIZATION
-    # ═══════════════════════════════════════════════
+    # ---
 
     async def load_swagger(self, source: str) -> bool:
         """Backward compatible method for single source."""
@@ -168,7 +167,7 @@ class ToolRegistry:
                     
                     logger.info(f"Loaded {self._store.count()} tools and {len(self._store.dependency_graph)} dependencies from file.")
                     
-                    # v20.1: Try to load embeddings from cache to avoid re-generating
+                    # Try to load embeddings from cache to avoid re-generating
                     embeddings_cache_path = os.path.join(base_path, ".cache", "tool_embeddings.json")
                     if os.path.exists(embeddings_cache_path):
                         try:
@@ -251,7 +250,7 @@ class ToolRegistry:
                     f"{len(self._store.mutation_tools)} mutation)"
                 )
 
-                # v3.0: Initialize FAISS vector store for fast semantic search
+                # Initialize FAISS vector store for fast semantic search
                 await self._initialize_faiss()
 
                 return True
@@ -264,7 +263,7 @@ class ToolRegistry:
         """
         Initialize FAISS vector store for fast semantic search.
 
-        v3.0: Uses tool_documentation.json for embeddings.
+        Uses tool_documentation.json for embeddings.
         Does NOT use training_queries.json (unreliable).
         """
         try:
@@ -295,9 +294,9 @@ class ToolRegistry:
         except Exception as e:
             logger.warning(f"FAISS initialization failed: {e}. Using legacy search.")
 
-    # ═══════════════════════════════════════════════
+    # ---
     # SEARCH & DISCOVERY
-    # ═══════════════════════════════════════════════
+    # ---
 
     async def find_relevant_tools(
         self,
@@ -340,7 +339,7 @@ class ToolRegistry:
         """
         Find relevant tools WITH SIMILARITY SCORES.
 
-        v4.0: FAISS + ACTION INTENT + LLM RERANKING
+        FAISS + ACTION INTENT + LLM RERANKING
 
         Pipeline:
         1. FAISS semantic search (fast, ~64% top-1)
@@ -363,7 +362,7 @@ class ToolRegistry:
             logger.warning("Registry not ready")
             return []
 
-        # v4.0: FAISS + ACTION INTENT + LLM RERANKING
+        # FAISS + ACTION INTENT + LLM RERANKING
         if use_faiss:
             try:
                 from services.faiss_vector_store import get_faiss_store
@@ -385,7 +384,7 @@ class ToolRegistry:
                     )
 
                     if faiss_results:
-                        # v4.0: LLM RERANKING - pick best from FAISS candidates
+                        # LLM RERANKING - pick best from FAISS candidates
                         if use_llm_rerank and len(faiss_results) > 1:
                             faiss_results = await self._apply_llm_reranking(
                                 query, faiss_results, top_k
@@ -449,7 +448,7 @@ class ToolRegistry:
         top_k: int
     ) -> List:
         """
-        v4.0: Use LLM to rerank FAISS candidates.
+        Use LLM to rerank FAISS candidates.
 
         This dramatically improves Top-1 accuracy:
         - FAISS alone: ~64% Top-1
@@ -526,9 +525,9 @@ class ToolRegistry:
             logger.warning(f"LLM rerank failed: {e}, using FAISS order")
             return faiss_results
 
-    # ═══════════════════════════════════════════════
+    # ---
     # TOOL ACCESS
-    # ═══════════════════════════════════════════════
+    # ---
 
     def get_tool(self, operation_id: str) -> Optional[UnifiedToolDefinition]:
         """Get tool by operation ID."""
@@ -538,9 +537,9 @@ class ToolRegistry:
         """List all tool operation IDs."""
         return self._store.list_tools()
 
-    # ═══════════════════════════════════════════════
+    # ---
     # PILLAR 5: DOCUMENTATION ACCESS
-    # ═══════════════════════════════════════════════
+    # ---
 
     def get_tool_documentation(self, operation_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -610,9 +609,9 @@ class ToolRegistry:
         origin = origin_guide.get(param_name, "USER")  # Default to USER if not specified
         return "USER" in origin.upper()
 
-    # ═══════════════════════════════════════════════
+    # ---
     # CJELINA 2: HIDDEN DEFAULTS INJECTION
-    # ═══════════════════════════════════════════════
+    # ---
 
     # Hidden defaults that should be auto-injected (user doesn't see these)
     # Format: { operation_id: { param_name: default_value } }

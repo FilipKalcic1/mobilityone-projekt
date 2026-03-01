@@ -1,6 +1,5 @@
 """
 Embedding Engine - Generate and manage embeddings for tool discovery.
-Version: 3.4
 
 Single responsibility: Generate embeddings using Azure OpenAI.
 
@@ -36,7 +35,7 @@ CROATIAN LANGUAGE SUPPORT:
          Documents (8), Financial (8), Maintenance (6), Communication (5),
          Data (5), Handover (5), Access (4), Categories (3)
 
-FALLBACK MECHANISM (v3.2):
+FALLBACK MECHANISM:
     When Croatian mapping is unavailable, English terms are used with
     readable formatting (camelCase split). This ensures ALL tools contribute
     to embedding quality, not just mapped ones.
@@ -109,7 +108,7 @@ class EmbeddingEngine:
         """
         Build embedding text with auto-generated PURPOSE description.
 
-        v3.0: Enhanced inference from path, operationId, params, and outputs.
+        Enhanced inference from path, operationId, params, and outputs.
 
         Strategy:
         1. Generate PURPOSE from: path + operationId + method + params + outputs
@@ -140,7 +139,7 @@ class EmbeddingEngine:
             ]
             parts.append(f"Returns: {', '.join(readable)}")
 
-        # 4. Add synonyms for better query matching (v3.1)
+        # 4. Add synonyms for better query matching
         synonyms = self._get_synonyms_for_purpose(purpose)
         if synonyms:
             parts.append(f"Sinonimi: {', '.join(synonyms)}")
@@ -386,7 +385,7 @@ class EmbeddingEngine:
         "average": ("prosjek", "prosjeka"),
         "minimum": ("minimum", "minimuma"),
         "maximum": ("maksimum", "maksimuma"),
-        # Additional API patterns (v3.3)
+        # Additional API patterns
         "rental": ("najam", "najma"),
         "rentals": ("najam", "najmova"),
         "rent": ("najam", "najma"),
@@ -526,9 +525,9 @@ class EmbeddingEngine:
     # - Lists & Counts (15 entries)
     # - Technical & System (20 entries)
     OUTPUT_KEY_MAP = {
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # VEHICLE & FLEET (35 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "mileage": "kilometražu",
         "km": "kilometre",
         "odometer": "stanje kilometara",
@@ -565,9 +564,9 @@ class EmbeddingEngine:
         "make": "proizvođača",
         "manufacturer": "proizvođača",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # LOCATION & POSITION (15 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "location": "lokaciju",
         "currentlocation": "trenutnu lokaciju",
         "lastlocation": "zadnju lokaciju",
@@ -584,9 +583,9 @@ class EmbeddingEngine:
         "fulladdress": "punu adresu",
         "geofence": "geofence zonu",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # STATUS & STATE (20 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "status": "status",
         "state": "stanje",
         "currentstate": "trenutno stanje",
@@ -608,9 +607,9 @@ class EmbeddingEngine:
         "health": "zdravlje",
         "healthstatus": "status ispravnosti",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # REGISTRATION & DOCUMENTS (25 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "registration": "registraciju",
         "registrationnumber": "registarsku oznaku",
         "plate": "tablice",
@@ -637,9 +636,9 @@ class EmbeddingEngine:
         "insurancenumber": "broj osiguranja",
         "policynumber": "broj police",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # TIME & DURATION (30 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "date": "datum",
         "time": "vrijeme",
         "datetime": "datum i vrijeme",
@@ -671,9 +670,9 @@ class EmbeddingEngine:
         "day": "dan",
         "hour": "sat",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # FINANCIAL (30 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "price": "cijenu",
         "unitprice": "jediničnu cijenu",
         "totalprice": "ukupnu cijenu",
@@ -705,9 +704,9 @@ class EmbeddingEngine:
         "rate": "stopu",
         "fee": "naknadu",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # IDENTIFICATION (25 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "id": "identifikator",
         "uid": "jedinstveni ID",
         "guid": "globalni ID",
@@ -734,9 +733,9 @@ class EmbeddingEngine:
         "category": "kategoriju",
         "type": "tip",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # CONTACT (15 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "email": "e-mail",
         "emailaddress": "e-mail adresu",
         "phone": "telefon",
@@ -753,9 +752,9 @@ class EmbeddingEngine:
         "postalcode": "poštanski broj",
         "country": "državu",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # PERSON DATA (20 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "firstname": "ime",
         "lastname": "prezime",
         "middlename": "srednje ime",
@@ -777,9 +776,9 @@ class EmbeddingEngine:
         "occupation": "zanimanje",
         "employer": "poslodavca",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # BOOKING & RESERVATION (20 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "bookingid": "ID rezervacije",
         "bookingnumber": "broj rezervacije",
         "bookingcode": "šifru rezervacije",
@@ -801,9 +800,9 @@ class EmbeddingEngine:
         "insurancetype": "tip osiguranja",
         "driver": "vozača",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # LISTS & COUNTS (15 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "count": "broj",
         "totalcount": "ukupan broj",
         "itemcount": "broj stavki",
@@ -820,9 +819,9 @@ class EmbeddingEngine:
         "pagesize": "veličinu stranice",
         "totalpages": "ukupno stranica",
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # TECHNICAL & SYSTEM (20 entries)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "version": "verziju",
         "revision": "reviziju",
         "build": "build",
@@ -859,9 +858,9 @@ class EmbeddingEngine:
     # - Communication (5 groups)
     # - Data & Analytics (5 groups)
     CROATIAN_SYNONYMS = {
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # FLEET & VEHICLES (10 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "vozil": ["auto", "automobil", "kola", "car", "autić"],  # vozilo, vozila
         "flot": ["fleet", "vozni park", "park vozila"],  # flota, flote
         "goriv": ["benzin", "nafta", "dizel", "fuel", "tank", "spremnik"],  # gorivo, goriva
@@ -873,9 +872,9 @@ class EmbeddingEngine:
         "šasij": ["VIN", "chassis", "broj šasije"],  # šasija, šasije
         "oprema": ["equipment", "dodaci", "accessories"],  # oprema, opreme
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # PEOPLE & ROLES (8 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "osob": ["čovjek", "korisnik", "user", "person"],  # osoba, osobe
         "vozač": ["driver", "šofer", "vozar"],  # vozač, vozača
         "kupac": ["customer", "klijent", "mušterija", "stranka"],  # kupac, kupca
@@ -885,9 +884,9 @@ class EmbeddingEngine:
         "kontakt": ["contact", "osoba", "broj telefona"],  # kontakt, kontakta
         "organizacij": ["company", "tvrtka", "firma", "poduzeće"],  # organizacija
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # BOOKINGS & TIME (6 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "rezervacij": ["booking", "najam", "iznajmljivanje", "rent", "narudžba"],  # rezervacija
         "raspored": ["schedule", "plan", "kalendar", "termin"],  # raspored, rasporeda
         "putovanj": ["trip", "vožnja", "ruta", "journey", "put"],  # putovanje
@@ -895,17 +894,17 @@ class EmbeddingEngine:
         "termin": ["slot", "appointment", "vrijeme", "sat"],  # termin, termina
         "smjen": ["shift", "radno vrijeme", "tura"],  # smjena, smjene
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # LOCATIONS (4 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "lokacij": ["mjesto", "adresa", "pozicija", "location", "GPS"],  # lokacija
         "poslovnic": ["branch", "ured", "office", "prodajno mjesto"],  # poslovnica
         "rut": ["route", "put", "pravac", "itinerar"],  # ruta, rute
         "zon": ["zone", "područje", "region", "sektor"],  # zona, zone
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # DOCUMENTS & RECORDS (8 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "dokument": ["document", "papir", "spis", "akt"],  # dokument, dokumenta
         "ugovor": ["contract", "dogovor", "sporazum", "agreement"],  # ugovor
         "izvještaj": ["report", "pregled", "statistika", "analiza"],  # izvještaj
@@ -915,9 +914,9 @@ class EmbeddingEngine:
         "licenc": ["license", "dozvola", "odobrenje"],  # licenca, licence
         "polic": ["policy", "pravilo", "osiguranje"],  # polica, police
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # FINANCIAL (8 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "račun": ["faktura", "invoice", "naplata", "bill"],  # račun, računa
         "cijen": ["trošak", "cost", "price", "iznos", "tarifa"],  # cijena, cijene
         "plaćanj": ["uplata", "payment", "transakcija", "plata"],  # plaćanje
@@ -927,9 +926,9 @@ class EmbeddingEngine:
         "depo": ["deposit", "polog", "jamčevina", "avans"],  # depozit, depozita
         "popust": ["discount", "sniženje", "akcija", "sale"],  # popust, popusta
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # MAINTENANCE & SERVICE (6 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "održavanj": ["servis", "service", "popravak", "maintenance"],  # održavanje
         "inspekcij": ["inspection", "pregled", "kontrola", "check"],  # inspekcija
         "štet": ["oštećenje", "damage", "kvar", "defekt"],  # šteta, štete
@@ -937,44 +936,44 @@ class EmbeddingEngine:
         "popravak": ["repair", "fix", "servis", "obnova"],  # popravak, popravka
         "kvar": ["malfunction", "defekt", "problem", "neispravnost"],  # kvar, kvara
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # COMMUNICATION (5 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "obavijest": ["notification", "notifikacija", "alert", "info"],  # obavijest
         "poruk": ["message", "sms", "email", "pismo"],  # poruka, poruke
         "upozorenje": ["warning", "alert", "alarm", "oprez"],  # upozorenje
         "komentar": ["comment", "napomena", "bilješka", "note"],  # komentar
         "zahtjev": ["request", "molba", "upit", "traženje"],  # zahtjev, zahtjeva
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # DATA & ANALYTICS (5 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "podac": ["data", "informacija", "info", "podatak"],  # podaci, podataka
         "statistik": ["statistics", "analitika", "metrics", "brojke"],  # statistika
         "grafikon": ["chart", "graph", "dijagram", "vizualizacija"],  # grafikon
         "pregled": ["overview", "dashboard", "summary", "sažetak"],  # pregled
         "rezultat": ["result", "output", "ishod", "odgovor"],  # rezultat, rezultata
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # HANDOVER & TRANSFER (5 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "preuzimanj": ["pickup", "primanje", "dohvat"],  # preuzimanje
         "vraćanj": ["return", "dropoff", "povratak"],  # vraćanje
         "primopredaj": ["handover", "primanje", "predaja"],  # primopredaja
         "prijav": ["checkin", "login", "registracija"],  # prijava, prijave
         "odjav": ["checkout", "logout", "odjavljivanje"],  # odjava, odjave
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # CARDS & ACCESS (4 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "kartic": ["card", "ENC", "fuel card", "smartcard"],  # kartica, kartice
         "ključ": ["key", "pristup", "otključavanje"],  # ključ, ključa
         "pristup": ["access", "dozvola", "ulaz"],  # pristup, pristupa
         "uređaj": ["device", "tracker", "GPS", "telematics"],  # uređaj, uređaja
 
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         # CATEGORIES & TYPES (3 groups)
-        # ═══════════════════════════════════════════════════════════════════
+        # ---
         "kategorij": ["category", "tip", "vrsta", "klasa"],  # kategorija
         "mark": ["brand", "proizvođač", "marka"],  # marka, marke
         "model": ["model", "verzija", "varijanta"],  # model, modela

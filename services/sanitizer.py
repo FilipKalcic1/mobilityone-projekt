@@ -1,6 +1,5 @@
 """
 Data Sanitizer
-Version: 11.0
 
 Sanitizes sensitive data before logging or sending to AI.
 

@@ -1,6 +1,5 @@
 """
 Comprehensive tests for services/registry/__init__.py (ToolRegistry class)
-Version: 1.0
 
 Tests cover:
 - __init__ and _load_documentation

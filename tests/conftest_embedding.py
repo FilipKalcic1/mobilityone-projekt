@@ -25,9 +25,9 @@ from services.registry.translation_helper import TranslationHelper, TranslationR
 from services.tool_contracts import UnifiedToolDefinition, ParameterDefinition
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # CORE FIXTURES
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 
 @pytest.fixture
@@ -54,9 +54,9 @@ def translation_helper():
     return TranslationHelper()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # TEST DATA FIXTURES
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 
 @pytest.fixture
@@ -138,9 +138,9 @@ def mixed_tools(sample_tool, unmapped_tool) -> Dict[str, UnifiedToolDefinition]:
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # ASSERTION HELPERS
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 
 @pytest.fixture
@@ -206,9 +206,9 @@ def assert_evaluation_metrics():
     return _assert_metrics
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # MOCK SEARCH FUNCTION
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 
 @pytest.fixture
@@ -249,9 +249,9 @@ def mock_search_function():
     return _mock_search
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 # PERFORMANCE FIXTURES
-# ═══════════════════════════════════════════════════════════════════════════
+# ---
 
 
 @pytest.fixture

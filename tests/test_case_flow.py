@@ -1,6 +1,5 @@
 """
 Test Case Creation Flow
-Version: 1.0
 
 Simulira case creation flow kroz MessageEngine:
 1. Korisnik: "Prijavi kvar - prednja guma ima udarac"

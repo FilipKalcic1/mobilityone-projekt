@@ -1,6 +1,5 @@
 """
 Tests for API Capabilities Discovery
-Version: 1.0
 
 Comprehensive tests for services/api_capabilities.py covering:
 1. ParameterSupport enum

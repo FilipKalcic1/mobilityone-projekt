@@ -1,6 +1,5 @@
 """
 Queue Service
-Version: 10.0
 
 Redis message queues.
 NO DEPENDENCIES on other services.

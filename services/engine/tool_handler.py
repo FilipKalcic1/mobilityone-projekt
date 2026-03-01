@@ -1,6 +1,5 @@
 """
 Tool Handler - Tool execution and dependency chaining.
-Version: 1.0
 
 Single responsibility: Execute tools with automatic dependency resolution.
 """
@@ -62,7 +61,7 @@ class ToolHandler:
         conv_manager,
         sender: str,
         chain_depth: int = 0,
-        user_query: Optional[str] = None  # NEW v10.1: For intent-aware formatting
+        user_query: Optional[str] = None  # For intent-aware formatting
     ) -> Dict[str, Any]:
         """
         Execute tool call with automatic dependency chaining.
@@ -188,7 +187,7 @@ class ToolHandler:
         tool_name: str,
         parameters: Dict[str, Any],
         conv_manager,
-        user_query: Optional[str] = None  # NEW v10.1: For intent-aware formatting
+        user_query: Optional[str] = None  # For intent-aware formatting
     ) -> Dict[str, Any]:
         """Handle successful tool execution."""
         result_dict = {
@@ -204,7 +203,7 @@ class ToolHandler:
         except Exception as e:
             logger.warning(f"Could not serialize API response: {e}")
 
-        # NEW v10.1: Pass user_query for intent-aware formatting
+        # Pass user_query for intent-aware formatting
         response = self.formatter.format_result(result_dict, tool, user_query=user_query)
 
         # Prepend entity feedback if available
@@ -260,7 +259,7 @@ class ToolHandler:
             params_used=parameters
         )
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         ctx = UserContextManager(user_context)
         await self.error_learning.record_error(
             error_code=error_code,
@@ -315,7 +314,7 @@ class ToolHandler:
         if tool.method != "GET":
             return parameters
 
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         person_id = UserContextManager(user_context).person_id
         if not person_id:
             return parameters

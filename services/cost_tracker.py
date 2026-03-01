@@ -1,6 +1,5 @@
 """
 Cost Tracker Service
-Version: 2.0 - Minimal & Clean
 
 Tracks LLM token usage and costs in Redis.
 Single model pricing (gpt-4o-mini) from config.

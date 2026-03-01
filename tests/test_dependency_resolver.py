@@ -1,6 +1,5 @@
 """
 Tests for services/dependency_resolver.py
-Version: 1.0
 
 Comprehensive tests covering:
 - ResolutionResult and EntityReference dataclasses

@@ -1,6 +1,5 @@
 """
 User Context Manager
-Version: 1.0
 
 SINGLE SOURCE OF TRUTH for user context operations.
 
@@ -36,9 +35,9 @@ UUID_PATTERN = re.compile(
 )
 
 
-# =============================================================================
+# ---
 # EXCEPTIONS
-# =============================================================================
+# ---
 
 class ContextError(Exception):
     """Base exception for context errors."""
@@ -83,9 +82,9 @@ class InvalidContextError(ContextError):
         super().__init__(f"Invalid {param}: {reason}")
 
 
-# =============================================================================
+# ---
 # VEHICLE CONTEXT
-# =============================================================================
+# ---
 
 @dataclass
 class VehicleContext:
@@ -187,9 +186,9 @@ class VehicleContext:
         return " - ".join(parts) if parts else "Nepoznato vozilo"
 
 
-# =============================================================================
+# ---
 # USER CONTEXT MANAGER
-# =============================================================================
+# ---
 
 class UserContextManager:
     """
@@ -231,9 +230,9 @@ class UserContextManager:
             f"vehicle={self._vehicle is not None and self._vehicle.is_valid()}"
         )
 
-    # =========================================================================
+    # ---
     # PROPERTIES - Safe access (returns None if missing)
-    # =========================================================================
+    # ---
 
     @property
     def person_id(self) -> Optional[str]:
@@ -295,9 +294,9 @@ class UserContextManager:
         """Check if this is a new user (just onboarded)."""
         return bool(self._raw.get("is_new"))
 
-    # =========================================================================
+    # ---
     # REQUIRED ACCESS - Raises if missing
-    # =========================================================================
+    # ---
 
     def require_person_id(self) -> str:
         """
@@ -366,9 +365,9 @@ class UserContextManager:
             )
         return self.phone
 
-    # =========================================================================
+    # ---
     # VEHICLE SELECTION
-    # =========================================================================
+    # ---
 
     def has_vehicle(self) -> bool:
         """Check if user has a vehicle in context."""
@@ -398,9 +397,9 @@ class UserContextManager:
             )
         return self._vehicle.id
 
-    # =========================================================================
+    # ---
     # VALIDATION HELPERS
-    # =========================================================================
+    # ---
 
     def _is_valid_uuid(self, value: str) -> bool:
         """Check if value is valid UUID."""
@@ -441,9 +440,9 @@ class UserContextManager:
 
         return issues
 
-    # =========================================================================
+    # ---
     # RAW ACCESS (for backwards compatibility)
-    # =========================================================================
+    # ---
 
     def get(self, key: str, default: Any = None) -> Any:
         """

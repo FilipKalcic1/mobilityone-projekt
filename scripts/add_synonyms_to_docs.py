@@ -11,9 +11,9 @@ from datetime import datetime
 # Key tools and their Croatian synonyms
 # These are the most frequently used tools by end users
 TOOL_SYNONYMS = {
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VEHICLE INFO & MILEAGE (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_MasterData": [
         "podaci o vozilu", "informacije o autu", "moje vozilo",
         "koliko imam kilometara", "kolika je kilometraža", "stanje km",
@@ -41,9 +41,9 @@ TOOL_SYNONYMS = {
         "pregled kilometraže", "mileage report", "km izvještaj"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # BOOKING & AVAILABILITY (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_VehicleCalendar": [
         "moje rezervacije", "moji bookingi", "kalendar vozila",
         "kada imam auto", "kad imam vozilo", "raspored rezervacija",
@@ -55,9 +55,9 @@ TOOL_SYNONYMS = {
         "available vehicles", "free cars", "koji auti su dostupni"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # CASES & DAMAGES (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_Cases": [
         "prijavljene štete", "svi kvarovi", "slučajevi",
         "moje prijave", "povijest šteta", "pregled kvarova",
@@ -68,9 +68,9 @@ TOOL_SYNONYMS = {
         "jedna prijava", "podaci o šteti"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # EXPENSES & TRIPS (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_Expenses": [
         "troškovi", "izdaci", "računi", "potrošnja",
         "koliko sam potrošio", "pregled troškova", "svi troškovi",
@@ -81,9 +81,9 @@ TOOL_SYNONYMS = {
         "moja putovanja", "povijest vožnji", "pregled tripova"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # PERSONS & TEAMS (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_PersonData_personIdOrEmail": [
         "moji podaci", "moj profil", "tko sam ja",
         "moje ime", "moj email", "moj telefon",
@@ -98,9 +98,9 @@ TOOL_SYNONYMS = {
         "lista timova", "svi timovi", "team list"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # COMPANIES & PARTNERS (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_Companies": [
         "kompanije", "tvrtke", "firme", "poduzeća",
         "lista kompanija", "sve tvrtke", "company list"
@@ -110,17 +110,17 @@ TOOL_SYNONYMS = {
         "lista partnera", "svi dobavljači", "partner list"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # EQUIPMENT (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_Equipment": [
         "oprema", "inventar", "alati", "sredstva",
         "lista opreme", "sva oprema", "equipment list"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # MILEAGE INPUT (POST/WRITE)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "post_AddMileage": [
         "unesi kilometražu", "upiši km", "dodaj kilometre",
         "nova kilometraža", "prijavi kilometre", "stanje brojača",
@@ -129,9 +129,9 @@ TOOL_SYNONYMS = {
         "unos kilometara", "upis stanja", "record mileage"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # CASE/DAMAGE CREATION (POST/WRITE)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "post_AddCase": [
         "prijavi štetu", "prijavi kvar", "nova šteta",
         "udario sam", "ogrebao sam", "oštetio sam auto",
@@ -140,9 +140,9 @@ TOOL_SYNONYMS = {
         "incident", "nesreća", "oštećenje vozila"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # BOOKING CREATION (POST/WRITE)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "post_VehicleCalendar": [
         "rezerviraj vozilo", "nova rezervacija", "zauzmi auto",
         "trebam vozilo", "trebam auto", "book vehicle",
@@ -154,18 +154,18 @@ TOOL_SYNONYMS = {
         "zauzmi", "book", "create reservation"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # BOOKING CANCELLATION (DELETE)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "delete_VehicleCalendar_id": [
         "otkaži rezervaciju", "poništi booking", "obriši rezervaciju",
         "cancel booking", "ne trebam više auto", "odustani od rezervacije",
         "storniraj booking", "ukloni rezervaciju"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # ORG UNITS & COST CENTERS (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_OrgUnits": [
         "organizacijske jedinice", "odjeli", "sektori",
         "org struktura", "hijerarhija", "departments"
@@ -175,9 +175,9 @@ TOOL_SYNONYMS = {
         "profitni centri", "centri troškova"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # PERIODIC ACTIVITIES / SERVICE (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_PeriodicActivities": [
         "periodične aktivnosti", "servisi", "održavanje",
         "redovne aktivnosti", "planirani servisi", "maintenance"
@@ -187,9 +187,9 @@ TOOL_SYNONYMS = {
         "kada je bio servis", "latest service"
     ],
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VEHICLE CONTRACTS (READ)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     "get_VehicleContracts": [
         "ugovori vozila", "lizing ugovori", "leasing contracts",
         "najam vozila", "rental agreements"

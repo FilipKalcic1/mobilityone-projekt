@@ -1,6 +1,5 @@
 """
 Multi-Tenancy Test Suite
-Version: 1.0
 
 Tests dynamic tenant resolution and routing.
 

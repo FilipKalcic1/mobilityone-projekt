@@ -1,11 +1,10 @@
 """
 User Service
-Version: 11.0
 
 User identity management.
 DEPENDS ON: api_gateway.py, cache_service.py, models.py, config.py
 
-v11.0: Uses SchemaExtractor for schema-driven field access
+Uses SchemaExtractor for schema-driven field access
 """
 
 import logging
@@ -119,7 +118,7 @@ class UserService:
         """
         Try to auto-onboard user from MobilityOne API.
 
-        OPTIMIZED (v2.2):
+        OPTIMIZED:
         - Only 2 key phone variations (international + local) instead of 6
         - Stops on first match (no redundant calls)
         - Fast path: ~1 API call for most cases
@@ -337,7 +336,7 @@ class UserService:
         """
         Save user mapping to database with dynamic tenant resolution.
 
-        MULTI-TENANCY (v11.1):
+        MULTI-TENANCY:
         - Resolves tenant from phone prefix rules
         - Stores tenant_id in UserMapping for future use
         """
@@ -381,7 +380,7 @@ class UserService:
         Uses SchemaExtractor for schema-driven field access.
         Caches result for 5 minutes to reduce API calls.
 
-        MULTI-TENANCY (v11.1):
+        MULTI-TENANCY:
         - Uses tenant_id from UserMapping if available
         - Falls back to phone-prefix rules
         - Finally falls back to default tenant
@@ -406,7 +405,7 @@ class UserService:
             except Exception as e:
                 logger.debug(f"Cache read failed: {e}")
 
-        # DYNAMIC TENANT RESOLUTION (v11.1)
+        # DYNAMIC TENANT RESOLUTION
         tenant_id = await self._tenant_service.get_tenant_for_user(phone, user_mapping)
 
         logger.info(f"BUILD_CONTEXT: person_id={person_id}, phone={phone}, tenant_id={tenant_id} (dynamic)")

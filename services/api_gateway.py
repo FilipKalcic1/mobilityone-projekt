@@ -1,6 +1,5 @@
 """
 API Gateway
-Version: 10.0
 
 Enterprise HTTP client for MobilityOne API.
 DEPENDS ON: token_manager.py, config.py
@@ -256,8 +255,8 @@ class APIGateway:
                 parts = []
                 for k, v in clean.items():
                     if k == "Filter":
-                        # KLJUČNO: Ne enkodiramo '=' u '%3D' jer API to ne priznaje
-                        # safe='=' ostavlja znak jednakosti 'sirovim'
+                        # Don't encode '=' as '%3D' because the API rejects it
+                        # safe='=' keeps the equals sign unencoded
                         parts.append(f"{k}={quote(str(v), safe='=')}")
                     else:
                         parts.append(f"{k}={quote(str(v), safe='')}")
@@ -268,7 +267,7 @@ class APIGateway:
         """
         Parse HTTP response with FIREWALL protection.
 
-        MASTER PROMPT v3.1: JSON ENFORCEMENT
+        JSON ENFORCEMENT
         - Only JSON responses allowed (Content-Type: application/json)
         - HTML responses BLOCKED (auth redirects, nginx errors)
         - User NEVER sees HTML tags or raw error codes
@@ -289,7 +288,7 @@ class APIGateway:
                 f"Content-Type={content_type}"
             )
 
-            # MASTER PROMPT v3.1: User-facing clean error messages
+            # User-facing clean error messages
             if response.status_code == 200:
                 # Even with 200, HTML means auth redirect or wrong endpoint
                 error_msg = (

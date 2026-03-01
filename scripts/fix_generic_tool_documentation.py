@@ -1,6 +1,5 @@
 """
 Fix Generic Tool Documentation
-Version: 1.0
 
 This script updates tool_documentation.json to add entity-specific
 keywords and example queries for all generic tools (_Agg, _GroupBy, etc.)

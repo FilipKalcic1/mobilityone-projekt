@@ -1,6 +1,5 @@
 """
 User Service Tests
-Version: 11.0
 
 Comprehensive tests for services/user_service.py covering:
 - Phone variation generation and lookup (get_active_identity)

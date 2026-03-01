@@ -1,6 +1,5 @@
 """
 Token Manager
-Version: 10.0
 
 OAuth2 token management.
 DEPENDS ON: config.py only

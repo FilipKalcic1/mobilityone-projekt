@@ -553,7 +553,7 @@ class ResponseFormatter:
 
         return truncated + "\n\n_...poruka skraćena._"
 
-    # ========== LIST FORMATTING FOR SELECTION ==========
+    # --- LIST FORMATTING FOR SELECTION ==========
 
     def format_vehicle_list(self, vehicles: List[Dict], filter_text: Optional[str] = None) -> str:
         """

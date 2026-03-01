@@ -1,6 +1,5 @@
 """
 KPI Metrics Exporter for MobilityOne Autoscaler
-Version: 1.0 - Prometheus Integration
 
 METRICS EXPOSED:
 1. pod_startup_latency_seconds - Time for new worker to become active
@@ -47,9 +46,9 @@ except ImportError:
     print("Warning: prometheus_client not installed. Run: pip install prometheus-client")
 
 
-# ============================================================================
+# ---
 # METRICS DEFINITIONS
-# ============================================================================
+# ---
 
 if PROMETHEUS_AVAILABLE:
     # Create custom registry
@@ -243,9 +242,9 @@ def get_container_stats() -> Dict[str, Dict]:
     return stats
 
 
-# ============================================================================
+# ---
 # HTTP SERVER FOR PROMETHEUS SCRAPING
-# ============================================================================
+# ---
 
 class MetricsHandler(BaseHTTPRequestHandler):
     """HTTP handler for Prometheus metrics endpoint."""
@@ -290,9 +289,9 @@ def start_metrics_server(port: int = 9100, collector: Optional[MetricsCollector]
     return server
 
 
-# ============================================================================
+# ---
 # GRAFANA DASHBOARD CONFIG
-# ============================================================================
+# ---
 
 GRAFANA_DASHBOARD = {
     "title": "MobilityOne Autoscaler KPIs",
@@ -345,9 +344,9 @@ GRAFANA_DASHBOARD = {
 }
 
 
-# ============================================================================
+# ---
 # MAIN
-# ============================================================================
+# ---
 
 if __name__ == "__main__":
     import json

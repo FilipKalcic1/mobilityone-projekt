@@ -1,6 +1,5 @@
 """
 Swagger Parser - Parse OpenAPI/Swagger specs into UnifiedToolDefinition.
-Version: 1.0
 
 Single responsibility: Parse Swagger JSON specs and create tool definitions.
 """

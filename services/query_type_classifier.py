@@ -15,7 +15,7 @@ This file contains ONLY:
 2. QueryTypeResult dataclass (used by unified_search.py)
 3. Backwards-compatible functions that delegate to ML
 
-v3.0: Removed 350+ lines of regex patterns - now ML-only.
+Removed 350+ lines of regex patterns - now ML-only.
 """
 
 import logging
@@ -34,11 +34,11 @@ class QueryType(Enum):
     LIST = "list"                         # Lista svih stavki
     AGGREGATION = "aggregation"           # Agregacije, statistike
     TREE = "tree"                         # Hijerarhijska struktura
-    DELETE_CRITERIA = "delete_criteria"   # Brisanje po kriterijima
-    BULK_UPDATE = "bulk_update"           # Bulk/batch ažuriranje
+    DELETE_CRITERIA = "delete_criteria"   # Delete by criteria
+    BULK_UPDATE = "bulk_update"           # Bulk/batch update
     DEFAULT_SET = "default_set"           # Postavljanje kao zadano
-    THUMBNAIL = "thumbnail"               # Sličice, preview
-    PROJECTION = "projection"             # Projekcija određenih polja
+    THUMBNAIL = "thumbnail"               # Thumbnails, preview
+    PROJECTION = "projection"             # Projection of specific fields
     UNKNOWN = "unknown"                   # Nije prepoznato
 
 
@@ -48,8 +48,8 @@ class QueryTypeResult:
     query_type: QueryType
     confidence: float
     matched_pattern: str
-    preferred_suffixes: List[str]      # Sufiksi koji se preferiraju
-    excluded_suffixes: List[str]       # Sufiksi koji se isključuju
+    preferred_suffixes: List[str]      # Preferred suffixes
+    excluded_suffixes: List[str]       # Excluded suffixes
 
 
 # Backwards-compatible interface - delegates to ML classifier

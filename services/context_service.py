@@ -1,17 +1,15 @@
 """
 Context Service
-Version: 12.0
 
 User context and conversation history management.
 NO DEPENDENCIES on other services (except config, cache_service).
 
-Phase 4 (v12.0):
+Phase 4:
 - UserContext Pydantic model for type safety
 - get_user_context() with cache-first strategy
 - Guest Context fallback (Fail-Open design)
 - Phone number validation
 
-NEW v11.0:
 - Phone number validation in context operations
 - Prevents UUID/phone mixup in context keys
 - Improved logging for forensic debugging
@@ -36,9 +34,9 @@ UUID_PATTERN = re.compile(
 )
 
 
-# =============================================================================
+# ---
 # USER CONTEXT MODEL (Phase 4)
-# =============================================================================
+# ---
 
 class VehicleContext(BaseModel):
     """Vehicle information from MasterData API."""
@@ -233,7 +231,7 @@ class ContextService:
     """
     Manages conversation history in Redis.
 
-    NEW v11.0: Added phone validation to prevent UUID/phone mixup.
+    Added phone validation to prevent UUID/phone mixup.
     """
 
     def __init__(self, redis_client):
@@ -251,7 +249,7 @@ class ContextService:
         """
         Validate user_id and warn if it looks like a UUID instead of phone number.
 
-        NEW v11.0: Detects the UUID trap where person_id gets used
+        Detects the UUID trap where person_id gets used
         instead of phone number for context keys. Logs an error but
         allows the operation to proceed (some cases may be intentional).
 
@@ -281,7 +279,7 @@ class ContextService:
         """
         Build Redis key for user history.
 
-        NEW v11.0: Logs warning if user_id looks like UUID.
+        Logs warning if user_id looks like UUID.
         """
         self._validate_user_id(user_id)
         return f"chat_history:{user_id}"

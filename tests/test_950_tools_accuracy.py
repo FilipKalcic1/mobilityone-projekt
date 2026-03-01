@@ -1,6 +1,5 @@
 """
 Comprehensive 950-Tool Accuracy Test
-Version: 1.0
 
 Tests ALL 950 tools in the registry for:
 1. Search accuracy: Does semantic search find the right tool for its own example queries?
@@ -33,9 +32,9 @@ for name in ['services', 'openai', 'httpx', 'httpcore']:
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # TEST DATA: Edge cases and adversarial queries
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 ADVERSARIAL_QUERIES = [
     # 1. Typos + slang
@@ -111,9 +110,9 @@ ADVERSARIAL_QUERIES = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 # FLOW PHRASES TESTS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---
 
 PHRASE_MATCHING_TESTS = [
     # (text, expected_show_more, expected_yes, expected_no, expected_exit)

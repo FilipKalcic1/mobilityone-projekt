@@ -1,6 +1,5 @@
 """
 Ambiguity Detector - Detects ambiguous tool selections and provides disambiguation hints.
-Version: 1.0
 
 When multiple tools have similar scores and the same suffix pattern (e.g., all _Agg tools),
 the query is considered "ambiguous" and needs disambiguation.
@@ -218,7 +217,7 @@ class AmbiguityDetector:
                 return entity
 
         # Check user context for vehicle
-        # v22.0: Use UserContextManager for validated access
+        # Use UserContextManager for validated access
         if user_context:
             ctx = UserContextManager(user_context)
             if ctx.vehicle_id:

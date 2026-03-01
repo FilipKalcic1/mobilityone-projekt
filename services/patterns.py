@@ -7,7 +7,6 @@ Previously duplicated in:
 - dependency_resolver.py (lines 145-174)
 - tool_registry.py (various locations)
 
-Version: 1.0
 """
 
 import re
@@ -42,9 +41,9 @@ class PatternRegistry:
         plates = PatternRegistry.find_plates(text)
     """
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # UUID PATTERNS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Standard UUID format: 8-4-4-4-12 hex characters
     UUID_PATTERN_STR = r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
@@ -53,9 +52,9 @@ class PatternRegistry:
     # UUID with capture group (for extraction)
     UUID_CAPTURE = re.compile(f'({UUID_PATTERN_STR})', re.IGNORECASE)
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # LICENSE PLATE PATTERNS (Croatian)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Croatian plates: ZG-1234-AB, ZG 1234 AB, ZG1234AB
     # Supports Croatian diacritics: Č, Ć, Ž, Š, Đ
@@ -65,17 +64,17 @@ class PatternRegistry:
     # For finding plates in text (with capture group)
     CROATIAN_PLATE_CAPTURE = re.compile(f'({CROATIAN_PLATE_STR})', re.IGNORECASE)
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VIN PATTERNS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Vehicle Identification Number: 17 alphanumeric (no I, O, Q)
     VIN_PATTERN_STR = r'[A-HJ-NPR-Z0-9]{17}'
     VIN_PATTERN = re.compile(f'^{VIN_PATTERN_STR}$')
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # CONTACT PATTERNS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Email address
     EMAIL_PATTERN_STR = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
@@ -85,9 +84,9 @@ class PatternRegistry:
     CROATIAN_PHONE_STR = r'(\+385|00385|0)?[1-9]\d{7,8}'
     CROATIAN_PHONE = re.compile(f'^{CROATIAN_PHONE_STR}$')
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VALUE PATTERNS (for parameter resolution)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     @classmethod
     def get_value_patterns(cls) -> List[ValuePattern]:
@@ -125,9 +124,9 @@ class PatternRegistry:
             ),
         ]
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # HELPER METHODS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     @classmethod
     def find_uuids(cls, text: str) -> List[str]:
@@ -190,9 +189,9 @@ class PatternRegistry:
         return bool(cls.EMAIL_PATTERN.match(text.strip()))
 
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # NAMING CONVENTIONS
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
 # There are THREE naming layers, each serving a different purpose:
 #
@@ -268,17 +267,12 @@ def normalize_context_key(param_name: str) -> str:
     return CONTEXT_KEY_CANONICAL.get(param_name.lower())
 
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # INTENT DETECTION - NOW USES ML CLASSIFIER
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
-# CHANGELOG v2.0:
-# - REMOVED: 100+ regex patterns for intent detection
-# - ADDED: ML-based detection via IntentClassifier (99.25% accuracy)
-# - KEPT: Backwards-compatible interface (detect_intent, QueryIntent)
-#
-# The ML model handles Croatian and English naturally, including
-# typos, diacritics variations, and complex phrase structures.
+# ML-based detection via IntentClassifier replaces regex patterns.
+# Handles Croatian and English naturally, including typos and diacritics.
 
 # Patterns indicating USER-SPECIFIC intent ("my vehicle", "moje vozilo")
 USER_SPECIFIC_PATTERNS = [
@@ -302,9 +296,9 @@ USER_SPECIFIC_PATTERNS = [
     r'do\s+i\s+have', r'i\s+have',
 ]
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # PRE-COMPILED PATTERNS (Performance optimization)
-# ═══════════════════════════════════════════════════════════════
+# ---
 # Compiled once at module load, reused on every call
 
 USER_SPECIFIC_COMPILED = [re.compile(p, re.IGNORECASE) for p in USER_SPECIFIC_PATTERNS]
@@ -344,9 +338,9 @@ USER_FILTER_PARAMS = {
     'createdby', 'created_by',
 }
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # PERSON ID INJECTION SKIP PATTERNS
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
 # Tools matching these patterns should NOT have PersonId auto-injected
 # because they don't operate on user-specific data.
@@ -378,9 +372,9 @@ def should_skip_person_id_injection(tool_id: str) -> bool:
     return any(pattern in tool_lower for pattern in PERSON_ID_SKIP_PATTERNS)
 
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # INJECTABLE CONTEXT KEYS
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
 # Canonical context keys that should be injected into nested objects.
 # Used by parameter_manager.py for automatic context injection.
@@ -419,9 +413,9 @@ def get_injectable_context(user_context: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # QUERY INTENT DETECTION - ML-BASED
-# ═══════════════════════════════════════════════════════════════
+# ---
 
 from enum import Enum
 
