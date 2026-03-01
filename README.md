@@ -3,8 +3,8 @@
 AI-powered fleet management chatbot that connects WhatsApp users to the MobilityOne API platform via Azure OpenAI.
 
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-502%20passing-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-35%25-yellow)
+![Tests](https://img.shields.io/badge/tests-2764%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-orange)
 ![Security](https://img.shields.io/badge/security-bandit-green)
 ![License](https://img.shields.io/badge/license-Proprietary-red)
@@ -66,7 +66,7 @@ Admin API (8080) --> PostgreSQL (audit_logs, hallucination_reports)
 │   ├── context/             # User context management
 │   └── reasoning/           # Query planning
 │
-├── tests/                   # pytest test suite (502 tests)
+├── tests/                   # pytest test suite (2764 tests)
 ├── scripts/                 # Utility scripts
 │   ├── benchmarks/          # Manual integration/accuracy benchmarks
 │   ├── sync_tools.py        # Swagger tool synchronization
@@ -111,7 +111,7 @@ make docker-up    # Start full stack (PostgreSQL, Redis, API, Worker, Admin)
 ## Development
 
 ```bash
-make test         # Run all 502 tests
+make test         # Run all 2764 tests
 make coverage     # Run tests with coverage report
 make lint         # Run ruff linter
 make format       # Auto-format code
