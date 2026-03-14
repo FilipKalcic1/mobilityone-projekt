@@ -32,7 +32,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Security, Depends, Request
+from fastapi import FastAPI, HTTPException, Security, Depends, Request, Query
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -483,7 +483,7 @@ async def metrics():
     description="Get list of hallucinations reported by users ('krivo' feedback)"
 )
 async def list_hallucinations(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=1000),
     unreviewed_only: bool = True,
     tenant_filter: Optional[str] = None,
     admin_id: str = Depends(check_rate_limit),
@@ -689,7 +689,7 @@ async def get_statistics(
     description="View admin actions audit trail"
 )
 async def get_audit_log(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=1000),
     admin_id: str = Depends(check_rate_limit),
     service: AdminReviewService = Depends(get_admin_service)
 ):

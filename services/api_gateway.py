@@ -271,8 +271,14 @@ class APIGateway:
         CRITICAL FIX: If path is already a complete URL (starts with http),
         don't prepend base_url - just use it as-is.
         """
-        # If path is already a complete URL, use it directly
+        # If path is already a complete URL, validate it matches our base domain
         if path.startswith("http://") or path.startswith("https://"):
+            from urllib.parse import urlparse
+            base_host = urlparse(self.base_url).hostname
+            path_host = urlparse(path).hostname
+            if path_host != base_host:
+                logger.warning(f"SSRF blocked: {path} does not match base domain {base_host}")
+                raise ValueError(f"URL host mismatch: expected {base_host}")
             url = path
         else:
             # Relative path - prepend base_url
