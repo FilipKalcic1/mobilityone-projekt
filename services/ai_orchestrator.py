@@ -226,7 +226,7 @@ class AIOrchestrator:
 
                 if not response.choices:
                     logger.error("Empty AI response")
-                    return {"type": "error", "content": "AI returned empty response"}
+                    return {"type": "error", "content": "AI sustav nije vratio odgovor. Pokusajte ponovno."}
 
                 message = response.choices[0].message
 
@@ -299,7 +299,7 @@ class AIOrchestrator:
                 LLM_REQUESTS_TOTAL.labels(model=self.model, status="error").inc()
                 LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                 logger.error(f"API error {e.status_code}: {e.message}")
-                return {"type": "error", "content": f"API greška: {e.message}"}
+                return {"type": "error", "content": "Doslo je do greske u komunikaciji. Pokusajte ponovno."}
 
             except APITimeoutError as e:
                 LLM_REQUESTS_TOTAL.labels(model=self.model, status="timeout").inc()
@@ -321,10 +321,11 @@ class AIOrchestrator:
 
             except Exception as e:
                 logger.error(f"AI error: {e}", exc_info=True)
-                return {"type": "error", "content": f"Greška: {e}"}
+                return {"type": "error", "content": "Doslo je do neocekivane greske. Pokusajte ponovno."}
 
         # Should not reach here, but just in case
-        return {"type": "error", "content": f"Greška: {last_error}"}
+        logger.error(f"All {self.MAX_RETRIES} AI retries exhausted, last_error={last_error}")
+        return {"type": "error", "content": "Doslo je do greske. Pokusajte ponovno."}
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff with jitter."""
