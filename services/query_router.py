@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
-from services.intent_classifier import get_intent_classifier, predict_with_ensemble
+from services.intent_classifier import predict_with_ensemble
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +49,6 @@ class QueryRouter:
     - Handles typos, variations, and Croatian diacritics
     - Single model instead of 51 regex rules
     """
-
-    def __init__(self):
-        """Initialize router with ML classifier."""
-        self._classifier = None
-
-    @property
-    def classifier(self):
-        """Lazy load classifier."""
-        if self._classifier is None:
-            self._classifier = get_intent_classifier()
-        return self._classifier
 
     def route(self, query: str, user_context: Optional[Dict[str, Any]] = None) -> RouteResult:
         """

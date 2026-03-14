@@ -249,7 +249,7 @@ class UnifiedSearch:
         # V3.0: Enable auto_detect_entity for better entity-based filtering
         faiss_results = await faiss_store.search(
             query=query,
-            top_k=max(top_k * 4, 80),  # Get at least 80 results for proper boosting
+            top_k=max(top_k * 2, 40),  # Get enough for boosting without wasting computation
             action_filter=action_filter,
             auto_detect_entity=True  # V3.0: Enable entity detection for search space reduction
         )
@@ -346,7 +346,8 @@ class UnifiedSearch:
         query_type_result: QueryTypeResult
     ) -> List[SearchResult]:
         """Apply all boosting factors to results."""
-        query_lower = query.lower()
+        from services.intent_classifier import normalize_diacritics
+        query_lower = normalize_diacritics(query.lower())
 
         # Get matched categories
         matched_categories = self._match_categories(query_lower)
@@ -356,12 +357,15 @@ class UnifiedSearch:
         excluded_suffixes = query_type_result.excluded_suffixes
         query_type_confidence = query_type_result.confidence
 
-        # ENTITY DETECTION - boost tools that match entity mentioned in query
+        # ENTITY DETECTION - pre-compute once outside loop (was N*M inside loop)
         detected_entity = None
         for entity, keywords in self.ENTITY_KEYWORDS.items():
             if any(kw in query_lower for kw in keywords):
                 detected_entity = entity
                 break
+
+        # Pre-compute query words for documentation matching (normalized for diacritics)
+        query_words = [w for w in query_lower.split() if len(w) > 3]
 
         for result in results:
             boosts = []  # List of (name, multiplier, score_after)
@@ -423,15 +427,13 @@ class UnifiedSearch:
                     " ".join(doc.get("example_queries_hr", []))
                 ]).lower()
 
-                # Check if query words appear in documentation
-                query_words = [w for w in query_lower.split() if len(w) > 3]
+                # Check if query words appear in documentation (uses pre-computed query_words)
                 if any(word in doc_text for word in query_words):
                     result.score *= self.DOCUMENTATION_BOOST
                     boosts.append(("doc", self.DOCUMENTATION_BOOST, result.score))
 
-            # Query Type boost (NEW in v2.0) - replaces example boost
-            # Lowered threshold from 0.7 to 0.4 for broader coverage
-            if query_type_confidence >= 0.4 and preferred_suffixes:
+            # Query Type boost - only apply when classifier is reasonably confident
+            if query_type_confidence >= 0.65 and preferred_suffixes:
                 # Boost if tool matches preferred suffix
                 is_preferred = any(
                     tool_lower.endswith(suffix.lower())

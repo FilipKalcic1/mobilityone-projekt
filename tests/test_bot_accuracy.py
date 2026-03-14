@@ -193,13 +193,7 @@ INTENT_TEST_CASES: Dict[str, List[str]] = {
         "zelim otkazati rezervaciju",
         "cancel rezervacije",
     ],
-    "GET_AVAILABLE_VEHICLES": [
-        "dostupna vozila",
-        "slobodna vozila za sutra",
-        "koja vozila su slobodna",
-        "provjeri dostupnost",
-        "ima li slobodnih auta",
-    ],
+    # GET_AVAILABLE_VEHICLES merged into BOOK_VEHICLE (same tool + flow)
 
     # ── Mileage ──────────────────────────────────────────────────────
     "INPUT_MILEAGE": [

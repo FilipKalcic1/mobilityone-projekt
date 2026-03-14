@@ -55,7 +55,7 @@
 {"text": "daj mi personid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
 {"text": "mozete li kad je servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes sto znas", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "vozila na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "vozila na raspolaganju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li udario sam", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "mozete li pokazi mi vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li ne trebam vise auto", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
@@ -204,7 +204,7 @@
 {"text": "jel mozes daj mi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes ogrebala sam auto", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "daj mi km", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "sto mogu uzeti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto mogu uzeti", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes stanje kilometraze", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li sto znas", "intent": "HELP", "action": "NONE", "tool": null}
@@ -212,7 +212,7 @@
 {"text": "hvala?", "intent": "THANKS", "action": "NONE", "tool": null}
 {"text": "stanje kilometraze?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "kolika je kilometraza vozila", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji auto je slobodan", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji auto je slobodan", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moze li stavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "leasing kompanija", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "koja je firma", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
@@ -257,7 +257,7 @@
 {"text": "mozete li obrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
 {"text": "unos kilometraze?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "trebam vozilo od 8 do 17", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "nezauzeta vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "nezauzeta vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "help?", "intent": "HELP", "action": "NONE", "tool": null}
 {"text": "moze li odustani od rezervacije", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
 {"text": "odrzavanje?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
@@ -282,7 +282,7 @@
 {"text": "jel mozes nesto ne radi", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "moze li lista mojih rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "ukupna potrosnja", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
-{"text": "dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moze li koliko auta ima", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "jel mozes prometna dozvola", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
 {"text": "moze li leasing kompanija", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
@@ -318,14 +318,14 @@
 {"text": "molim ponisti stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "moj broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "mozete li registracija istice", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "sto mogu rezervirati", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto mogu rezervirati", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "otkazi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
 {"text": "jel mozes tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "datum registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "zelim obrisati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "moze li izbrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
 {"text": "istek registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "koje vozilo je dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koje vozilo je dostupno", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li oprema vozila", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li lista slucajeva", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "pokazi dokumente", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
@@ -350,7 +350,7 @@
 {"text": "molim te ogrebala sam auto", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "moze li moji bookingi", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "koji je moj email?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "dostupni automobili", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupni automobili", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te fala", "intent": "THANKS", "action": "NONE", "tool": null}
 {"text": "koliko auta?", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "mozete li moja vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
@@ -406,7 +406,6 @@
 {"text": "mozete li guma je pukla", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "molim te trenutna kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "pregled rezervacija?", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "expenses", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "moj tenant?", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
 {"text": "mozete li unos kilometraze", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "mozete li zdravo", "intent": "GREETING", "action": "NONE", "tool": null}
@@ -427,7 +426,7 @@
 {"text": "popis steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "lista racuna", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "moje vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "koja vozila su dostupna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja vozila su dostupna", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te rezerviraj vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "koliko auta ima", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "molim te nova kilometraza", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
@@ -451,7 +450,7 @@
 {"text": "moze li moji podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "pregled steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "moze li moji slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "slobodna vozila za danas", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodna vozila za danas", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "kada je servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "pokazi tel", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "daj mi popis vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
@@ -551,7 +550,7 @@
 {"text": "moze li ostetio sam vozilo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "jel mozes dokumentacija", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
 {"text": "molim te sto je moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "koja kola su slobodna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja kola su slobodna", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "ima li slobodnih auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "daj mi popis troskova", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "pokazi mi flotu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
@@ -567,7 +566,7 @@
 {"text": "jel mozes trebam kola", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "mozete li popis putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "koji auto imam?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji automobili su slobodni", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji automobili su slobodni", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li ponisti rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
 {"text": "mozete li koja je firma", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te koliko imam kilometara", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
@@ -620,7 +619,7 @@
 {"text": "molim te imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "mozete li problem s vozilom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "molim te pokazi mi vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "koliko vozila ima u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko vozila ima u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
 {"text": "ne radi auto", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "prosli servis?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li pregled steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
@@ -683,7 +682,7 @@
 {"text": "jel mozes koliko je preslo vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "koliko auta ima?", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "mozete li podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "trebam vidjeti slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "trebam vidjeti slobodna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li popis opreme", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li kada je registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li koji je moj broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
@@ -731,7 +730,7 @@
 {"text": "molim te moji podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "koji je person", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
 {"text": "jel mozes ne trebam vise vozilo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "dostupna vozila za danas", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupna vozila za danas", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li rezerviraj za sutra", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "do servisa?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te pregled rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
@@ -773,7 +772,7 @@
 {"text": "mozete li thanks", "intent": "THANKS", "action": "NONE", "tool": null}
 {"text": "godisnji troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "moj telefon?", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "pokazi mi sto je dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi mi sto je dostupno", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li zelim auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "lizing provider?", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li problem s autom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
@@ -805,11 +804,11 @@
 {"text": "moje korisnicke informacije", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "trebam obrisati prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "jel mozes help", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "koja vozila mogu koristiti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja vozila mogu koristiti", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te tko je lizing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te koja je firma", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "daj mi broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "slobodna kola", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodna kola", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moji izdaci", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "lista mojih rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "molim te daj mi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
@@ -903,14 +902,14 @@
 {"text": "mozete li daj mi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "mozete li pokazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "molim te prosli servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koja vozila su sada slobodna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja vozila su sada slobodna", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "treba mi auto?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "mozete li kako se zovem", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "papiri od auta", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
 {"text": "trebam vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "brisanje prijave", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "molim te zelim unijeti km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "pregled slobodnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pregled slobodnih vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes trebam vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "trebam auto za ponedjeljak?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "prikazi izdatke", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
@@ -926,7 +925,7 @@
 {"text": "jel mozes ne trebam vise auto", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
 {"text": "mozete li popis steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "prikazi sve automobile", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koja kola mogu uzeti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja kola mogu uzeti", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te hvala puno", "intent": "THANKS", "action": "NONE", "tool": null}
 {"text": "mozete li moj tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
 {"text": "sto je moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
@@ -948,8 +947,8 @@
 {"text": "jel mozes moj email", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "ponisti slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "mozete li sljedeci servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozes pokazati slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
-{"text": "popis dostupnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "mozes pokazati slobodna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "popis dostupnih vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te kada je servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moja putovanja?", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "mozete li svi podaci", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
@@ -1036,7 +1035,7 @@
 {"text": "sva registrirana vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "moze li koliko kilometara ima moje vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "otkazi rezervaciju?", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "pokazi dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi dostupna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "informacije o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "mozete li povijest servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li tko je lizing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
@@ -1048,7 +1047,7 @@
 {"text": "molim te ne trebam vise vozilo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
 {"text": "kilometraza vozila", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te motor ne radi", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "zelim vidjeti dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "zelim vidjeti dostupna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "jel mozes povijest voznji", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "moj id korisnika", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
@@ -1071,7 +1070,7 @@
 {"text": "molim te lizing provider", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "pokazi moje podatke", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "do kad vrijedi registracija?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "pokazi slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi slobodna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te pokazi mi auto", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li moja putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "flota", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
@@ -1102,7 +1101,7 @@
 {"text": "molim te sto jos znas o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes koja je tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li koliko do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koja vozila su trenutno dostupna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja vozila su trenutno dostupna", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "hocu rezervirati vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "kojoj kompaniji pripada moje vozilo?", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "udario sam", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
@@ -1160,7 +1159,7 @@
 {"text": "molim te koliko auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "koliko vozila imam", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "jel mozes koliko kilometara ima moje vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "slobodni auti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodni auti", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes unos kilometraze", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "molim te povijest servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li vlasnik vozila", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
@@ -1191,7 +1190,7 @@
 {"text": "ponistavanje stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "mozete li ima li klimu", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "koje auto mogu koristiti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koje auto mogu koristiti", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moze li nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "koje vozilo imam?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te kilometraza vozila", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
@@ -1208,14 +1207,14 @@
 {"text": "molim te koliko ima vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "gsm broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "moze li hvala puno", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "dostupni auti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupni auti", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moji osobni podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
 {"text": "booking auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "izbrisi stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "molim te zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "mozete li leasing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li imam li rezervaciju", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "lista slobodnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "lista slobodnih vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "lista troskova", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "mozete li daj info o autu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "unos kilometraze", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
@@ -1223,7 +1222,7 @@
 {"text": "jel mozes unesi 15000", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "istjece registracija?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li moji slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "ima li sto slobodno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "ima li sto slobodno", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te daj info o autu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "popis auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "mozete li ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
@@ -1236,7 +1235,7 @@
 {"text": "moze li kada istice registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te sto je moj person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
 {"text": "jel mozes koliko je presao auto", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "dostupna vozila za sutra", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "dostupna vozila za sutra", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes trenutna kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "moze li pokazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "molim te koliko je presao auto", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
@@ -1308,7 +1307,6 @@
 {"text": "moze li prometna dozvola", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
 {"text": "moze li koji auto imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "pokazi mi kilometrazu", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "available vehicles", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "udario sam?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "mozete li nesto ne radi", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "molim te ponisti rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
@@ -1323,7 +1321,7 @@
 {"text": "moze li obrisi voznju", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
 {"text": "info o vozilu?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes prikazi rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "daj slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "daj slobodna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li kompanija vozila", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes sto mogu pitati", "intent": "HELP", "action": "NONE", "tool": null}
 {"text": "mozete li pokazi mi kilometrazu", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
@@ -1343,7 +1341,7 @@
 {"text": "jel mozes koji je moj broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "personid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
 {"text": "jel mozes slobodna auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "popis slobodnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "popis slobodnih vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes oprema vozila", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li sto sve znas", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "koja tvrtka", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
@@ -1358,11 +1356,11 @@
 {"text": "mozete li treba mi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes moj person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
 {"text": "moze li kada je registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "sto je slobodno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto je slobodno", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moze li koji je moj person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
 {"text": "molim te prikazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "molim te imam li rezervaciju", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "sto je dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "sto je dostupno", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "molim te koja tvrtka", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
 {"text": "daj mi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "mozete li svi slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
@@ -1380,7 +1378,7 @@
 {"text": "jel mozes ostetila sam vozilo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "datum registracije?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te leasing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "automobili na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "automobili na raspolaganju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moze li problem s autom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "obrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
 {"text": "unesi km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
@@ -1404,7 +1402,7 @@
 {"text": "moze li tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "trebam auto za ponedjeljak", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes stanje kilometar sata", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "molim slobodna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "moze li lizing provider", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "daj mi vozilo?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
@@ -1474,7 +1472,7 @@
 {"text": "nesto ne radi", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "moze li papiri od auta", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
 {"text": "jel mozes unesi km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "lista dostupnih vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "lista dostupnih vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "vrijedi registracija?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
 {"text": "jel mozes moje voznje", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "pokazi sve aute", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
@@ -1523,23 +1521,21 @@
 {"text": "kako ovo radi?", "intent": "HELP", "action": "NONE", "tool": null}
 {"text": "pokazi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "sto sve znas", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "ima li dostupnih auta", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "ima li dostupnih auta", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "prikazi slobodna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "prikazi slobodna vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "mozete li hi", "intent": "GREETING", "action": "NONE", "tool": null}
 {"text": "moje voznje", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "sva vozila u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "lista slucajeva?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
 {"text": "putni nalozi?", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
 {"text": "jel mozes hej", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "prazna vozila za rezervaciju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
-{"text": "koja su vozila slobodna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
-{"text": "ima li slobodnih auta", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
-{"text": "provjeri dostupnost vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
-{"text": "koji su auti dostupni", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
-{"text": "slobodna vozila za sutra", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "prazna vozila za rezervaciju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koja su vozila slobodna", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "provjeri dostupnost vozila", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji su auti dostupni", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "slobodna vozila za sutra", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "koliko je kostalo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
-{"text": "koliko sam potrosio", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "pokazi mi troskove vozila", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "cijena odrzavanja", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "ukupni troskovi za mjesec", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
@@ -1547,9 +1543,7 @@
 {"text": "svi automobili", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "vozni park", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "popis svih auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko imamo auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
-{"text": "pokazi mi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koja vozila imamo", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko imamo auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
 {"text": "moj broj mobitela", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "koji mi je telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "daj mi moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
@@ -1560,14 +1554,31 @@
 {"text": "makni taj slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "ne trebam vise tu stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
 {"text": "povuci prijavu kvara", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
-{"text": "koji je moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "reci mi moj broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "pod kojim brojem sam", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "moj kontakt broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "my phone number", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "what is my phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "show my phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "delete case", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
-{"text": "remove case", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
-{"text": "delete my case", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko auta imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko vozila ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ukupan broj auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko ukupno automobila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "broj auta u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "moze ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "reci mi koliko ima vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj mi listu auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi listu vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ispisi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj pregled vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko je vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ukupno koliko imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko ima auta u firmi", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "troskovi za vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koliko kosta odrzavanje", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "izdaci za auto", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "zelim napraviti rezervaciju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "kreiraj novu rezervaciju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "nova rezervacija", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}

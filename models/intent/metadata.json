@@ -95,10 +95,6 @@
     "action": "GET",
     "tool": "get_MasterData"
   },
-  "GET_AVAILABLE_VEHICLES": {
-    "action": "GET",
-    "tool": "get_AvailableVehicles"
-  },
   "CANCEL_RESERVATION": {
     "action": "DELETE",
     "tool": "delete_VehicleCalendar_id"

@@ -165,7 +165,7 @@ Peak memory at 20 concurrent messages: **~280MB** (28% of 1GB). Burst workers (K
 
 - Bot self-identifies as `"MobilityOne AI asistent"` in all system prompts AND all greeting responses (`flow_phrases.py`)
 - Hallucination detection: `HallucinationReport` table with `reviewed` flag and admin review workflow
-- Confidence threshold: 90%+ for ML fast path, lower confidence defers to LLM with human review capability
+- Confidence threshold: 85%+ for ML fast path (99.24% model accuracy justifies lower threshold), lower confidence defers to LLM with human review capability
 - Full audit trail: `Message → ToolExecution → HallucinationReport → AuditLog` tables
 
 ### Croatian Locale

@@ -282,9 +282,9 @@ class UnifiedRouter:
         logger.info(f"UNIFIED ROUTER: Trying QueryRouter for query='{query[:50]}'")
         qr_result = self.query_router.route(query, user_context)
         logger.info(f"UNIFIED ROUTER: QR result: matched={qr_result.matched}, conf={qr_result.confidence}, flow={qr_result.flow_type if qr_result.matched else None}")
-        if qr_result.matched and qr_result.confidence >= 0.90:
-            # ML classifier already filtered below 0.85 in QueryRouter
-            # 90%+ confidence is reliable enough to skip LLM call (~6s saved)
+        if qr_result.matched and qr_result.confidence >= 0.85:
+            # ML accuracy is 99.24% — at 85%+ confidence, prediction is reliable
+            # Previous 90% threshold wasted LLM calls for the 85-89% zone
             logger.info(
                 f"UNIFIED ROUTER: Fast path via QueryRouter → "
                 f"{qr_result.tool_name or qr_result.flow_type} (conf={qr_result.confidence})"

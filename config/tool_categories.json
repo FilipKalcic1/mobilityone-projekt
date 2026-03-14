@@ -1469,7 +1469,7 @@
         "availability"
       ],
       "typical_intents": [
-        "GET_AVAILABLE_VEHICLES",
+        "BOOK_VEHICLE",
         "GET_VEHICLE_EXTERNAL_INFO"
       ],
       "tools": [

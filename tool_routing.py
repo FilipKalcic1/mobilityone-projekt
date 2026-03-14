@@ -99,12 +99,7 @@ INTENT_CONFIG = {
         "response_template": None,
         "flow_type": "delete_booking",
     },
-    "GET_AVAILABLE_VEHICLES": {
-        "tool": "get_AvailableVehicles",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "booking",
-    },
+    # GET_AVAILABLE_VEHICLES merged into BOOK_VEHICLE (same tool + flow_type, split caused 28% of ML errors)
 
     # ── Mileage ─────────────────────────────────────────────────
     "INPUT_MILEAGE": {
@@ -406,7 +401,7 @@ FLOW_TRIGGERS = {
 # ──────────────────────────────────────────────────────────────
 
 def validate_tool_routing():
-    """Log warnings if PRIMARY_TOOLS and PRIMARY_ACTION_TOOLS are inconsistent."""
+    """Validate consistency across all routing config dicts at import time."""
     primary_tools_lower = {k.lower() for k in PRIMARY_TOOLS}
     action_tools = set(PRIMARY_ACTION_TOOLS.keys())
 
@@ -417,6 +412,24 @@ def validate_tool_routing():
         logger.warning(f"Tools in PRIMARY_TOOLS without keyword boosts: {missing_keywords}")
     if missing_descriptions:
         logger.warning(f"Tools in PRIMARY_ACTION_TOOLS without LLM descriptions: {missing_descriptions}")
+
+    # Validate INTENT_CONFIG tools exist in PRIMARY_TOOLS
+    known_tools = primary_tools_lower | {None}
+    for intent, config in INTENT_CONFIG.items():
+        tool = config.get("tool")
+        if tool and tool.lower() not in known_tools:
+            logger.warning(f"INTENT_CONFIG[{intent}].tool='{tool}' not in PRIMARY_TOOLS")
+
+    # Validate all flow_types have handlers
+    known_flow_types = {
+        "simple", "list", "direct_response",
+        "booking", "mileage_input", "case_creation",
+        "delete_booking", "delete_case", "delete_trip",
+    }
+    for intent, config in INTENT_CONFIG.items():
+        ft = config.get("flow_type")
+        if ft and ft not in known_flow_types:
+            logger.warning(f"INTENT_CONFIG[{intent}].flow_type='{ft}' has no handler")
 
 
 validate_tool_routing()

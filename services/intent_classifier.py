@@ -6,7 +6,7 @@ REPLACES:
 - query_router.py routing logic (660 lines of regex)
 
 Uses trained ML model for intent classification.
-96.99% held-out accuracy (TF-IDF), 94.25% (embedding).
+Accuracy updated after each retrain — see training output for current metrics.
 """
 
 import json
@@ -630,7 +630,7 @@ class IntentClassifier:
             self._sync_embedding_client = AzureOpenAI(
                 azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
                 api_key=settings.AZURE_OPENAI_API_KEY,
-                api_version="2024-02-15-preview"
+                api_version=settings.AZURE_OPENAI_API_VERSION
             )
 
         # Get query embedding (sync)
@@ -743,8 +743,8 @@ def predict_with_ensemble(query: str) -> IntentPrediction:
     Smart ensemble: TF-IDF first, semantic fallback.
 
     1. Use TF-IDF (fast, no API calls)
-    2. If confidence < 75%, use semantic embeddings (understands meaning)
-    3. Return the better prediction
+    2. If confidence < 85%, use semantic embeddings (understands meaning)
+    3. Return the more confident prediction
 
     This gives speed + generalization.
     """
