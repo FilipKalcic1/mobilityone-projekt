@@ -27,7 +27,7 @@ import redis.asyncio as aioredis
 import logging
 
 from config import get_settings
-from services.tracing import get_tracer, trace_span
+from services.tracing import get_tracer
 
 settings = get_settings()
 logger = logging.getLogger(__name__)

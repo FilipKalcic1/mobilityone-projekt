@@ -409,7 +409,8 @@ async def readiness_check():
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Readiness check failed - database: {type(e).__name__}: {e}")
         return JSONResponse(status_code=503, content={"ready": False, "reason": "database unavailable"})
 
     try:
@@ -427,7 +428,8 @@ async def readiness_check():
             await app.state.redis.delete(_ready_key)
         else:
             return JSONResponse(status_code=503, content={"ready": False, "reason": "redis not initialized"})
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Readiness check failed - redis: {type(e).__name__}: {e}")
         return JSONResponse(status_code=503, content={"ready": False, "reason": "redis unavailable"})
 
     if not hasattr(app.state, 'registry') or not app.state.registry or len(app.state.registry.tools) == 0:

@@ -544,7 +544,7 @@ class WhatsAppService:
                     error_message = error_data.get("requestError", {}).get(
                         "serviceException", {}
                     ).get("text", str(error_data))
-                except Exception:
+                except (ValueError, KeyError, AttributeError):
                     error_message = response.text
 
                 logger.error(

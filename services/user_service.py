@@ -107,7 +107,7 @@ class UserService:
                 logger.info(f"Found active user for phone '***{phone[-4:]}' using variation '***{user.phone_number[-4:]}'")
 
             else:
-                logger.warning(f"No active user found for phone '***{phone[-4:]}' with {len(variations)} variations")
+                logger.info(f"No active user found for phone '***{phone[-4:]}' with {len(variations)} variations")
                 
             return user
         except SQLAlchemyError as e:
@@ -509,7 +509,12 @@ class UserService:
             (display_name, vehicle_info) tuple or None
         """
         logger.info(f"FORCE REFRESH for {phone[-4:]}...")
-        
+
+        # Get old person_id BEFORE deleting so we can invalidate cache
+        old_user = await self.get_active_identity(phone)
+        if old_user and old_user.api_identity:
+            await self.invalidate_context_cache(old_user.api_identity)
+
         # Delete existing mapping to force fresh lookup
         try:
             from sqlalchemy import delete
@@ -520,13 +525,7 @@ class UserService:
         except Exception as e:
             logger.warning(f"Could not delete old mapping: {e}")
             await self.db.rollback()
-        
-        # Also invalidate context cache for all possible person_ids
-        # We need to get old person_id first
-        old_user = await self.get_active_identity(phone)
-        if old_user and old_user.api_identity:
-            await self.invalidate_context_cache(old_user.api_identity)
-        
+
         # Now do fresh onboard
         return await self.try_auto_onboard(phone)
     
