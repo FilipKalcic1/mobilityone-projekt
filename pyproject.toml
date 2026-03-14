@@ -84,8 +84,7 @@ omit = [
     "services/faiss_vector_store.py",
     "services/llm_reranker.py",
     "services/unified_search.py",
-    "services/executor_fallback.py",
-    "services/whatsapp_service.py",
+    # whatsapp_service.py removed from omit — now covered by test_whatsapp_service.py
     "services/queue_service.py",
     "services/message_engine.py",
     "services/query_type_classifier.py",

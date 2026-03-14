@@ -131,7 +131,7 @@ class TestQualityTracker:
                 }
             ]
         }
-        with open(temp_history_file, 'w') as f:
+        with open(temp_history_file, 'w', encoding='utf-8') as f:
             json.dump(data, f)
 
         tracker = QualityTracker(history_file=temp_history_file)

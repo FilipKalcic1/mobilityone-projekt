@@ -22,14 +22,15 @@ KUBERNETES MULTI-TENANT:
 
 import logging
 import re
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
+from sqlalchemy import update
 from config import get_settings
+from models import UserMapping
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 @dataclass
 class TenantConfig:
@@ -39,7 +40,6 @@ class TenantConfig:
     api_url: Optional[str] = None  # Override API URL per tenant (future)
     rate_limit: int = 20  # Requests per minute
     is_active: bool = True
-
 
 # Phone prefix to tenant mapping
 # Format: regex pattern -> tenant_id
@@ -52,7 +52,6 @@ PHONE_PREFIX_RULES: Dict[str, str] = {
     r"^\+?43": "tenant-at",       # Austria
     r"^\+?49": "tenant-de",       # Germany
 }
-
 
 class TenantService:
     """
@@ -183,9 +182,6 @@ class TenantService:
             return False
 
         try:
-            from sqlalchemy import update
-            from models import UserMapping
-
             result = await self.db.execute(
                 update(UserMapping)
                 .where(UserMapping.phone_number == phone)
@@ -237,10 +233,8 @@ class TenantService:
             "rules": list(PHONE_PREFIX_RULES.keys())
         }
 
-
 # Singleton instance
 _tenant_service: Optional[TenantService] = None
-
 
 def get_tenant_service(db_session=None, redis_client=None) -> TenantService:
     """

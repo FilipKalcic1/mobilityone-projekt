@@ -199,7 +199,7 @@ class ToolHandler:
         # DEBUG: Log raw API response for debugging data extraction issues
         try:
             raw_json = json.dumps(exec_result.data, default=str, ensure_ascii=False)
-            logger.info(f"RAW API RESPONSE [{tool_name}]: {raw_json[:1500]}")
+            logger.debug(f"RAW API RESPONSE [{tool_name}]: {raw_json[:1500]}")
         except Exception as e:
             logger.warning(f"Could not serialize API response: {e}")
 

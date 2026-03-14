@@ -348,7 +348,7 @@ class ConversationManager:
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
         await self.save()
         
-        logger.info(f"Selected: {item.get('Id', 'unknown')[:8]}")
+        logger.info(f"Selected: {str(item.get('Id', 'unknown'))[:8]}")
     
     async def request_confirmation(self, message: str):
         """Request confirmation."""

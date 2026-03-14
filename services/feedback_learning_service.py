@@ -47,14 +47,13 @@ USAGE:
 
 import json
 import logging
-import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any
 
-from sqlalchemy import select, func, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport
@@ -72,7 +71,6 @@ CONFIDENCE_THRESHOLD_DOCUMENTATION = 0.85  # Add to docs with >85% confidence
 MIN_OCCURRENCES_FOR_LEARNING = 2  # Need at least 2 examples
 EMBEDDING_SIMILARITY_THRESHOLD = 0.75  # For semantic matching
 MAX_BOOSTS_PER_TOOL = 10  # Limit patterns per tool
-
 
 @dataclass
 class LearnedBoost:
@@ -114,7 +112,6 @@ class LearnedBoost:
             source=data.get("source", "feedback"),
         )
 
-
 @dataclass
 class LearningResult:
     """Result of a learning cycle."""
@@ -136,7 +133,6 @@ class LearningResult:
             "recommendations": self.recommendations,
             "timestamp": self.timestamp,
         }
-
 
 class FeedbackLearningService:
     """
@@ -732,10 +728,8 @@ class FeedbackLearningService:
             LEARNED_BOOSTS_FILE.unlink()
         logger.info("Cleared all learned boosts")
 
-
 # Singleton instance
 _feedback_learning_service: Optional[FeedbackLearningService] = None
-
 
 def get_feedback_learning_service(db: AsyncSession) -> FeedbackLearningService:
     """Get or create feedback learning service instance."""
@@ -743,7 +737,6 @@ def get_feedback_learning_service(db: AsyncSession) -> FeedbackLearningService:
     if _feedback_learning_service is None:
         _feedback_learning_service = FeedbackLearningService(db)
     return _feedback_learning_service
-
 
 async def run_learning_cycle(db: AsyncSession) -> LearningResult:
     """Convenience function to run a learning cycle."""

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _shared_client = None
+_shared_embedding_client = None
 _circuit_breaker = None
 
 
@@ -40,6 +41,26 @@ def get_openai_client() -> AsyncAzureOpenAI:
             timeout=15.0  # Reduced from 30s - gpt-4o-mini responds in 1-5s typical
         )
     return _shared_client
+
+
+def get_embedding_client() -> AsyncAzureOpenAI:
+    """Get shared AsyncAzureOpenAI client for embedding calls.
+
+    Uses the same endpoint/key as chat but separate instance because
+    embedding calls have different timeout/retry characteristics.
+    Shared across: faiss_vector_store, intent_classifier,
+    registry/embedding_engine, registry/search_engine.
+    """
+    global _shared_embedding_client
+    if _shared_embedding_client is None:
+        _shared_embedding_client = AsyncAzureOpenAI(
+            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+            api_key=settings.AZURE_OPENAI_API_KEY,
+            api_version=settings.AZURE_OPENAI_API_VERSION,
+            max_retries=1,
+            timeout=10.0  # Embeddings are fast
+        )
+    return _shared_embedding_client
 
 
 def get_llm_circuit_breaker() -> CircuitBreaker:

@@ -40,24 +40,26 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
-      # Run DB migrations before starting API
-      initContainers:
-        - name: db-migrate
-          image: ghcr.io/mobilityone/bot:latest
-          command: ["python", "-m", "alembic", "upgrade", "head"]
-          envFrom:
-            - secretRef:
-                name: mobility-secrets
-            - configMapRef:
-                name: mobility-config
-          resources:
-            limits:
-              cpu: "500m"
-              memory: "256Mi"
+      # NOTE: DB migrations are handled by a separate Job (see below).
+      # Do NOT use init containers for migrations - with multiple replicas,
+      # concurrent alembic runs cause lock conflicts.
+
+      # Pod-level security: enforce non-root, read-only filesystem
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
 
       containers:
         - name: api
           image: ghcr.io/mobilityone/bot:latest
+          imagePullPolicy: Always  # Required when using :latest tag
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8000
               name: http
@@ -70,37 +72,46 @@ spec:
             - configMapRef:
                 name: mobility-config
 
-          # Resource limits - CRITICAL for shared cluster
+          # Resource limits - Guaranteed QoS (requests == limits)
+          # Prevents eviction under node pressure; essential for webhook availability
           resources:
             requests:
-              cpu: "250m"      # 0.25 CPU guaranteed
-              memory: "512Mi"  # 512MB guaranteed
+              cpu: "500m"
+              memory: "512Mi"
             limits:
-              cpu: "1000m"     # Max 1 CPU
-              memory: "1Gi"    # Max 1GB (OOM kill if exceeded)
+              cpu: "500m"
+              memory: "512Mi"
 
-          # Volume mounts for shared cache
+          # Volume mounts for shared cache + writable tmpfs
           volumeMounts:
             - name: cache-volume
               mountPath: /app/.cache
             - name: models-volume
               mountPath: /app/models
+            - name: tmp
+              mountPath: /tmp
 
-          # Health checks
+          # Startup probe: 30 failures × 10s = 5 min window for slow starts at 0.5 CPU
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 30
+            periodSeconds: 10
+
+          # Liveness: only checked AFTER startup probe succeeds
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
 
           readinessProbe:
             httpGet:
-              path: /ready  # Use /ready for stricter check (requires all dependencies)
+              path: /ready
               port: 8000
-            initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
@@ -131,6 +142,10 @@ spec:
         - name: models-volume
           persistentVolumeClaim:
             claimName: mobility-cache-pvc  # Same PVC, different mount path
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 10Mi
 
       terminationGracePeriodSeconds: 30
 
@@ -157,10 +172,22 @@ spec:
         app: mobility-bot
         component: worker
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
       containers:
         - name: worker
           image: ghcr.io/mobilityone/bot:latest
+          imagePullPolicy: Always
           command: ["python", "worker.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: SERVICE_TYPE
               value: "worker"
@@ -170,32 +197,56 @@ spec:
             - configMapRef:
                 name: mobility-config
 
-          # Workers need more resources for AI processing
+          # Workers: Guaranteed QoS (requests == limits)
+          # 1Gi fits: base ~85MB + FAISS ~15MB + 20 concurrent I/O-bound tasks
+          # AI work is I/O-bound (waiting for Azure API), not CPU-bound
           resources:
             requests:
               cpu: "500m"
-              memory: "768Mi"
+              memory: "1Gi"
             limits:
-              cpu: "2000m"     # AI processing can be CPU-intensive
-              memory: "2Gi"    # FAISS embeddings + LLM context
+              cpu: "500m"
+              memory: "1Gi"
 
-          # Volume mounts for shared cache
+          # Volume mounts for shared cache + writable tmpfs for DLQ fallback
           volumeMounts:
             - name: cache-volume
               mountPath: /app/.cache
             - name: models-volume
               mountPath: /app/models
+            - name: tmp
+              mountPath: /tmp
 
-          # Workers don't have HTTP endpoint - use shell to read env var
+          # Startup probe: 30 failures × 10s = 5 min window for FAISS/ML model loading at 0.5 CPU
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - 'python -c "import os,redis; r=redis.from_url(os.environ[\"REDIS_URL\"]); r.ping()"'
+            failureThreshold: 30
+            periodSeconds: 10
+
+          # Liveness: only checked AFTER startup probe succeeds
           livenessProbe:
             exec:
               command:
                 - /bin/sh
                 - -c
                 - 'python -c "import os,redis; r=redis.from_url(os.environ[\"REDIS_URL\"]); r.ping()"'
-            initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - 'python -c "import os,redis; r=redis.from_url(os.environ[\"REDIS_URL\"]); r.ping()"'
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
 
       # Volumes for shared cache
       volumes:
@@ -205,8 +256,12 @@ spec:
         - name: models-volume
           persistentVolumeClaim:
             claimName: mobility-cache-pvc
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 50Mi  # DLQ fallback file + temporary data
 
-      terminationGracePeriodSeconds: 60  # Allow time for message completion
+      terminationGracePeriodSeconds: 120  # Must exceed 90s message timeout + 30s safety buffer
 
 ---
 # =============================================================================
@@ -231,10 +286,22 @@ spec:
         app: mobility-bot
         component: admin
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
       containers:
         - name: admin
           image: ghcr.io/mobilityone/bot:latest
+          imagePullPolicy: Always
           command: ["uvicorn", "admin_api:app", "--host", "0.0.0.0", "--port", "8080"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
               name: http
@@ -247,27 +314,100 @@ spec:
             - configMapRef:
                 name: mobility-config
 
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          # Admin: Guaranteed QoS
           resources:
             requests:
               cpu: "100m"
               memory: "256Mi"
             limits:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "100m"
+              memory: "256Mi"
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            failureThreshold: 18
+            periodSeconds: 10
 
           livenessProbe:
             httpGet:
               path: /health
               port: 8080
-            initialDelaySeconds: 15
-            periodSeconds: 10
+            periodSeconds: 15
 
           readinessProbe:
             httpGet:
-              path: /ready  # Use /ready for stricter check
+              path: /ready
               port: 8080
-            initialDelaySeconds: 5
             periodSeconds: 5
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 10Mi
+
+---
+# =============================================================================
+# DB MIGRATION JOB - Run before deploying new versions
+# Usage: kubectl apply -f deployment.yaml && kubectl wait --for=condition=complete job/mobility-db-migrate
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mobility-db-migrate
+  labels:
+    app: mobility-bot
+    component: migration
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300  # Clean up after 5 minutes
+  template:
+    metadata:
+      labels:
+        app: mobility-bot
+        component: migration
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: migrate
+          image: ghcr.io/mobilityone/bot:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - secretRef:
+                name: mobility-secrets
+            - configMapRef:
+                name: mobility-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 10Mi
 
 ---
 # =============================================================================

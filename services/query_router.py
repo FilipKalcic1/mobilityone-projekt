@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
-from services.intent_classifier import get_intent_classifier, IntentPrediction
+from services.intent_classifier import get_intent_classifier, predict_with_ensemble
 
 logger = logging.getLogger(__name__)
 
@@ -30,167 +30,9 @@ class RouteResult:
             self.extract_fields = []
 
 
-# Intent to metadata mapping - minimal config instead of 500 lines of regex
-# This maps ML intents to the metadata needed for execution
-INTENT_METADATA = {
-    "GET_MILEAGE": {
-        "tool": "get_MasterData",
-        "extract_fields": ["LastMileage", "Mileage", "CurrentMileage"],
-        "response_template": "**Kilometraza:** {value} km",
-        "flow_type": "simple",
-    },
-    "INPUT_MILEAGE": {
-        "tool": "post_AddMileage",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "mileage_input",
-    },
-    "BOOK_VEHICLE": {
-        "tool": "get_AvailableVehicles",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "booking",
-    },
-    "GET_MY_BOOKINGS": {
-        "tool": "get_VehicleCalendar",
-        "extract_fields": ["FromTime", "ToTime", "VehicleName"],
-        "response_template": None,
-        "flow_type": "list",
-    },
-    "CANCEL_RESERVATION": {
-        "tool": "delete_VehicleCalendar_id",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "delete_booking",
-    },
-    "REPORT_DAMAGE": {
-        "tool": "post_AddCase",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "case_creation",
-    },
-    "GET_CASES": {
-        "tool": "get_Cases",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "list",
-    },
-    "GET_VEHICLE_INFO": {
-        "tool": "get_MasterData",
-        "extract_fields": ["FullVehicleName", "LicencePlate", "LastMileage", "Manufacturer", "Model"],
-        "response_template": None,
-        "flow_type": "simple",
-    },
-    "GET_REGISTRATION_EXPIRY": {
-        "tool": "get_MasterData",
-        "extract_fields": ["RegistrationExpirationDate", "ExpirationDate"],
-        "response_template": "**Registracija istjece:** {value}",
-        "flow_type": "simple",
-    },
-    "GET_PLATE": {
-        "tool": "get_MasterData",
-        "extract_fields": ["LicencePlate", "RegistrationNumber"],
-        "response_template": "**Tablice:** {value}",
-        "flow_type": "simple",
-    },
-    "GET_LEASING": {
-        "tool": "get_MasterData",
-        "extract_fields": ["ProviderName", "SupplierName"],
-        "response_template": "**Lizing kuca:** {value}",
-        "flow_type": "simple",
-    },
-    "GET_SERVICE_MILEAGE": {
-        "tool": "get_MasterData",
-        "extract_fields": ["ServiceMileage", "NextServiceMileage"],
-        "response_template": "**Do servisa:** {value} km",
-        "flow_type": "simple",
-    },
-    "GET_TRIPS": {
-        "tool": "get_Trips",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "list",
-    },
-    "DELETE_TRIP": {
-        "tool": "delete_Trips_id",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "delete_trip",
-    },
-    "GET_PERSON_INFO": {
-        "tool": "get_PersonData_personIdOrEmail",
-        "extract_fields": ["FirstName", "LastName", "DisplayName", "Email"],
-        "response_template": None,
-        "flow_type": "simple",
-    },
-    "GET_VEHICLE_COUNT": {
-        "tool": "get_Vehicles_Agg",
-        "extract_fields": ["Count", "TotalCount"],
-        "response_template": "**Broj vozila:** {value}",
-        "flow_type": "simple",
-    },
-    "GET_VEHICLE_COMPANY": {
-        "tool": "get_MasterData",
-        "extract_fields": ["Company", "CompanyName", "Organization"],
-        "response_template": "**Tvrtka:** {value}",
-        "flow_type": "simple",
-    },
-    "GET_VEHICLE_EQUIPMENT": {
-        "tool": "get_MasterData",
-        "extract_fields": ["Equipment", "Equipments"],
-        "response_template": None,
-        "flow_type": "simple",
-    },
-    "GET_VEHICLE_DOCUMENTS": {
-        "tool": "get_Vehicles_id_documents",
-        "extract_fields": [],
-        "response_template": None,
-        "flow_type": "list",
-    },
-    "GET_TENANT_ID": {
-        "tool": None,
-        "extract_fields": [],
-        "response_template": "**Tenant ID:** {tenant_id}",
-        "flow_type": "direct_response",
-    },
-    "GET_PERSON_ID": {
-        "tool": None,
-        "extract_fields": [],
-        "response_template": "**Person ID:** {person_id}",
-        "flow_type": "direct_response",
-    },
-    "GET_PHONE": {
-        "tool": None,
-        "extract_fields": [],
-        "response_template": "**Telefon:** {phone}",
-        "flow_type": "direct_response",
-    },
-    "GREETING": {
-        "tool": None,
-        "extract_fields": [],
-        "response_template": "Pozdrav! Kako vam mogu pomoci?",
-        "flow_type": "direct_response",
-    },
-    "THANKS": {
-        "tool": None,
-        "extract_fields": [],
-        "response_template": "Nema na cemu! Slobodno pitajte ako trebate jos nesto.",
-        "flow_type": "direct_response",
-    },
-    "HELP": {
-        "tool": None,
-        "extract_fields": [],
-        "response_template": (
-            "Mogu vam pomoci s:\n"
-            "* **Kilometraza** - provjera ili unos km\n"
-            "* **Rezervacije** - rezervacija vozila\n"
-            "* **Podaci o vozilu** - registracija, lizing\n"
-            "* **Prijava kvara** - kreiranje slucaja\n\n"
-            "Sto vas zanima?"
-        ),
-        "flow_type": "direct_response",
-    },
-}
+# Single source of truth: tool_routing.py
+# All intent-to-tool mappings defined there to avoid triple redundancy
+from tool_routing import INTENT_CONFIG as INTENT_METADATA  # noqa: E402
 
 # Confidence threshold for DETERMINISTIC routing (bypasses LLM)
 # Balanced threshold: High-confidence ML predictions bypass LLM for speed
@@ -230,8 +72,8 @@ class QueryRouter:
         Returns:
             RouteResult with matched tool or not matched
         """
-        # Get ML prediction
-        prediction = self.classifier.predict(query)
+        # Get ML prediction (ensemble: TF-IDF first, semantic fallback if <75%)
+        prediction = predict_with_ensemble(query)
 
         logger.info(
             f"ROUTER ML: '{query[:30]}...' -> {prediction.intent} "

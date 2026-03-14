@@ -6,8 +6,8 @@ DEPENDS ON: token_manager.py, config.py
 """
 
 import asyncio
-import json
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, Optional
@@ -21,7 +21,6 @@ from services.token_manager import TokenManager
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-
 class HttpMethod(Enum):
     """HTTP methods."""
     GET = "GET"
@@ -29,7 +28,6 @@ class HttpMethod(Enum):
     PUT = "PUT"
     PATCH = "PATCH"
     DELETE = "DELETE"
-
 
 @dataclass
 class APIResponse:
@@ -56,7 +54,6 @@ class APIResponse:
             "status_code": self.status_code
         }
 
-
 class APIGateway:
     """
     Enterprise API Gateway.
@@ -69,9 +66,13 @@ class APIGateway:
     """
     
     DEFAULT_MAX_RETRIES = 2
-    DEFAULT_TIMEOUT = 30.0
+    DEFAULT_TIMEOUT = 15.0
     RETRY_STATUS_CODES = {408, 429, 500, 502, 503, 504}
-    
+
+    # Circuit breaker: after N consecutive failures, skip API calls for COOLDOWN seconds
+    CIRCUIT_FAILURE_THRESHOLD = 3
+    CIRCUIT_COOLDOWN_SECONDS = 30
+
     def __init__(
         self,
         base_url: Optional[str] = None,
@@ -80,7 +81,7 @@ class APIGateway:
     ):
         """
         Initialize API Gateway.
-        
+
         Args:
             base_url: Base URL (defaults to settings)
             tenant_id: Tenant ID (defaults to settings)
@@ -88,15 +89,19 @@ class APIGateway:
         """
         self.base_url = (base_url or settings.MOBILITY_API_URL).rstrip("/")
         self.tenant_id = tenant_id or settings.tenant_id
-        
+
         self.token_manager = TokenManager(redis_client)
-        
+
         self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.DEFAULT_TIMEOUT, connect=10.0),
+            timeout=httpx.Timeout(self.DEFAULT_TIMEOUT, connect=3.0),
             limits=httpx.Limits(max_keepalive_connections=40, max_connections=100),
             follow_redirects=True
         )
-        
+
+        # Circuit breaker state
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
         logger.info(f"APIGateway initialized: {self.base_url}")
     
     async def execute(
@@ -140,9 +145,22 @@ class APIGateway:
         url = self._build_url(path, params)
         effective_tenant = tenant_id or self.tenant_id
         retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
-        
+
+        # Circuit breaker: fail fast if API has been consistently failing
+        now = time.monotonic()
+        if self._consecutive_failures >= self.CIRCUIT_FAILURE_THRESHOLD and now < self._circuit_open_until:
+            remaining = int(self._circuit_open_until - now)
+            logger.warning(f"Circuit OPEN: API unavailable, skipping call to {path} ({remaining}s remaining)")
+            return APIResponse(
+                success=False,
+                status_code=0,
+                data=None,
+                error_message=f"Circuit breaker open: API unavailable (retry in {remaining}s)",
+                error_code="CIRCUIT_OPEN"
+            )
+
         last_error = None
-        
+
         for attempt in range(retries + 1):
             try:
                 # Get token
@@ -170,7 +188,7 @@ class APIGateway:
                 # Handle 401 - refresh token immediately (no delay)
                 if response.status_code == 401 and attempt < retries:
                     logger.warning("401 - Refreshing token")
-                    self.token_manager.invalidate()
+                    await self.token_manager.invalidate()
                     continue
                 
                 # Handle retryable errors
@@ -180,16 +198,26 @@ class APIGateway:
                     await asyncio.sleep(delay)
                     continue
                 
+                # Success - reset circuit breaker
+                self._consecutive_failures = 0
                 return self._parse_response(response)
-                
+
             except httpx.TimeoutException as e:
                 last_error = f"Timeout: {e}"
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.CIRCUIT_FAILURE_THRESHOLD:
+                    self._circuit_open_until = time.monotonic() + self.CIRCUIT_COOLDOWN_SECONDS
+                    logger.warning(f"Circuit OPENED: {self._consecutive_failures} consecutive failures, cooldown {self.CIRCUIT_COOLDOWN_SECONDS}s")
                 if attempt < retries:
                     await asyncio.sleep(self._calculate_backoff(attempt))
                     continue
-                    
+
             except httpx.RequestError as e:
                 last_error = f"Network error: {e}"
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.CIRCUIT_FAILURE_THRESHOLD:
+                    self._circuit_open_until = time.monotonic() + self.CIRCUIT_COOLDOWN_SECONDS
+                    logger.warning(f"Circuit OPENED: {self._consecutive_failures} consecutive failures, cooldown {self.CIRCUIT_COOLDOWN_SECONDS}s")
                 if attempt < retries:
                     await asyncio.sleep(self._calculate_backoff(attempt))
                     continue
@@ -201,7 +229,10 @@ class APIGateway:
                     await asyncio.sleep(self._calculate_backoff(attempt))
                     continue
         
-        logger.error(f"All retries exhausted: {last_error}")
+        if retries > 0:
+            logger.error(f"All {retries} retries exhausted: {last_error}")
+        else:
+            logger.warning(f"Request failed (no retries configured): {last_error}")
         return APIResponse(
             success=False,
             status_code=0,
@@ -349,7 +380,11 @@ class APIGateway:
         except Exception as e:
             # JSON parsing failed - might be empty response or plain text
             logger.warning(f"JSON parsing failed: {e}")
-            data = response.text if response.text else None
+            data = response.text if response.text else {}
+
+        # Ensure data is never None (downstream code expects dict/list)
+        if data is None:
+            data = {}
 
         return APIResponse(
             success=True,
@@ -413,7 +448,8 @@ class APIGateway:
         return await self.execute(HttpMethod.DELETE, path, **kwargs)
     
     async def close(self) -> None:
-        """Close HTTP client."""
+        """Close HTTP client and token manager."""
         if self.client:
             await self.client.aclose()
-            logger.info("APIGateway closed")
+        await self.token_manager.close()
+        logger.info("APIGateway closed")

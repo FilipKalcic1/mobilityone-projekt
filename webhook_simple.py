@@ -27,9 +27,11 @@ import redis.asyncio as aioredis
 import logging
 
 from config import get_settings
+from services.tracing import get_tracer, trace_span
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+_tracer = get_tracer(__name__)
 
 # ---
 # DIAGNOSTIC RING BUFFER - Last N webhook events for remote debugging
@@ -186,6 +188,10 @@ router = APIRouter()
 _redis_client = None
 _redis_lock = asyncio.Lock()
 
+# DLQ file path - survives Redis outage, lost on pod eviction (last resort)
+_DLQ_FILE_PATH = "/tmp/dlq.jsonl"
+_DLQ_FILE_MAX_BYTES = 5 * 1024 * 1024  # 5MB cap (tmpfs is 10-50Mi)
+
 
 async def get_redis():
     """Get async Redis client (thread-safe lazy initialization with pool config)."""
@@ -200,11 +206,62 @@ async def get_redis():
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,
-            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            max_connections=10,  # Webhook only pushes to stream — 10 is plenty at 0.5 CPU
             socket_keepalive=True,
             health_check_interval=30
         )
         return _redis_client
+
+
+async def _write_dlq(dlq_entry: str) -> None:
+    """
+    Write failed message to durable DLQ storage.
+
+    Primary: Redis LPUSH to 'dlq:webhook' list.
+      - Survives pod restarts (data lives in Redis)
+      - Recoverable via: LRANGE dlq:webhook 0 -1
+      - Monitorable via: LLEN dlq:webhook (Prometheus alert on >10)
+
+    Fallback: Append to /tmp/dlq.jsonl (if Redis is completely unreachable).
+      - Survives Redis outage within the pod's lifetime
+      - Lost on pod eviction (but that's the scenario where Redis was already gone)
+      - Log aggregator (Fluentd/Loki) can also capture from stderr as last resort
+    """
+    # Try Redis first - this is the durable path
+    try:
+        redis = await get_redis()
+        if redis:
+            await redis.lpush("dlq:webhook", dlq_entry)
+            await redis.ltrim("dlq:webhook", 0, 9999)  # Cap at 10K entries
+            await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
+            logger.info("DLQ message stored in Redis (dlq:webhook)")
+            return
+    except Exception as redis_dlq_err:
+        logger.warning(f"DLQ Redis write failed, falling back to file: {redis_dlq_err}")
+
+    # Fallback: local file (atomic append with newline delimiter)
+    try:
+        # Check file size before writing to prevent tmpfs exhaustion
+        try:
+            file_size = os.path.getsize(_DLQ_FILE_PATH)
+        except OSError:
+            file_size = 0
+
+        if file_size >= _DLQ_FILE_MAX_BYTES:
+            logger.error(f"DLQ file at {file_size} bytes exceeds {_DLQ_FILE_MAX_BYTES} cap, skipping file write")
+        else:
+            with open(_DLQ_FILE_PATH, "a", encoding="utf-8") as f:
+                f.write(dlq_entry + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            logger.info(f"DLQ message stored in {_DLQ_FILE_PATH}")
+            return
+    except Exception as file_err:
+        logger.error(f"DLQ file write ALSO failed: {file_err}")
+
+    # Last resort: stderr (may be captured by log aggregator)
+    sys.stderr.write(f"DLQ_WEBHOOK: {dlq_entry}\n")
+    sys.stderr.flush()
 
 
 # ---
@@ -227,6 +284,18 @@ async def whatsapp_webhook(request: Request):
     """
     _stats["total_received"] += 1
 
+    # Extract request_id from middleware for end-to-end tracing
+    request_id = getattr(request.state, "request_id", "") if hasattr(request, "state") else ""
+
+    # Graceful shutdown: reject new messages during drain.
+    # The worker and Redis may already be stopping. Accepting messages
+    # now and returning 200 to Infobip would cause permanent loss.
+    # Returning 503 tells Infobip to retry after the pod restarts.
+    from main import APP_STOPPING
+    if APP_STOPPING:
+        logger.warning("Webhook rejected: APP_STOPPING=True (graceful shutdown)")
+        raise HTTPException(status_code=503, detail="Shutting down")
+
     try:
         # Get raw body for signature validation
         raw_body = await request.body()
@@ -236,9 +305,9 @@ async def whatsapp_webhook(request: Request):
             signature = request.headers.get("X-Hub-Signature-256", "")
             if not verify_webhook_signature(raw_body, signature, settings.INFOBIP_SECRET_KEY):
                 logger.warning(
-                    f"Invalid webhook signature from {request.client.host}"
+                    f"Invalid webhook signature from {request.client.host if request.client else 'unknown'}"
                 )
-                _diag_log("signature_failed", {"ip": request.client.host})
+                _diag_log("signature_failed", {"ip": request.client.host if request.client else "unknown"})
                 raise HTTPException(status_code=401, detail="Invalid signature")
 
         # Parse JSON body
@@ -263,9 +332,21 @@ async def whatsapp_webhook(request: Request):
 
         pushed = 0
         for result in results:
+            if not isinstance(result, dict):
+                logger.error(f"Invalid result item type: {type(result).__name__}, skipping")
+                continue
+
             # Infobip uses "from", legacy/test may use "sender"
-            sender = result.get("from") or result.get("sender", "")
-            message_id = result.get("messageId", "")
+            # Try ALL known sender field names from Infobip formats
+            sender = (
+                result.get("from")
+                or result.get("sender")
+                or result.get("phoneNumber")
+                or result.get("phone")
+                or (result.get("contact", {}).get("phone", "") if isinstance(result.get("contact"), dict) else "")
+                or ""
+            )
+            message_id = result.get("messageId", result.get("message_id", ""))
 
             # CRITICAL: Validate sender is present
             if not sender:
@@ -293,7 +374,8 @@ async def whatsapp_webhook(request: Request):
                     "sender": sender,
                     "text": f"[NON_TEXT:{msg_type}]",
                     "message_id": message_id,
-                    "original_type": msg_type
+                    "original_type": msg_type,
+                    "request_id": request_id,
                 }
 
                 try:
@@ -311,47 +393,69 @@ async def whatsapp_webhook(request: Request):
             stream_data = {
                 "sender": sender,
                 "text": text,
-                "message_id": message_id
+                "message_id": message_id,
+                "request_id": request_id,
             }
 
-            try:
-                redis = await get_redis()
-                await redis.xadd("whatsapp_stream_inbound", stream_data)
-                pushed += 1
-                _stats["total_pushed"] += 1
-                _stats["last_success_at"] = datetime.now(timezone.utc).isoformat()
-                logger.info(f"Message pushed to stream: {sender[-4:]}... - {text[:50]}")
-                _diag_log("pushed", {"sender": sender[-4:], "text_preview": text[:30]})
+            # Push with retry (max 3 attempts with exponential backoff)
+            push_success = False
+            for redis_attempt in range(3):
+                try:
+                    redis = await get_redis()
+                    await redis.xadd("whatsapp_stream_inbound", stream_data)
+                    push_success = True
+                    pushed += 1
+                    _stats["total_pushed"] += 1
+                    _stats["last_success_at"] = datetime.now(timezone.utc).isoformat()
+                    logger.info(f"Message pushed to stream: {sender[-4:]}... - {text[:50]}")
+                    _diag_log("pushed", {"sender": sender[-4:], "text_preview": text[:30]})
+                    break
 
-            except Exception as redis_err:
-                # WEBHOOK-LEVEL DLQ: Redis failed, log full payload for recovery
-                _stats["total_redis_errors"] += 1
-                _stats["last_error_at"] = datetime.now(timezone.utc).isoformat()
-                _stats["last_error"] = f"Redis push failed: {redis_err}"
+                except (ConnectionError, OSError, TimeoutError, aioredis.ConnectionError, aioredis.RedisError) as redis_err:
+                    if redis_attempt < 2:
+                        delay = 0.5 * (2 ** redis_attempt)  # 0.5s, 1.0s
+                        logger.warning(
+                            f"Redis push attempt {redis_attempt + 1}/3 failed: {redis_err}, retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        # Reset Redis client on failure to force reconnect
+                        # Must acquire lock to prevent concurrent handlers from
+                        # using a half-torn-down client reference
+                        async with _redis_lock:
+                            global _redis_client
+                            _redis_client = None
+                        continue
 
-                logger.error(
-                    f"REDIS PUSH FAILED - MESSAGE WILL BE LOST! "
-                    f"sender={sender}, text={text[:100]}, message_id={message_id}, "
-                    f"error={redis_err}",
-                    exc_info=True
-                )
-                _diag_log("redis_push_failed", {
-                    "sender": sender[-4:],
-                    "message_id": message_id,
-                    "error": str(redis_err)
-                })
+                    # All retries failed - DLQ
+                    _stats["total_redis_errors"] += 1
+                    _stats["last_error_at"] = datetime.now(timezone.utc).isoformat()
+                    _stats["last_error"] = f"Redis push failed after 3 attempts: {redis_err}"
 
-                # DLQ: Write to stderr in structured format for log aggregation recovery
-                dlq_entry = json.dumps({
-                    "dlq": "webhook",
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "sender": sender,
-                    "text": text,
-                    "message_id": message_id,
-                    "error": str(redis_err)
-                })
-                sys.stderr.write(f"DLQ_WEBHOOK: {dlq_entry}\n")
-                sys.stderr.flush()
+                    logger.error(
+                        f"REDIS PUSH FAILED after 3 attempts - MESSAGE TO DLQ! "
+                        f"sender={sender[-4:]}, text={text[:100]}, message_id={message_id}, "
+                        f"error={redis_err}",
+                        exc_info=True
+                    )
+                    _diag_log("redis_push_failed", {
+                        "sender": sender[-4:],
+                        "message_id": message_id,
+                        "error": str(redis_err),
+                        "attempts": 3
+                    })
+
+                    # DLQ: Durable storage for failed messages
+                    # Primary: Redis LPUSH to dlq:webhook (survives pod restarts)
+                    # Fallback: Local file /tmp/dlq.jsonl (survives Redis outage)
+                    dlq_entry = json.dumps({
+                        "dlq": "webhook",
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "sender": sender,
+                        "text": text,
+                        "message_id": message_id,
+                        "error": str(redis_err)
+                    })
+                    await _write_dlq(dlq_entry)
 
         return {"status": "ok", "pushed": pushed}
 

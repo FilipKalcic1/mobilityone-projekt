@@ -10,6 +10,7 @@ import time
 import json
 import sys
 import hashlib
+import random
 import traceback
 import os
 import logging
@@ -17,12 +18,19 @@ from datetime import datetime, timezone
 from typing import Optional, Set, Dict
 from contextlib import suppress
 
+# PII-Safe Logging Filter (shared module — single source of truth)
+from services.pii_filter import PIIScrubFilter
+
+
 # Configure logging BEFORE any imports that use logging
 # This prevents duplicate handlers from being added
+_pii_filter = PIIScrubFilter()
+_stderr_handler = logging.StreamHandler(open(sys.stderr.fileno(), mode='w', encoding='utf-8', closefd=False))
+_stderr_handler.addFilter(_pii_filter)
 logging.basicConfig(
     level=logging.INFO,
     format='%(message)s',  # Simple format since we use structured JSON logs
-    handlers=[logging.StreamHandler(sys.stderr)],
+    handlers=[_stderr_handler],
     force=True  # Override any existing configuration
 )
 # Allow WARNING+ from most libraries, but let key services log at INFO
@@ -34,17 +42,58 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 import redis.asyncio as aioredis
 
 from config import get_settings
+from database import AsyncSessionLocal
 from services.rag_scheduler import RAGScheduler, get_rag_scheduler
+from services.tracing import get_tracer, trace_span
 
 settings = get_settings()
+_tracer = get_tracer("worker")
 
-MAX_CONCURRENT = 10             # Azure gpt-4o-mini supports higher concurrency
+MAX_CONCURRENT = 10             # 0.5 CPU (CFS 50ms/100ms): 20 tasks causes >25% throttling.
+                                # 10 concurrent keeps scheduler healthy. KEDA scales pods instead.
 MESSAGE_LOCK_TTL = 300          # 5 min - enough for longest LLM calls
+
+# Lua script for atomic lock release: only delete if caller still holds it
+_RELEASE_LOCK_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+else
+    return 0
+end
+"""
+
+# Lua script for atomic delayed-outbound promotion.
+# Atomically pops up to ARGV[2] due items from the sorted set and pushes each
+# to the outbound list.  Returns the raw JSON members that were promoted.
+# This prevents the race where two workers both zrangebyscore the same items.
+_PROMOTE_DELAYED_LUA = """
+local due = redis.call('zrangebyscore', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
+if #due == 0 then return {} end
+for _, raw in ipairs(due) do
+    redis.call('rpush', KEYS[2], raw)
+    redis.call('zrem', KEYS[1], raw)
+end
+return due
+"""
+
 REDIS_MAX_RETRIES = 30          # 30 x 2s = 60s max wait for Redis
 REDIS_RETRY_DELAY = 2
 HEALTH_REPORT_INTERVAL = 60     # Every minute
 STREAM_BLOCK_MS = 1000          # 1s blocking read
 MEMORY_WARNING_MB = 800         # Warn when memory exceeds this
+
+# Burst mode settings (for KEDA ScaledJob)
+# When BURST_MODE=true, worker exits after MAX_MESSAGES or BURST_IDLE_TIMEOUT
+# Enable tracemalloc for production memory monitoring (low overhead: ~3MB, <2% CPU)
+# Only stores 1 frame per allocation to minimize cost
+tracemalloc = None  # Lazy: only import if enabled
+if os.environ.get("TRACEMALLOC", "").lower() in ("true", "1", "yes"):
+    import tracemalloc
+    tracemalloc.start(1)
+
+BURST_MODE = os.environ.get("BURST_MODE", "").lower() in ("true", "1", "yes")
+BURST_MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "100"))
+BURST_IDLE_TIMEOUT = int(os.environ.get("BURST_IDLE_TIMEOUT", "300"))  # 5 min
 
 
 def get_memory_usage_mb() -> float:
@@ -60,10 +109,10 @@ def get_memory_usage_mb() -> float:
                 for line in f:
                     if line.startswith('VmRSS:'):
                         return int(line.split()[1]) / 1024  # Convert KB to MB
-        except Exception:
-            pass
-    except Exception:
-        pass
+        except (OSError, IOError) as e:
+            log("debug", "memory_proc_read_failed", {"error": str(e)})
+    except (OSError, ValueError) as e:
+        log("debug", "memory_psutil_failed", {"error": str(e)})
     return 0.0
 
 
@@ -118,7 +167,7 @@ class GracefulShutdown:
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
 
-    async def wait_for_tasks(self, timeout: float = 30.0):
+    async def wait_for_tasks(self, timeout: float = 100.0):
         if not self.active_tasks:
             return
 
@@ -171,15 +220,29 @@ class Worker:
         self._duplicates_skipped = 0
         self._start_time = None
 
+        # Burst mode (KEDA ScaledJob: process N messages then exit)
+        self._burst_mode = BURST_MODE
+        self._burst_max_messages = BURST_MAX_MESSAGES
+        self._burst_idle_timeout = BURST_IDLE_TIMEOUT
+        self._last_message_time: Optional[float] = None  # For idle timeout
+
         # Concurrency control
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self._processing_locks: Dict[str, asyncio.Lock] = {}
+        self._lock_access_times: Dict[str, float] = {}
+        self._lock_cleanup_interval = 100   # Clean every N messages
+        self._lock_max_age_sec = 300         # Remove locks idle > 5 min
 
     async def start(self):
         self._start_time = datetime.now(timezone.utc)
+        self._last_message_time = time.time()
         log("info", "worker_starting", {
             "consumer": self.consumer_name,
-            "max_concurrent": MAX_CONCURRENT
+            "max_concurrent": MAX_CONCURRENT,
+            "burst_mode": self._burst_mode,
+            **({"burst_max_messages": self._burst_max_messages,
+                "burst_idle_timeout_sec": self._burst_idle_timeout}
+               if self._burst_mode else {})
         })
 
         self._setup_signals()
@@ -200,6 +263,7 @@ class Worker:
             await asyncio.gather(
                 self._process_inbound_loop(),
                 self._process_outbound_loop(),
+                self._process_delayed_outbound_loop(),
                 self._health_reporter(),
                 self._shutdown_watcher()
             )
@@ -220,7 +284,7 @@ class Worker:
     async def _shutdown_watcher(self):
         await self.shutdown.wait_for_shutdown()
         log("info", "shutdown_initiated")
-        await self.shutdown.wait_for_tasks(timeout=30.0)
+        await self.shutdown.wait_for_tasks(timeout=100.0)
         await self._cleanup()
 
     async def _cleanup(self):
@@ -234,16 +298,31 @@ class Worker:
             "uptime_seconds": int(uptime)
         })
 
-        # Stop RAG scheduler
-        if self._rag_scheduler:
-            await self._rag_scheduler.stop()
-            log("info", "rag_scheduler_stopped")
+        # Each step is independent — continue cleanup even if one fails
+        try:
+            if self._rag_scheduler:
+                await self._rag_scheduler.stop()
+                log("info", "rag_scheduler_stopped")
+        except Exception as e:
+            log("warn", "rag_scheduler_stop_failed", {"error": str(e)})
 
-        if self._gateway:
-            await self._gateway.close()
+        try:
+            if self._gateway:
+                await self._gateway.close()
+        except Exception as e:
+            log("warn", "gateway_close_failed", {"error": str(e)})
 
-        if self.redis:
-            await self.redis.aclose()
+        try:
+            if self._whatsapp_service:
+                await self._whatsapp_service.close()
+        except Exception as e:
+            log("warn", "whatsapp_service_close_failed", {"error": str(e)})
+
+        try:
+            if self.redis:
+                await self.redis.aclose()
+        except Exception as e:
+            log("warn", "redis_close_failed", {"error": str(e)})
 
         log("info", "worker_stopped")
 
@@ -252,15 +331,15 @@ class Worker:
         try:
             if self.redis:
                 await self.redis.aclose()
-        except Exception:
-            pass
+        except (ConnectionError, OSError, RuntimeError) as e:
+            log("warn", "redis_old_conn_close_failed", {"error": str(e)})
 
         try:
             self.redis = aioredis.from_url(
                 settings.REDIS_URL,
                 encoding="utf-8",
                 decode_responses=True,
-                max_connections=50,
+                max_connections=20,  # Worker: stream + outbound + locks + state. 20 for 10 concurrent tasks.
                 socket_keepalive=True,
                 health_check_interval=30
             )
@@ -270,7 +349,7 @@ class Worker:
             return False
 
     async def _reconnect_redis(self):
-        """Reconnect to Redis with backoff."""
+        """Reconnect to Redis with exponential backoff."""
         log("warn", "redis_reconnecting")
         for attempt in range(5):
             if self.shutdown.is_shutting_down():
@@ -285,7 +364,8 @@ class Worker:
                 if self._context:
                     self._context.redis = self.redis
                 return
-            await asyncio.sleep(REDIS_RETRY_DELAY * (attempt + 1))
+            delay = min(REDIS_RETRY_DELAY * (2 ** attempt), 30) + random.uniform(0, 1)
+            await asyncio.sleep(delay)
         log("error", "redis_reconnect_failed")
 
     async def _wait_for_redis(self):
@@ -297,17 +377,20 @@ class Worker:
                 log("info", "redis_connected")
                 return
 
+            delay = min(REDIS_RETRY_DELAY * (2 ** min(attempt, 5)), 60)
             log("warn", "redis_retry", {
                 "attempt": attempt + 1,
-                "max": REDIS_MAX_RETRIES
+                "max": REDIS_MAX_RETRIES,
+                "next_delay": delay
             })
-            await asyncio.sleep(REDIS_RETRY_DELAY)
+            await asyncio.sleep(delay)
 
         raise RuntimeError("Could not connect to Redis")
 
     async def _wait_for_database(self):
         from database import engine
         from sqlalchemy import text
+        from sqlalchemy.exc import OperationalError, DatabaseError
 
         for attempt in range(REDIS_MAX_RETRIES):
             if self.shutdown.is_shutting_down():
@@ -318,13 +401,18 @@ class Worker:
                     await conn.execute(text("SELECT 1"))
                 log("info", "database_connected")
                 return
-            except Exception as e:
+            except (OperationalError, DatabaseError, OSError, TimeoutError) as e:
+                delay = min(REDIS_RETRY_DELAY * (2 ** min(attempt, 5)), 60) + random.uniform(0, 1)
                 log("warn", "database_retry", {
                     "attempt": attempt + 1,
                     "max": REDIS_MAX_RETRIES,
-                    "error": str(e)
+                    "error": str(e),
+                    "next_delay": round(delay, 1)
                 })
-                await asyncio.sleep(REDIS_RETRY_DELAY)
+                await asyncio.sleep(delay)
+            except Exception as e:
+                log("error", "database_unexpected_error", {"error": str(e), "type": type(e).__name__})
+                raise
 
         raise RuntimeError("Could not connect to database")
 
@@ -388,6 +476,10 @@ class Worker:
         )
         log("info", "message_engine_ready")
 
+        # Register Lua script for atomic lock release
+        self._release_lock_sha = await self.redis.script_load(_RELEASE_LOCK_LUA)
+        log("info", "lock_lua_script_registered")
+
         # Initialize RAG scheduler for periodic embedding refresh
         try:
             self._rag_scheduler = await get_rag_scheduler(self.redis)
@@ -431,7 +523,7 @@ class Worker:
                 mkstream=True
             )
             log("info", "consumer_group_created", {"group": self.group_name})
-        except Exception as e:
+        except aioredis.ResponseError as e:
             if "BUSYGROUP" not in str(e):
                 raise
             log("info", "consumer_group_exists", {"group": self.group_name})
@@ -488,8 +580,8 @@ class Worker:
                         )
                         claimed_msgs = result[1] if len(result) > 1 else []
                         reclaimed += len(claimed_msgs)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log("warn", "xautoclaim_stale_failed", {"consumer": name, "error": str(e)})
 
                 try:
                     await self.redis.xgroup_delconsumer(
@@ -498,8 +590,8 @@ class Worker:
                         name
                     )
                     removed += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    log("warn", "delconsumer_failed", {"consumer": name, "error": str(e)})
 
             if removed or reclaimed:
                 log("info", "stale_consumers_removed", {
@@ -572,8 +664,8 @@ class Worker:
                         await self.redis.xack("whatsapp_stream_inbound", self.group_name, msg_id)
                         await self.redis.xdel("whatsapp_stream_inbound", msg_id)
                         cleaned += 1
-                    except Exception:
-                        pass
+                    except (ConnectionError, OSError) as e:
+                        log("warn", "stale_msg_cleanup_failed", {"msg_id": msg_id, "error": str(e)})
 
             if cleaned:
                 log("info", "stale_pending_cleaned", {"cleaned": cleaned, "total": total_pending})
@@ -594,7 +686,12 @@ class Worker:
                 )
 
                 if not messages:
+                    # Burst mode: exit if idle too long (queue drained)
+                    if self._burst_mode and self._check_burst_idle_timeout():
+                        break
                     continue
+
+                self._last_message_time = time.time()
 
                 tasks = [
                     asyncio.create_task(self._handle_message_safe(msg_id, data))
@@ -606,16 +703,75 @@ class Worker:
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
+                # Periodic cleanup of stale local locks to prevent memory leaks
+                total = self._messages_processed + self._messages_failed
+                if total > 0 and total % self._lock_cleanup_interval == 0:
+                    self._cleanup_stale_locks()
+
+                # Burst mode: exit after MAX_MESSAGES processed
+                if self._burst_mode and self._check_burst_message_limit():
+                    break
+
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                err_str = str(e).lower()
-                if "closed" in err_str or "connection" in err_str:
-                    log("warn", "redis_connection_lost_inbound")
-                    await self._reconnect_redis()
-                else:
-                    log("error", "inbound_loop_error", {"error": str(e)})
+            except (ConnectionError, OSError) as e:
+                log("warn", "redis_connection_lost_inbound", {"error": str(e)})
+                await self._reconnect_redis()
                 await asyncio.sleep(2)
+            except Exception as e:
+                log_exception("inbound_loop_error", e)
+                await asyncio.sleep(2)
+
+        # If burst mode triggered the break, initiate graceful shutdown
+        if self._burst_mode and not self.shutdown.is_shutting_down():
+            log("info", "burst_mode_complete", {
+                "messages_processed": self._messages_processed,
+                "max_messages": self._burst_max_messages
+            })
+            self.shutdown.request_shutdown()
+
+    def _check_burst_message_limit(self) -> bool:
+        """Check if burst worker has processed enough messages to exit."""
+        total = self._messages_processed + self._messages_failed
+        if total >= self._burst_max_messages:
+            log("info", "burst_message_limit_reached", {
+                "processed": self._messages_processed,
+                "failed": self._messages_failed,
+                "limit": self._burst_max_messages
+            })
+            return True
+        return False
+
+    def _check_burst_idle_timeout(self) -> bool:
+        """Check if burst worker has been idle too long (queue drained)."""
+        if self._last_message_time is None:
+            return False
+        idle_seconds = time.time() - self._last_message_time
+        if idle_seconds >= self._burst_idle_timeout:
+            log("info", "burst_idle_timeout", {
+                "idle_seconds": int(idle_seconds),
+                "timeout": self._burst_idle_timeout,
+                "processed": self._messages_processed
+            })
+            return True
+        return False
+
+    async def _release_lock_lua(self, lock_key: str) -> int:
+        """Fallback: run Lua script inline if SHA not cached."""
+        return await self.redis.eval(_RELEASE_LOCK_LUA, 1, lock_key, self.consumer_name)
+
+    def _cleanup_stale_locks(self) -> None:
+        """Remove processing locks idle for more than _lock_max_age_sec."""
+        now = time.time()
+        stale_keys = [
+            k for k, t in self._lock_access_times.items()
+            if now - t > self._lock_max_age_sec
+        ]
+        for k in stale_keys:
+            self._processing_locks.pop(k, None)
+            self._lock_access_times.pop(k, None)
+        if stale_keys:
+            log("debug", "processing_locks_cleaned", {"removed": len(stale_keys), "remaining": len(self._processing_locks)})
 
     async def _handle_message_safe(self, msg_id: str, data: dict):
         async with self._semaphore:
@@ -634,6 +790,7 @@ class Worker:
             )
 
             if acquired:
+                self._lock_access_times[lock_key] = time.time()
                 return True
             else:
                 holder = await self.redis.get(lock_key)
@@ -650,15 +807,32 @@ class Worker:
     async def _release_message_lock(self, sender: str, message_id: str) -> None:
         lock_key = f"msg_lock:{sender}:{message_id}"
         try:
-            await self.redis.delete(lock_key)
+            # Atomic release: only delete if we still hold the lock
+            released = await self.redis.evalsha(
+                self._release_lock_sha,
+                1, lock_key,
+                self.consumer_name
+            ) if hasattr(self, '_release_lock_sha') else await self._release_lock_lua(lock_key)
+            if released == 0:
+                log("debug", "lock_already_expired_or_stolen", {"lock_key": lock_key})
         except Exception as e:
             log("warn", "lock_release_error", {"error": str(e)})
+        finally:
+            self._lock_access_times.pop(lock_key, None)
 
     async def _handle_message(self, msg_id: str, data: dict):
-        """Handle single message with deduplication."""
+        """Handle single message with deduplication and distributed tracing."""
         sender = data.get("sender", "")
         text = data.get("text", "")
         message_id = data.get("message_id", "")
+        request_id = data.get("request_id", "")  # Propagated from webhook
+
+        _span_attrs = {
+            "message.id": message_id[:20] if message_id else "",
+            "message.sender_suffix": sender[-4:] if sender else "",
+            "message.stream_id": msg_id,
+            "message.request_id": request_id,
+        }
 
         if not message_id:
             content_hash = hashlib.md5(
@@ -668,33 +842,38 @@ class Worker:
 
         log("info", "processing", {
             "sender": sender[-4:] if sender else "",
-            "text_preview": text[:30] if text else ""
+            "text_preview": text[:30] if text else "",
+            "request_id": request_id,
         })
 
-        # Handle non-text messages (images, locations, voice, etc.)
-        # These come from webhook as [NON_TEXT:TYPE] markers
-        if text.startswith("[NON_TEXT:"):
-            original_type = data.get("original_type", "UNKNOWN")
-            log("info", "non_text_message", {
-                "sender": sender[-4:] if sender else "",
-                "type": original_type
-            })
-            # Send friendly response without going through AI pipeline
-            response = (
-                "Trenutno mogu obraditi samo tekstualne poruke. "
-                "Molimo posaljite svoju poruku kao tekst."
-            )
-            await self._enqueue_outbound(sender, response)
-            self._messages_processed += 1
-            await self._ack_message(msg_id)
-            return
-
+        # IDEMPOTENCY: Lock FIRST, before ANY processing (including non-text).
+        # If Infobip retries the same message_id due to 500ms lag, we must
+        # detect the duplicate before sending a second response.
         if not await self._acquire_message_lock(sender, message_id):
             self._duplicates_skipped += 1
             log("warn", "skipping_duplicate", {
                 "sender": sender[-4:],
                 "message_id": message_id[:20]
             })
+            await self._ack_message(msg_id)
+            return
+
+        # Handle non-text messages (images, locations, voice, etc.)
+        # These come from webhook as [NON_TEXT:TYPE] markers
+        # Placed AFTER lock to prevent duplicate responses on Infobip retries
+        if text.startswith("[NON_TEXT:"):
+            original_type = data.get("original_type", "UNKNOWN")
+            log("info", "non_text_message", {
+                "sender": sender[-4:] if sender else "",
+                "type": original_type
+            })
+            response = (
+                "Trenutno mogu obraditi samo tekstualne poruke. "
+                "Molimo posaljite svoju poruku kao tekst."
+            )
+            await self._enqueue_outbound(sender, response)
+            self._messages_processed += 1
+            await self._release_message_lock(sender, message_id)
             await self._ack_message(msg_id)
             return
 
@@ -706,32 +885,79 @@ class Worker:
 
         start_time = time.time()
 
-        try:
-            response = await self._process_message(sender, text, message_id)
+        # ACK PROTOCOL: XACK only after outbound enqueue succeeds.
+        # If we ACK before enqueue and the pod dies, the user's reply
+        # is lost permanently (message already removed from stream).
+        # The outbound queue has its own crash recovery via BLMOVE +
+        # _requeue_abandoned_outbound(), so once RPUSH succeeds the
+        # reply is durable.
+        ack_ok = False
 
-            if response:
-                await self._enqueue_outbound(sender, response)
+        with trace_span(_tracer, "worker.process_message", _span_attrs) as span:
+          try:
+            # Timeout protection: prevent stuck LLM calls from blocking all slots
+            response = await asyncio.wait_for(
+                self._process_message(sender, text, message_id),
+                timeout=90.0
+            )
+
+            # Fallback if engine returns None/empty
+            if not response:
+                response = "Greška pri obradi poruke. Molimo pokušajte ponovno."
+                log("warn", "empty_response_fallback", {"sender": sender[-4:]})
+
+            span.set_attribute("response.length", len(response))
+            await self._enqueue_outbound(sender, response)
+            ack_ok = True  # Outbound enqueue succeeded — safe to ACK
 
             self._messages_processed += 1
 
-        except Exception as e:
+          except asyncio.TimeoutError:
+            log("error", "process_timeout", {
+                "sender": sender[-4:] if sender else "",
+                "text_preview": text[:30] if text else "",
+                "timeout_sec": 90,
+                "request_id": request_id,
+            })
+            self._messages_failed += 1
+            await self._enqueue_outbound(
+                sender,
+                "Obrada poruke je trajala predugo. Molimo pokušajte ponovno."
+            )
+            ack_ok = True  # Timeout response enqueued — safe to ACK
+
+          except Exception as e:
+            span.record_exception(e)
             log_exception("processing_error", e, {
                 "sender": sender[-4:] if sender else "",
                 "text_preview": text[:50] if text else "",
-                "message_id": message_id[:20] if message_id else ""
+                "message_id": message_id[:20] if message_id else "",
+                "request_id": request_id,
             })
             self._messages_failed += 1
             await self._store_dlq(data, str(e))
+            ack_ok = True  # DLQ write succeeded — safe to ACK
 
-        finally:
+          finally:
             await self._release_message_lock(sender, message_id)
-            await self._ack_message(msg_id)
+            if ack_ok:
+                await self._ack_message(msg_id)
+            else:
+                # Enqueue failed (Redis down mid-processing). Do NOT ACK.
+                # Message stays pending in stream → reclaimed on restart
+                # via _cleanup_stale_pending().
+                log("warn", "ack_deferred_enqueue_failed", {
+                    "msg_id": msg_id,
+                    "sender": sender[-4:] if sender else ""
+                })
             elapsed = time.time() - start_time
-            log("info", "processed", {"elapsed_ms": int(elapsed * 1000)})
+            log("info", "processed", {
+                "elapsed_ms": int(elapsed * 1000),
+                "request_id": request_id,
+            })
 
     async def _process_message(self, sender: str, text: str, message_id: str) -> Optional[str]:
         """Process message through MessageEngine with per-request db session."""
-        from database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
             try:
@@ -816,13 +1042,19 @@ class Worker:
 
             except asyncio.CancelledError:
                 break
+            except (ConnectionError, OSError) as e:
+                log("warn", "redis_connection_lost_outbound", {"error": str(e)})
+                await self._reconnect_redis()
+                await asyncio.sleep(1)
+            except json.JSONDecodeError as e:
+                log("error", "outbound_json_error", {"error": str(e)})
+                # Remove corrupt message from processing list
+                if data:
+                    with suppress(Exception):
+                        await self.redis.lrem("whatsapp_outbound_processing", 1, data)
+                await asyncio.sleep(1)
             except Exception as e:
-                err_str = str(e).lower()
-                if "closed" in err_str or "connection" in err_str:
-                    log("warn", "redis_connection_lost_outbound")
-                    await self._reconnect_redis()
-                else:
-                    log("error", "outbound_error", {"error": str(e)})
+                log_exception("outbound_error", e)
                 await asyncio.sleep(1)
 
     async def _health_reporter(self):
@@ -845,6 +1077,15 @@ class Worker:
                 if self._start_time:
                     uptime_sec = int((datetime.now(timezone.utc) - self._start_time).total_seconds())
 
+                # Verify Lua lock script is still cached in Redis
+                lua_cached = True
+                if hasattr(self, '_release_lock_sha'):
+                    exists = await self.redis.script_exists(self._release_lock_sha)
+                    if not exists or not exists[0]:
+                        self._release_lock_sha = await self.redis.script_load(_RELEASE_LOCK_LUA)
+                        log("warn", "lua_script_reloaded", {"sha": self._release_lock_sha})
+                        lua_cached = False
+
                 health_data = {
                     "processed": self._messages_processed,
                     "failed": self._messages_failed,
@@ -854,11 +1095,19 @@ class Worker:
                     "wa_sent": whatsapp_stats.get("messages_sent", 0),
                     "wa_retries": whatsapp_stats.get("total_retries", 0),
                     "memory_mb": round(memory_mb, 1),
-                    "uptime_sec": uptime_sec
+                    "uptime_sec": uptime_sec,
+                    "lua_lock_cached": lua_cached,
+                    "local_locks": len(self._lock_access_times)
                 }
 
-                # Warn if memory is high
+                # Warn if memory is high; include tracemalloc top allocators
                 if memory_mb > MEMORY_WARNING_MB:
+                    if tracemalloc is not None and tracemalloc.is_tracing():
+                        snapshot = tracemalloc.take_snapshot()
+                        top = snapshot.statistics("lineno")[:5]
+                        health_data["tracemalloc_top5"] = [
+                            f"{s.traceback[0]}: {s.size / 1024:.0f}KB" for s in top
+                        ]
                     log("warn", "high_memory_usage", health_data)
                 else:
                     log("info", "health", health_data)
@@ -897,6 +1146,7 @@ class Worker:
             delayed_payload = json.dumps({
                 "to": to,
                 "text": text,
+                "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time() + delay)}",
                 "scheduled_at": time.time() + delay
             })
 
@@ -908,6 +1158,39 @@ class Worker:
             log("info", "queued_delayed", {"to": to[-4:], "delay": delay})
         except Exception as e:
             log("error", "queue_delayed_failed", {"error": str(e)})
+
+    async def _process_delayed_outbound_loop(self):
+        """Poll whatsapp_outbound_delayed sorted set and move due messages to outbound.
+
+        Uses a Lua script to atomically pop + push, preventing the race where
+        two workers both fetch the same due items via zrangebyscore.
+        """
+        log("info", "delayed_outbound_processor_started")
+        while not self.shutdown.is_shutting_down():
+            try:
+                now = time.time()
+                # Atomic: zrangebyscore + rpush + zrem in one round-trip
+                promoted = await self.redis.eval(
+                    _PROMOTE_DELAYED_LUA,
+                    2,  # number of KEYS
+                    "whatsapp_outbound_delayed",  # KEYS[1]
+                    "whatsapp_outbound",           # KEYS[2]
+                    str(now),                      # ARGV[1] = score ceiling
+                    "10",                          # ARGV[2] = batch size
+                )
+                for raw in (promoted or []):
+                    try:
+                        payload = json.loads(raw)
+                        log("info", "delayed_msg_promoted", {"to": payload.get("to", "?")[-4:]})
+                    except (json.JSONDecodeError, KeyError) as e:
+                        log("warn", "delayed_msg_corrupt", {"error": str(e)})
+
+                await asyncio.sleep(5)  # Poll every 5 seconds
+            except asyncio.CancelledError:
+                break
+            except (ConnectionError, OSError) as e:
+                log("warn", "delayed_outbound_redis_error", {"error": str(e)})
+                await asyncio.sleep(10)
 
     async def _enqueue_outbound(self, to: str, text: str):
         # Split long messages to respect WhatsApp's 4096 char limit
@@ -981,21 +1264,35 @@ class Worker:
             "worker": self.consumer_name
         }
         await self.redis.rpush("dlq:inbound", json.dumps(entry))
+        # Set TTL on DLQ to prevent unbounded memory growth (7 days retention)
+        await self.redis.expire("dlq:inbound", 604800)
+
+    MAX_RATE_LIMIT_ENTRIES = 10000  # Prevent unbounded memory growth
 
     def _check_rate_limit(self, identifier: str) -> bool:
-        """Check rate limit with periodic cleanup."""
+        """Check rate limit with periodic cleanup and bounded dict size."""
         now = time.time()
         window_start = now - self.rate_window
 
         self._rate_limit_cleanup_counter += 1
         if self._rate_limit_cleanup_counter >= 100:
             self._rate_limit_cleanup_counter = 0
+            # Clean stale entries (use list() to avoid dict mutation during iteration)
             stale_keys = [
-                k for k, v in self._rate_limits.items()
+                k for k, v in list(self._rate_limits.items())
                 if not v or max(v) < window_start
             ]
             for k in stale_keys:
-                del self._rate_limits[k]
+                self._rate_limits.pop(k, None)
+
+            # Evict oldest entries if dict exceeds size limit
+            if len(self._rate_limits) > self.MAX_RATE_LIMIT_ENTRIES:
+                sorted_keys = sorted(
+                    self._rate_limits.keys(),
+                    key=lambda k: max(self._rate_limits[k]) if self._rate_limits[k] else 0
+                )
+                for k in sorted_keys[:len(self._rate_limits) - self.MAX_RATE_LIMIT_ENTRIES]:
+                    self._rate_limits.pop(k, None)
 
         if identifier in self._rate_limits:
             self._rate_limits[identifier] = [
@@ -1022,6 +1319,12 @@ async def main():
     except Exception as e:
         log_exception("worker_fatal", e)
         sys.exit(1)
+    finally:
+        # Safety net: ensure resources are released even if start() exits abnormally
+        if worker.redis:
+            with suppress(Exception):
+                await worker.redis.aclose()
+        log("info", "worker_exit")
 
 
 if __name__ == "__main__":

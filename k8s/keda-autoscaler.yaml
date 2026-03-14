@@ -124,10 +124,19 @@ spec:
     backoffLimit: 3
     template:
       spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
         containers:
           - name: burst-worker
             image: ghcr.io/mobilityone/bot:latest  # Same image as main worker
-            command: ["python", "worker.py", "--burst-mode"]
+            command: ["python", "worker.py"]
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
             envFrom:
               - secretRef:
                   name: mobility-secrets
@@ -138,13 +147,21 @@ spec:
                 value: "true"
               - name: MAX_MESSAGES
                 value: "100"  # Process 100 messages then exit
+            volumeMounts:
+              - name: tmp
+                mountPath: /tmp
             resources:
               requests:
-                memory: "256Mi"
-                cpu: "250m"
-              limits:
-                memory: "512Mi"
                 cpu: "500m"
+                memory: "512Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+        volumes:
+          - name: tmp
+            emptyDir:
+              medium: Memory
+              sizeLimit: 50Mi
         restartPolicy: Never
 
   # Job scaling settings
@@ -194,3 +211,28 @@ spec:
             severity: critical
           annotations:
             summary: "KEDA not scaling despite queue backlog"
+
+        # CPU throttling alert: fires when >25% of CPU periods are throttled over 5min
+        # Critical at 0.5 CPU limit — throttling means message processing is stalling
+        - alert: CPUThrottlingHigh
+          expr: |
+            100 * sum by(pod) (increase(container_cpu_cfs_throttled_periods_total{namespace="default", pod=~"mobility-.*"}[5m]))
+            / sum by(pod) (increase(container_cpu_cfs_periods_total{namespace="default", pod=~"mobility-.*"}[5m])) > 25
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} CPU throttled >25%"
+            description: "{{ $value | printf \"%.0f\" }}% of CPU periods throttled. Consider reducing MAX_CONCURRENT or scaling horizontally."
+
+        # Memory high-water alert: fires when pod exceeds 85% of its 1Gi limit
+        - alert: MemoryHighWater
+          expr: |
+            container_memory_working_set_bytes{namespace="default", pod=~"mobility-worker.*"}
+            / container_spec_memory_limit_bytes{namespace="default", pod=~"mobility-worker.*"} > 0.85
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker {{ $labels.pod }} memory at {{ $value | printf \"%.0f\" }}% of limit"
+            description: "Approaching 1Gi OOM kill. Check tracemalloc output in worker logs."

@@ -6,28 +6,37 @@ Main entry point with automatic database initialization.
 
 import asyncio
 import logging
+import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import text
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import config FIRST to get LOG_LEVEL
 from config import get_settings
 
 settings = get_settings()
 
+# PII-Safe Logging Filter (shared module — single source of truth)
+from services.pii_filter import PIIScrubFilter
+
+
 # Configure logging with level from settings
 log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+_pii_filter = PIIScrubFilter()
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.addFilter(_pii_filter)
 logging.basicConfig(
     level=log_level,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[_stdout_handler]
 )
 
 # Reduce noise from verbose libraries (CRITICAL for production readability)
@@ -36,6 +45,74 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 logger.info(f"Logging configured: level={settings.LOG_LEVEL}")
+
+# --- Graceful Shutdown Flag ---
+# Set to True on SIGTERM. Webhook checks this to stop accepting new messages
+# during the K8s grace period, preventing message loss when Redis/worker are
+# already draining.
+APP_STOPPING = False
+
+# --- Payload Size Guard (OOM prevention at 1GB RAM) ---
+# JSON parsing a 10MB malicious payload at 20 concurrent requests = 200MB spike.
+# Combined with baseline 280MB = OOM kill. Reject before parsing.
+MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024  # 1MB
+
+class PayloadSizeGuardMiddleware(BaseHTTPMiddleware):
+    """Reject requests >1MB before JSON parsing to prevent OOM at 1GB RAM."""
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                length = int(content_length)
+            except (ValueError, OverflowError):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length header"}
+                )
+            if length > MAX_REQUEST_BODY_BYTES:
+                logger.warning(
+                    f"Payload rejected: {length} bytes > {MAX_REQUEST_BODY_BYTES} limit "
+                    f"from {request.client.host if request.client else 'unknown'}"
+                )
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large (max 1MB)"}
+                )
+        return await call_next(request)
+
+
+# --- Request ID Middleware (for distributed tracing) ---
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Add unique request ID to each request for log correlation."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:12]
+        request.state.request_id = request_id
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+# --- HTTPS Redirect Middleware (production only) ---
+class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
+    """Redirect HTTP to HTTPS in production."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Check X-Forwarded-Proto header (set by reverse proxy/load balancer)
+        proto = request.headers.get("X-Forwarded-Proto", "https")
+        if proto == "http" and settings.is_production:
+            url = request.url.replace(scheme="https")
+            return PlainTextResponse(
+                content="Redirecting to HTTPS",
+                status_code=301,
+                headers={"Location": str(url)}
+            )
+        response = await call_next(request)
+        # Add HSTS header in production
+        if settings.is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
 # Prometheus metrics
 REQUEST_COUNT = Counter(
@@ -51,37 +128,40 @@ REQUEST_LATENCY = Histogram(
 TOOLS_LOADED = Gauge('tools_loaded_total', 'Number of tools loaded in registry')
 ACTIVE_CONNECTIONS = Gauge('active_connections', 'Number of active connections')
 
-
-async def wait_for_database(max_retries: int = 30, delay: int = 2) -> bool:
+async def wait_for_database(max_retries: int = 30, base_delay: int = 2) -> bool:
     """Wait for database to be available and create tables."""
     from database import engine, Base
-    from models import UserMapping, Conversation, Message, ToolExecution, AuditLog  # noqa
-    
+    from sqlalchemy.exc import OperationalError, DatabaseError
+    from models import AuditLog  # noqa
+
     logger.info("Waiting for database...")
-    
+
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-            
+
             logger.info("Database connection established")
-            
+
             # Create tables
             logger.info("Creating database tables...")
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            
+
             logger.info("Database tables ready")
             return True
-            
-        except Exception as e:
-            logger.warning(f"Database not ready (attempt {attempt + 1}/{max_retries}): {e}")
+
+        except (OperationalError, DatabaseError, OSError, TimeoutError) as e:
+            delay = min(base_delay * (2 ** min(attempt, 5)), 60)
+            logger.warning(f"Database not ready (attempt {attempt + 1}/{max_retries}, retry in {delay}s): {e}")
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
-    
+        except Exception as e:
+            logger.error(f"Unexpected database error: {type(e).__name__}: {e}")
+            return False
+
     logger.error("Could not connect to database after all retries")
     return False
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
@@ -94,20 +174,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         logger.error("Cannot start without database")
         raise RuntimeError("Database not available")
     
-    # 2. Initialize Redis
-    try:
-        redis_client = aioredis.from_url(
-            settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-            max_connections=settings.REDIS_MAX_CONNECTIONS
-        )
-        await redis_client.ping()
-        app.state.redis = redis_client
-        logger.info("Redis connected")
-    except Exception as e:
-        logger.error(f"Redis connection failed: {e}")
-        raise RuntimeError(f"Redis not available: {e}")
+    # 2. Initialize Redis with retry (supports Sentinel for HA)
+    from services.redis_factory import create_redis_client
+    redis_client = None
+    for attempt in range(5):
+        try:
+            redis_client = await create_redis_client(settings)
+            app.state.redis = redis_client
+            break
+        except (ConnectionError, OSError, TimeoutError) as e:
+            delay = min(2 * (2 ** attempt), 30)
+            logger.warning(f"Redis not ready (attempt {attempt + 1}/5, retry in {delay}s): {e}")
+            if attempt < 4:
+                await asyncio.sleep(delay)
+            else:
+                raise RuntimeError(f"Redis not available after 5 attempts: {e}")
+        except Exception as e:
+            logger.error(f"Redis connection failed: {e}")
+            raise RuntimeError(f"Redis not available: {e}")
     
     # 3. Initialize services
     try:
@@ -179,17 +263,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     
     yield
     
-    # Shutdown
-    logger.info("Shutting down...")
-    
+    # Shutdown — set flag FIRST so webhook stops accepting new messages
+    global APP_STOPPING
+    APP_STOPPING = True
+    logger.info("Shutting down... APP_STOPPING=True, webhook will reject new messages")
+
+    # Shutdown OpenTelemetry tracing
+    try:
+        from services.tracing import shutdown_tracing
+        await shutdown_tracing()
+    except ImportError:
+        logger.debug("Tracing module not available, skipping shutdown")
+    except Exception as e:
+        logger.warning(f"OpenTelemetry shutdown error (non-fatal): {type(e).__name__}: {e}")
+
     if hasattr(app.state, 'gateway') and app.state.gateway:
         await app.state.gateway.close()
-    
+
     if hasattr(app.state, 'redis') and app.state.redis:
         await app.state.redis.aclose()
-    
-    logger.info("Goodbye!")
 
+    logger.info("Goodbye!")
 
 # Create FastAPI app
 app = FastAPI(
@@ -200,6 +294,16 @@ app = FastAPI(
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None
 )
+
+# Payload size guard (outermost - runs first, rejects before JSON parsing)
+app.add_middleware(PayloadSizeGuardMiddleware)
+
+# Request ID
+app.add_middleware(RequestIDMiddleware)
+
+# HTTPS enforcement in production
+if settings.is_production:
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 # Security headers
 from services.security_headers import SecurityHeadersMiddleware
@@ -236,7 +340,6 @@ if settings.DEBUG:
         else:
             logger.debug(f"Registered non-HTTP route: {route.name if hasattr(route, 'name') else route}")
 
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint.
@@ -250,38 +353,45 @@ async def health_check():
     checks = {
         "status": "healthy",
         "version": settings.APP_VERSION,
-        "database": "disconnected",
-        "redis": "disconnected",
-        "tools": 0
     }
+
+    # Only include detailed info in development
+    if settings.DEBUG:
+        checks["database"] = "disconnected"
+        checks["redis"] = "disconnected"
+        checks["tools"] = 0
 
     try:
         # Check database
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-        checks["database"] = "connected"
+        if settings.DEBUG:
+            checks["database"] = "connected"
 
         # Check redis
         if hasattr(app.state, 'redis') and app.state.redis:
             await app.state.redis.ping()
-            checks["redis"] = "connected"
+            if settings.DEBUG:
+                checks["redis"] = "connected"
 
         # Check tools
         if hasattr(app.state, 'registry') and app.state.registry:
-            checks["tools"] = len(app.state.registry.tools)
+            if settings.DEBUG:
+                checks["tools"] = len(app.state.registry.tools)
 
         # MobilityOne API status - non-blocking, just report cached token state
-        if hasattr(app.state, 'gateway') and app.state.gateway:
-            checks["mobility_api"] = "connected" if app.state.gateway.token_manager.is_valid else "no_token"
-        else:
-            checks["mobility_api"] = "not_initialized"
+        if settings.DEBUG:
+            if hasattr(app.state, 'gateway') and app.state.gateway:
+                checks["mobility_api"] = "connected" if app.state.gateway.token_manager.is_valid else "no_token"
+            else:
+                checks["mobility_api"] = "not_initialized"
 
     except Exception as e:
         checks["status"] = "unhealthy"
-        checks["error"] = str(e)
+        if settings.DEBUG:
+            checks["error"] = str(e)
 
     return checks
-
 
 @app.get("/ready")
 async def readiness_check():
@@ -290,6 +400,10 @@ async def readiness_check():
     Does NOT block on external API checks. MobilityOne being down
     should not prevent the bot from handling guest users.
     """
+    # Fail readiness during shutdown so K8s stops routing traffic
+    if APP_STOPPING:
+        return JSONResponse(status_code=503, content={"ready": False, "reason": "shutting down"})
+
     from database import engine
 
     try:
@@ -300,7 +414,17 @@ async def readiness_check():
 
     try:
         if hasattr(app.state, 'redis') and app.state.redis:
-            await app.state.redis.ping()
+            # Full write cycle: SET → GET → DEL
+            # SET-only misses: read-only replica accepts SET silently in some configs.
+            # GET verifies the write landed. DEL confirms delete works (disk-full
+            # Redis may accept SET to memory but fail on AOF fsync — DEL catches this).
+            # Pod-specific key avoids cross-pod collisions on the same key.
+            _ready_key = f"readiness_check:{os.getpid()}"
+            await app.state.redis.set(_ready_key, "ok", ex=5)
+            val = await app.state.redis.get(_ready_key)
+            if val != b"ok" and val != "ok":
+                return JSONResponse(status_code=503, content={"ready": False, "reason": "redis write verification failed"})
+            await app.state.redis.delete(_ready_key)
         else:
             return JSONResponse(status_code=503, content={"ready": False, "reason": "redis not initialized"})
     except Exception:
@@ -311,7 +435,6 @@ async def readiness_check():
 
     return {"ready": True}
 
-
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -321,25 +444,35 @@ async def root():
         "status": "running"
     }
 
-
 @app.get("/metrics")
-async def metrics():
-    """Prometheus metrics endpoint."""
+async def metrics(request: Request):
+    """Prometheus metrics endpoint. Protected in production."""
+    # In production, only allow Prometheus scraper (by IP or token)
+    if settings.is_production:
+        token = request.query_params.get("token", "")
+        admin_tokens = set()
+        for i in range(1, 5):
+            env_token = os.environ.get(f"ADMIN_TOKEN_{i}")
+            if env_token:
+                admin_tokens.add(env_token)
+        if admin_tokens and token not in admin_tokens:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
     # Read tools count from Redis (written by worker after registry init)
-    # This fixes the "zero" bug - API doesn't load registry, worker does
     if hasattr(app.state, 'redis') and app.state.redis:
         try:
             tools_count = await app.state.redis.get(settings.REDIS_STATS_KEY_TOOLS)
             if tools_count:
                 TOOLS_LOADED.set(int(tools_count))
-        except Exception:
-            pass  # Metrics should never crash the endpoint
+        except (ConnectionError, OSError) as e:
+            logger.debug(f"Redis unavailable for metrics read: {e}")
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Invalid tools_count value in Redis: {e}")
 
     return PlainTextResponse(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST
     )
-
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -349,7 +482,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error"}
     )
-
 
 if __name__ == "__main__":
     import uvicorn

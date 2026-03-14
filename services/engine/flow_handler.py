@@ -15,12 +15,11 @@ from typing import Dict, Any, List, Optional
 
 from services.booking_contracts import AssigneeType, EntryType
 from services.error_translator import get_error_translator
-from services.confirmation_dialog import get_confirmation_dialog, ConfirmationDialog
+from services.confirmation_dialog import get_confirmation_dialog
 from services.context import get_multiple_missing_prompts
 from services.context.user_context_manager import UserContextManager
 
 logger = logging.getLogger(__name__)
-
 
 class FlowHandler:
     """
@@ -257,6 +256,11 @@ class FlowHandler:
 
         await conv_manager.select_item(selected)
 
+        # Delete flows: show delete confirmation
+        current_flow = conv_manager.get_current_flow()
+        if current_flow and current_flow.startswith("delete_"):
+            return await self._show_delete_confirmation(selected, conv_manager)
+
         params = conv_manager.get_parameters()
 
         vehicle_name = (
@@ -359,11 +363,15 @@ class FlowHandler:
 
         if not confirmation:
             await conv_manager.cancel()
-            return "Rezervacija otkazana. Kako vam jos mogu pomoci?"
+            return "Operacija otkazana. Kako vam još mogu pomoći?"
 
         await conv_manager.confirm()
 
         tool_name = conv_manager.get_current_tool()
+        if not tool_name:
+            logger.warning("CONFIRMATION: tool_name is None after confirm (state expired?)")
+            await conv_manager.reset()
+            return "Vaša sesija je istekla. Molimo pokrenite operaciju ponovno."
         params = conv_manager.get_parameters()
         selected = conv_manager.get_selected_item()
 
@@ -395,13 +403,16 @@ class FlowHandler:
                 "ToTime": to_time,
                 "AssigneeType": int(AssigneeType.PERSON),  # Explicit int conversion
                 "EntryType": int(EntryType.BOOKING),  # Explicit int conversion
-                "Description": params.get("Description") or params.get("description")
+                **({"Description": desc} if (desc := params.get("Description") or params.get("description")) else {})
             }
         else:
             if selected:
-                vehicle_id = selected.get("Id") or selected.get("VehicleId")
-                if vehicle_id:
-                    params["VehicleId"] = vehicle_id
+                item_id = selected.get("Id") or selected.get("VehicleId")
+                if item_id:
+                    if tool_name and "delete_" in tool_name:
+                        params["id"] = item_id
+                    else:
+                        params["VehicleId"] = item_id
 
             if "from" in params and "FromTime" not in params:
                 params["FromTime"] = params.pop("from")
@@ -434,8 +445,14 @@ class FlowHandler:
 
         result = await self.executor.execute(tool, params, execution_context)
 
-        await conv_manager.complete()
-        await conv_manager.reset()
+        # Always clean up state - even if save fails, don't leave stale flow
+        try:
+            await conv_manager.complete()
+            await conv_manager.reset()
+        except Exception as e:
+            logger.error(f"State cleanup failed after execution: {e}")
+            # Force reset context in memory even if Redis save failed
+            conv_manager.context.reset()
 
         if result.success:
             if tool_name == "post_VehicleCalendar":
@@ -479,6 +496,20 @@ class FlowHandler:
                 return (
                     f"**Kilometraža uspješno unesena!**\n\n"
                     f"Nova kilometraža: {value} km\n\n"
+                    f"Kako vam još mogu pomoći?"
+                )
+
+            # Delete operation success message
+            if tool_name and "delete_" in tool_name:
+                item_name = ""
+                if selected:
+                    item_name = (
+                        selected.get("Subject") or selected.get("VehicleName") or
+                        selected.get("DisplayName") or selected.get("Name") or ""
+                    )
+                return (
+                    f"**Uspješno obrisano!**\n\n"
+                    f"{item_name}\n\n"
                     f"Kako vam još mogu pomoći?"
                 )
 
@@ -558,8 +589,9 @@ class FlowHandler:
                     logger.info(f"GATHERING FALLBACK: Using raw text '{text.strip()}' as {param}")
             # For Value (mileage), try to parse the number
             elif param.lower() in ['value', 'mileage']:
-                import re
-                numbers = re.findall(r'\d+', text)
+                # Strip European thousands separators (45.000 or 45,000 → 45000)
+                cleaned = re.sub(r'(\d)[.,](\d{3})\b', r'\1\2', text)
+                numbers = re.findall(r'\d+', cleaned)
                 if numbers:
                     extracted[param] = int(numbers[0])
                     logger.info(f"GATHERING FALLBACK: Extracted number '{numbers[0]}' as {param}")
@@ -641,6 +673,37 @@ class FlowHandler:
             f"Naslov: {subject}\n"
             f"{vehicle_line}"
             f"Opis: {description}\n\n"
+            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
+        )
+
+        await conv_manager.request_confirmation(message)
+        await conv_manager.save()
+
+        return message
+
+    async def _show_delete_confirmation(self, selected: Dict, conv_manager) -> str:
+        """Show confirmation for delete operation."""
+        name = (
+            selected.get("Subject") or selected.get("VehicleName") or
+            selected.get("FullVehicleName") or selected.get("DisplayName") or
+            selected.get("Name") or selected.get("Description") or "Stavka"
+        )
+
+        details = []
+        for field, label in [("FromTime", "Od"), ("ToTime", "Do"),
+                             ("CreatedDate", "Datum"), ("Status", "Status"),
+                             ("StartDate", "Početak"), ("EndDate", "Kraj")]:
+            val = selected.get(field)
+            if val:
+                details.append(f"{label}: {val}")
+
+        detail_text = "\n".join(details)
+        if detail_text:
+            detail_text = f"\n{detail_text}\n"
+
+        message = (
+            f"**Jeste li sigurni da želite obrisati:**\n\n"
+            f"**{name}**{detail_text}\n"
             f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
         )
 

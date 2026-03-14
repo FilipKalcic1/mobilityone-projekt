@@ -11,17 +11,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
 
-from sqlalchemy import select, or_
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from models import UserMapping
 from config import get_settings
+from services.api_gateway import HttpMethod
 from services.schema_extractor import get_schema_extractor
-from services.tenant_service import get_tenant_service, TenantService
+from services.tenant_service import get_tenant_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 class UserService:
     """
@@ -103,17 +104,19 @@ class UserService:
             user = result.scalars().first()
             
             if user:
-                logger.info(f"Found active user '{user.display_name}' for phone '{phone}' using variation '{user.phone_number}'")
+                logger.info(f"Found active user for phone '***{phone[-4:]}' using variation '***{user.phone_number[-4:]}'")
+
             else:
-                logger.warning(f"No active user found for phone '{phone}' with variations {variations}")
+                logger.warning(f"No active user found for phone '***{phone[-4:]}' with {len(variations)} variations")
                 
             return user
-        except Exception as e:
-            logger.error(f"DB lookup failed for phone '{phone}': {e}")
+        except SQLAlchemyError as e:
+            logger.error(f"DB lookup failed for phone '***{phone[-4:]}': {type(e).__name__}: {e}")
             return None
-    
-    # ... (rest of class)
-        
+        except Exception as e:
+            logger.error(f"Unexpected error in user lookup for phone '***{phone[-4:]}': {type(e).__name__}: {e}")
+            return None
+
     async def try_auto_onboard(self, phone: str) -> Optional[Tuple[str, str]]:
         """
         Try to auto-onboard user from MobilityOne API.
@@ -144,10 +147,8 @@ class UserService:
             else:
                 variations.append(digits_only)                        # as-is
 
-            from services.api_gateway import HttpMethod
-
             for phone_var in variations:
-                logger.info(f"Lookup: Phone(=){phone_var}")
+                logger.info(f"Lookup: Phone(=)***{phone_var[-4:]}")
 
                 response = await self.gateway.execute(
                     method=HttpMethod.GET,
@@ -157,10 +158,14 @@ class UserService:
                 )
 
                 if not response.success:
-                    if response.status_code in (0, 500):
-                        # 0 = network/auth error, 500 = server error - no point retrying other variations
-                        logger.warning(f"API error {response.status_code} for Phone={phone_var} - stopping lookup")
+                    if response.status_code == 0:
+                        # Network/auth error - no point trying other phone variations
+                        logger.warning(f"Network/auth error for Phone=***{phone_var[-4:]} - stopping lookup")
                         break
+                    elif response.status_code == 500:
+                        # Server error - try next variation (might be transient)
+                        logger.warning(f"Server error 500 for Phone=***{phone_var[-4:]} - trying next variation")
+                        continue
                     continue
 
                 data = response.data
@@ -187,8 +192,11 @@ class UserService:
             logger.info(f"User not in MobilityOne: {phone[-4:]}...")
             return None
 
+        except SQLAlchemyError as e:
+            logger.error(f"Auto-onboard DB error: {type(e).__name__}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Auto-onboard failed: {e}")
+            logger.error(f"Auto-onboard failed: {type(e).__name__}: {e}", exc_info=True)
             return None
     
     def _extract_name(self, person: Dict) -> str:
@@ -252,13 +260,11 @@ class UserService:
             Dict with ALL fields from MasterData API response
         """
         try:
-            from services.api_gateway import HttpMethod
-            
             response = await self.gateway.execute(
                 method=HttpMethod.GET,
                 path="/automation/MasterData",
                 params={"personId": person_id},
-                max_retries=0
+                max_retries=1
             )
             
             if not response.success:
@@ -282,10 +288,10 @@ class UserService:
                     method=HttpMethod.GET,
                     path="/vehiclemgt/Vehicles",
                     params={
-                        "Filter": [f"DriverId={person_id}"],
+                        "Filter": f"DriverId={person_id}",
                         "Rows": 20
                     },
-                    max_retries=0
+                    max_retries=1
                 )
                 
                 if vehicles_response.success and vehicles_response.data:
@@ -331,7 +337,6 @@ class UserService:
             logger.debug(f"Vehicle info failed: {e}")
             return {}
     
-
     async def _upsert_mapping(self, phone: str, person_id: str, name: str) -> None:
         """
         Save user mapping to database with dynamic tenant resolution.
@@ -364,8 +369,14 @@ class UserService:
             await self.db.execute(stmt)
             await self.db.commit()
             logger.info(f"Saved mapping for {phone[-4:]}... with tenant={tenant_id}")
+        except IntegrityError as e:
+            logger.warning(f"Mapping conflict for {phone[-4:]}...: {e}")
+            await self.db.rollback()
+        except SQLAlchemyError as e:
+            logger.error(f"Save mapping DB error: {type(e).__name__}: {e}")
+            await self.db.rollback()
         except Exception as e:
-            logger.error(f"Save mapping failed: {e}")
+            logger.error(f"Save mapping unexpected error: {type(e).__name__}: {e}")
             await self.db.rollback()
     
     async def build_context(
@@ -408,7 +419,7 @@ class UserService:
         # DYNAMIC TENANT RESOLUTION
         tenant_id = await self._tenant_service.get_tenant_for_user(phone, user_mapping)
 
-        logger.info(f"BUILD_CONTEXT: person_id={person_id}, phone={phone}, tenant_id={tenant_id} (dynamic)")
+        logger.info(f"BUILD_CONTEXT: person_id={person_id[:8]}..., phone=***{phone[-4:]}, tenant_id={tenant_id} (dynamic)")
         context = {
             "person_id": person_id,
             "phone": phone,
@@ -420,28 +431,36 @@ class UserService:
         
         if not self.gateway:
             return context
-        
+
         try:
             # Get ALL vehicle data - no field filtering
             vehicle_data = await self._get_vehicle_info(person_id)
-            
+
             if vehicle_data:
                 # Pass ALL data from API - schema-driven
                 context["vehicle"] = vehicle_data
-                
+
                 # Extract display name if available
                 if vehicle_data.get("Driver"):
                     context["display_name"] = self._extract_name({"DisplayName": vehicle_data["Driver"]})
-                    
+
         except Exception as e:
             logger.warning(f"Build context failed: {e}")
-        
-        # Cache valid context for 5 minutes
-        if self.cache and context.get("vehicle"):
+
+        # ALWAYS cache context - with different TTLs based on data quality
+        if self.cache:
             try:
                 import json
-                await self.cache.set(cache_key, json.dumps(context), ttl=300)
-                logger.info(f"BUILD_CONTEXT: Cached context for {person_id[:8]}... (5 min TTL)")
+                if context.get("vehicle"):
+                    # Full context with vehicle data - cache 5 minutes
+                    cache_ttl = 300
+                    logger.info(f"BUILD_CONTEXT: Cached context for {person_id[:8]}... (5 min TTL)")
+                else:
+                    # Negative cache (no vehicle data / API failed) - cache 60s
+                    # Prevents hammering a dead API on every message
+                    cache_ttl = 60
+                    logger.info(f"BUILD_CONTEXT: Negative-cached context for {person_id[:8]}... (60s TTL, no vehicle data)")
+                await self.cache.set(cache_key, json.dumps(context), ttl=cache_ttl)
             except Exception as e:
                 logger.debug(f"Cache write failed: {e}")
         
@@ -545,8 +564,6 @@ class UserService:
         
         # 2. Check API
         if self.gateway:
-            from services.api_gateway import HttpMethod
-            
             digits_only = "".join(c for c in phone if c.isdigit())
             response = await self.gateway.execute(
                 HttpMethod.GET,

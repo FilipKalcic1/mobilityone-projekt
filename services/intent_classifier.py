@@ -6,7 +6,7 @@ REPLACES:
 - query_router.py routing logic (660 lines of regex)
 
 Uses trained ML model for intent classification.
-99.25% accuracy vs ~67% regex patterns.
+96.99% held-out accuracy (TF-IDF), 94.25% (embedding).
 """
 
 import json
@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Set
 from dataclasses import dataclass
 import numpy as np
-import unicodedata
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -556,18 +554,14 @@ class IntentClassifier:
         - Handles typos, variations, novel phrasings
         """
         import asyncio
-        from openai import AsyncAzureOpenAI
         from config import get_settings
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import LabelEncoder
         from sklearn.model_selection import cross_val_score
+        from services.openai_client import get_embedding_client
 
         settings = get_settings()
-        client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version="2024-02-15-preview"
-        )
+        client = get_embedding_client()  # Shared async embedding client
 
         async def get_embeddings(batch: List[str]) -> List[List[float]]:
             """Get embeddings for a batch of texts."""
@@ -627,20 +621,20 @@ class IntentClassifier:
 
     def _predict_azure_embedding(self, text: str) -> IntentPrediction:
         """Predict using Azure OpenAI embeddings - SEMANTIC matching."""
-        import asyncio
-        from openai import AzureOpenAI  # Use sync client for prediction
         from config import get_settings
-
         settings = get_settings()
-        # Use SYNC client for prediction to avoid async issues
-        client = AzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version="2024-02-15-preview"
-        )
+
+        # Cache sync client as instance variable (avoid creating per call)
+        if not hasattr(self, '_sync_embedding_client') or self._sync_embedding_client is None:
+            from openai import AzureOpenAI
+            self._sync_embedding_client = AzureOpenAI(
+                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+                api_key=settings.AZURE_OPENAI_API_KEY,
+                api_version="2024-02-15-preview"
+            )
 
         # Get query embedding (sync)
-        response = client.embeddings.create(
+        response = self._sync_embedding_client.embeddings.create(
             input=[text],
             model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
         )
@@ -717,7 +711,7 @@ def get_intent_classifier(algorithm: str = "tfidf_lr") -> IntentClassifier:
 _semantic_classifier: Optional[IntentClassifier] = None
 _semantic_model_unavailable: bool = False  # Prevents repeated warnings
 
-ENSEMBLE_FALLBACK_THRESHOLD = 0.75  # Use semantic if TF-IDF < 75%
+ENSEMBLE_FALLBACK_THRESHOLD = 0.85  # Use semantic if TF-IDF < 85% (matches ML_CONFIDENCE_THRESHOLD)
 
 
 def _get_semantic_classifier() -> IntentClassifier:

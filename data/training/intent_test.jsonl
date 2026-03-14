@@ -1,483 +1,397 @@
-{"text": "molim te pregled rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "registracija istice hitno", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "ukloni rezervaciju hitno", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "jel mozes kolko je presao", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "odrzavanje hitno", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "pokazi mi vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "rezerviram auto za sutra hitno", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "molim te koliko je preslo vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji je moj broj telefona brzo", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "moze li unesi 15000", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "obrisi putovanje brzo", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "molim te datum registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "dobar dan brzo", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "molim te ne trebam vise vozilo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "mozete li papiri od auta", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "trenutna kilometraza odmah", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "pregled steta odmah", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "dokumentacija?", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "odustani od rezervacije", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "moze li popis steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "molim te kada istice registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "rezervacija vozila brzo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "mozete li ostecenje", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "jel mozes koji je person", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "tko je lizing brzo", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "unos kilometraze odmah", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te moja kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "preostalo do servisa?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes otkazi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "pokazi moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "putovanja?", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "jel mozes prikazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "kad je servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "lizing provider hitno", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "moje ime hitno", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "mozete li kako ovo radi", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "trebam kola?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "dobar dan hitno", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "izbrisi putovanje hitno", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "hocu unijeti kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "treba mi vozilo brzo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "lizing hitno", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "prikazi rezervacije?", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "jel mozes koja je lizing kuca", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "hvala ti?", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "molim te kako ovo radi", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "tablica vozila odmah", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes lizing tvrtka", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "moje voznje?", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "imam problem s autom brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "sto je tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
-{"text": "mozete li unos kilometraze", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "otvoreni slucajevi odmah", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "molim te koji je telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "mozete li cije je vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li dodaj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te rezervacija vozila", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "mozete li koliko km ima auto", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "trebam auto za ponedjeljak brzo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "hvala puno?", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "molim te lista mojih rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "molim te sto ima u autu", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes nova kilometraza", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "moze li detalji o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li dobra vecer", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "mozete li imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "molim te koliko kilometara ima moje vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji je moj email brzo", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "nova kilometraza hitno", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "odustani od rezervacije odmah", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "otkazi putovanje?", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "prijavi kilometrazu hitno", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "koliko je presao auto?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes registracija auta", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "udario sam", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "podaci o vozilu?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "izbrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "svi slucajevi odmah", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "koja je kompanija brzo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji je moj email", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "moze li koliko auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "imam problem s autom?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "koji je moj broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "mozete li vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "hej", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "mozete li u kojoj sam firmi", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "upisi kilometrazu?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "leasing brzo", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li koji je tenant id", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
-{"text": "pokazi dokumente brzo", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "kolko je presao", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li thanks", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "jel mozes podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "pokazi stete brzo", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "jel mozes prijavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "unesi km odmah", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te popis putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "jel mozes moji slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "moze li unesi km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "daj mi kilometrazu odmah", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes koji je moj email", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "jel mozes kad imam vozilo", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "koliko je presao auto hitno", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moja vozila odmah", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "sto jos znas o vozilu?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "dodaj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "rezerviraj za sutra odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "koja je tablica?", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "kako se zovem brzo", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "pokazi mi vozila hitno", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "jel mozes sto mogu pitati", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "mozete li pokazi mi vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li hvala ti", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "oprema vozila brzo", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li prosli servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "prijava kvara brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "molim te stavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "mozete li izbrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "mozete li daj mi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "jel mozes kolika je kilometraza vozila", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li kilometraza je 12500", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "jel mozes moja putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "moze li u kojoj sam firmi", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "obrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "moze li odustani od rezervacije", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "obrisi rezervaciju odmah", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "molim te ne trebam vise auto", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "molim te u cijoj je firmi vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "prosli servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li motor ne radi", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "molim te hvala vam", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "azuriraj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "mozete li broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "imam li rezervaciju brzo", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "hvala lijepa", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "molim te tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "moze li dogodila se nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "mozete li zelim unijeti km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "ukloni putovanje odmah", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "moji bookingi?", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "popis steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "moze li ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "molim te dodatna oprema", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "problem s autom brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "mozete li zadnji servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "leasing kompanija?", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "trebam na servis?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "pokazi rezervacije odmah", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "moja tvrtka odmah", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "kako ovo radi", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "ukupno vozila odmah", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "koliko auta ima?", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "molim te trebam vozilo od 8 do 17", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "mozete li kad imam auto", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "treba mi auto hitno", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "papiri od auta?", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "koja je lizing kuca odmah", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "moze li dodatna oprema", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "moze li ostecenje", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "molim te ukloni putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "mozete li zdravo", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "molim te detalji o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "do servisa brzo", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "hello hitno", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "jel mozes zelim unijeti km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te koje su tablice", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "svi slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "molim te obrisi rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "molim te unesi 45000 km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "koliko vozila imam?", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "kompanija vozila hitno", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "trebam unijeti kilometrazu hitno", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "dokumenti vozila brzo", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "unesi 45000 km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "jel mozes storniraj rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "mozete li osobni podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "molim te daj info o autu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "hello brzo", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "trebam auto za ponedjeljak?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "molim te ima li slobodnih auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "daj info o autu hitno", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes hvala puno", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "prijava stete?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "sve rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "koliko kilometara ima moje vozilo?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koliko km ima auto odmah", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "nova steta hitno", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "thanks?", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "jel mozes dokumenti vozila", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "moji tripovi?", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "jel mozes kolika je kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "zelim rezervirati auto hitno", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "sve rezervacije?", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "moze li koji je telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "jel mozes ostecenje", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "dokumentacija odmah", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "molim te help", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "molim te izbrisi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "sto jos znas o vozilu hitno", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "istjece registracija brzo", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li unesi 45000 km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te zakupi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "odrzavanje?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes treba mi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "mozete li moja putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "moze li ima li slobodnih auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "moje rezervacije hitno", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "jel mozes ostetio sam vozilo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "moze li koji auto imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "moje rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "putovanje", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "papiri od auta odmah", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "jel mozes detalji o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te lista slucajeva", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "otkazi booking odmah", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "hocu unijeti kilometrazu?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "kada je registracija?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "popis opreme odmah", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li sto sve znas", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "kada imam rezervaciju brzo", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "trebam auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "molim te podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "datum registracije brzo", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes popis opreme", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li prosli servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "prometna dozvola?", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "sve o vozilu?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te koje auto imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "udarila sam brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "moze li dodaj km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "moze li koja je tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "trebam kola odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "jel mozes registarska oznaka", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li dokumenti vozila", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "moze li prikazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "moze li ne trebam vise vozilo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "moze li koje tablice imam", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "koji je person odmah", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "dokumentacija", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "tablica vozila?", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "stanje kilometraze odmah", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "fala odmah", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "sto mogu pitati?", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "jel mozes pokazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "mozete li zakupi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "molim te odustani od rezervacije", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "mozete li hvala lijepa", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "moj profil?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "molim te moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "moze li zauzmi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "povijest servisa?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "informacije o vozilu hitno", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li azuriraj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te fala", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "moze li sve o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li thanks", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "mozete li unesi 45000 km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te zelim auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "mozete li ukloni putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "jel mozes papiri od auta", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "koje su tablice?", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "fala brzo", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "moze li zahvaljujem", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "ukloni putovanje?", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "molim te dobro jutro", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "moze li vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes otvoreni slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "mozete li povijest servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "sljedeci servis hitno", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li datum registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "unos kilometraze?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "pomoc", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "moja tvrtka brzo", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "molim te koja oprema", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "kolko je presao hitno", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "kad je servis?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "daj mi vozilo odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "nova steta", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "mozete li sto mozes", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "unesi kilometrazu brzo", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "popis steta odmah", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "mozete li kompanija vozila", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "putni nalog hitno", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "mozete li trebam na servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koja je lizing kuca", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "koliko auta ima brzo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "dodaj km brzo", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "info o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes kad je servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "nova steta odmah", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "ogrebala sam auto odmah", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "molim te sto je moj person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "moji tripovi hitno", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "jel mozes ima li slobodnih auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "povijest steta brzo", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "molim te koji je person", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "mozete li zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "sto ima u autu brzo", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "koliko km do servisa hitno", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te moja firma", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "jel mozes pokazi moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "koji dokumenti", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "moze li cao", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "mozete li hej", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "kilometraza vozila hitno", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji je moj email odmah", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "molim te otkazi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "molim te zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "informacije o vozilu odmah", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "dobro jutro hitno", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "jel mozes zadnji servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "dokumentacija brzo", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "rezerviraj za sutra brzo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "pokazi mi kilometrazu hitno", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji je moj broj telefona?", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te storniraj rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "moze li koji je person", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "moze li istjece registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te pozdrav", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "imam stetu brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "koja je trenutna kilometraza brzo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes moja kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "zelim rezervirati auto brzo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "prosli servis brzo", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li kojoj kompaniji pripada moje vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "u kojoj sam firmi?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "jel mozes moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "upute hitno", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "rezerviram auto za sutra", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "sto je tenant brzo", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
-{"text": "koja je tablica odmah", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "pokazi mi auto brzo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes daj mi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "hvala lijepa hitno", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "jel mozes koliko do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li koliko auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "mozete li registracija vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "imam stetu odmah", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "molim te koja je lizing kuca", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "koje vozilo imam odmah", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "trebam auto za ponedjeljak", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "imam stetu?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "mozete li koja je tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koliko km do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "koja je kompanija odmah", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "otkazi rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "mozete li sto je tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
-{"text": "jel mozes otkazi rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "jel mozes stanje kilometar sata", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "obrisi putovanje?", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "zauzmi vozilo odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "zelim unijeti km hitno", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "molim te kako se zovem", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "molim te obrisi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "jel mozes person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "moze li imam problem s autom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "help brzo", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "zdravo?", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "kad imam auto?", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "slobodna auta odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "svi podaci hitno", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "ostecenje?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "odustani od rezervacije brzo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "koji je moj email hitno", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "koja je firma?", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li svi podaci", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "imam li booking brzo", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "mozete li stanje kilometar sata", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "nesreca brzo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "obrisi rezervaciju hitno", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "kada istice registracija hitno", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "registarska oznaka odmah", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li koji je tenant id", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
-{"text": "mozete li putovanje", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "lizing provider brzo", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "dokumenti vozila odmah", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "tko je lizing?", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "moje voznje brzo", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "mozete li dokumenti vozila", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "mozete li imam kvar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "cao?", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "lista mojih rezervacija odmah", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "prijavljene stete?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "zadnji servis hitno", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "stavi kilometrazu brzo", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "prikazi rezervacije hitno", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "mozete li storniraj rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "moji bookingi hitno", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "moze li moje vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "do servisa odmah", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "registracija istice brzo", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li moj telefon", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "povijest steta odmah", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "koja je kompanija?", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
-{"text": "hello", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "rezerviraj za sutra?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
 {"text": "jel mozes zelim auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "moji bookingi", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "sto je moj broj hitno", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "mozete li koje vozilo imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li ostetila sam vozilo", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "mozete li zelim auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "moze li sto jos znas o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te cao", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "mozete li pokazi dokumente", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
-{"text": "koliko km do servisa odmah", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "stanje kilometraze?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li zahvaljujem", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "kilometraza vozila odmah", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li moj profil", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "ima li klimu", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li sto znas", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "koje vozilo imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes problem s vozilom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "info o autu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li trebam unijeti kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "jel mozes vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "kolika je kilometraza vozila brzo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "jel mozes koliko vozila imam", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "moj telefon hitno", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "lista steta?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "kolika je kilometraza?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "thanks odmah", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "povijest steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "jel mozes koja oprema", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "imam kvar hitno", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "moj person id hitno", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "mozete li kilometraza je 12500", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "mozete li obrisi trip", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
-{"text": "cao hitno", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "jel mozes thanks", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "koji je moj person id hitno", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
-{"text": "nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "problem s vozilom odmah", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "mozete li dogodila se nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "moze li koliko do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "molim te broj tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "leasing kompanija hitno", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "jel mozes leasing kompanija", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li otvoreni slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "moze li zelim auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "kada je servis?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "molim te koliko km do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes moja firma", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "molim te sve o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "leasing odmah", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
-{"text": "moji slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "kako ovo radi brzo", "intent": "HELP", "action": "NONE", "tool": null}
-{"text": "molim te povijest steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "povijest voznji odmah", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "moze li podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes popis steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "istek registracije odmah", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "moze li slobodna auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
-{"text": "moze li putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
-{"text": "molim te istek registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "koji je moj tenant brzo", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
-{"text": "moze li registracija vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "jel mozes sve o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te koliko je preslo vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes lista mojih rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "mozete li dokumenti vozila", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "moze li unesi km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "moja tvrtka?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moze li otkazi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "otkazi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "jel mozes imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "imam kvar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "sto sve znas?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li storniraj rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "auti na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "mozete li koje tablice imam", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li hocu unijeti kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "molim te koji je tenant id", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "mozete li tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "ogrebao sam auto?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "molim te imam kvar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "koliko sam presao", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "dobar dan", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "koliko imam kilometara?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes koje auto imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes kada je registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes moji slucajevi", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "koji je moj broj telefona?", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moze li odrzavanje", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes hello", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "moze li kojoj kompaniji pripada moje vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes pokazi mi auto", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te ima li slobodnih vozila", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "jel mozes popis opreme", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "moje informacije", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "molim te dobar dan", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "mozete li kad imam auto", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "obrisi voznju", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "mozete li treba mi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mozete li sto je moj person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "ostecenje?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "lista slucajeva", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "telefonski broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "pozdrav", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "moj profil", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "mozete li moji bookingi", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "moze li zakupi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te ima li slobodnih auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "imam li rezervaciju?", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "registracija vozila?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes trebam vozilo od 8 do 17", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mozete li koja je kompanija", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "stanje kilometar sata?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes koliko km do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "informacije o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "hvala lijepa", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "troskovi za vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "mozete li kolko je presao", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li broj tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes kada imam rezervaciju", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "moj gsm", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji dokumenti", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "mozete li putovanje", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "koliko je preslo vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "koliko auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "moze li kako se zovem", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "mozete li pozdrav", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "molim te hvala", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "guma je pukla?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "zelim unijeti km?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "vozilo je pokvareno", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "molim te kolko je presao", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te kada istice registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "cancel rezervaciju?", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "pokazi km", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li prosli servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes koje vozilo imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li do kad vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te obrisi rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "brisi prijavu stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukloni putovanje?", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "ima li klimu", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te koji dokumenti", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "molim te oprema vozila", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "nesreca?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "jel mozes moj profil", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "unesi 45000 km?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "koji auti su slobodni", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "hocu unijeti kilometrazu?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "molim te sto je tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "pregled racuna", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "jel mozes moje vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "moze li pregled steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "pokazi broj telefona", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "daj dostupna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "lista automobila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "registracija auta", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "zelim vidjeti broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "pokazi moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moze li staklo je razbijeno", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "pokazi informacije o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "sto jos znas o vozilu?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te hvala vam", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "dodaj km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "dobro jutro", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "moze li u cijoj je firmi vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes ostecenje", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "povijest steta?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "mozete li prijavi stetu", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "molim te zakupi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mozete li slobodna auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li imam li rezervaciju", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "popis putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "mozete li zauzmi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "sudar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "jel mozes leasing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "trebam booking", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "trebam kola", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te obrisi trip", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "ponisti rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "ponisti stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "moze li prijavljene stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "pregled flote", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj mi pregled troskova", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "u kojoj sam firmi", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "registracijski broj", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "oprema vozila?", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "sto je moj tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "cije je vozilo?", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "napravi booking", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mogu li zatvoriti slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "mozete li koliko je presao auto", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes dodaj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "moze li dogodila se nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "istek registracije?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "ne trebam vise vozilo brzo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
-{"text": "moja kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
-{"text": "hvala brzo", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "vrijedi registracija?", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
-{"text": "broj vozila brzo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
-{"text": "moze li udario sam", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "jel mozes problem s vozilom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "otkazati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "my phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "mozete li sto mogu pitati", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "jel mozes zelim unijeti km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "mozete li datum registracije", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "dokumentacija", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "moja kilometraza?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li rezerviraj vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "broj tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "dokumenti vozila", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "molim te sve rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "trebam na servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "daj vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "moze li koliko je preslo vozilo", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "koliko je kostalo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "koja je moja sifra", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "mozete li tko je lizing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li pokazi rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "molim te popis putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "mozete li udarila sam", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "moze li pokazi dokumente", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "zdravo?", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "jel mozes podaci o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "prijavi stetu", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "koliko km do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "kreiraj rezervaciju", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mozete li odustani od rezervacije", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "vozni park", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "mozete li putni nalozi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "odustani od rezervacije?", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "ogrebala sam auto?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "molim te osobni podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "moze li vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li registracija vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "ostecenje", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "prijavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "molim te koji je moj tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "help", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "pregled svih vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "moze li azuriraj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "moze li unesi 45000 km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "daj info o autu?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "koja su vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sto jos znas o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "stavi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "jel mozes upute", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "jel mozes person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koliko trosi vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "jel mozes imam stetu", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "molim te kolika je kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "prikazi troskove", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "moze li imam problem s autom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "moje ime?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "mozete li prijavljene stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "moj tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "jel mozes do kad vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "stanje kilometar sata", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "putni nalog?", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "daj mi listu vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "moze li prijavi kvar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "jel mozes koja tvrtka", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "troskovi servisa", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "moze li zelim rezervirati auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te moje ime", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "molim te unesi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "booking vozila", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te slobodna auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te ima li navigaciju", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes koji je person", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je moj identifikator", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "molim te ukloni putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "pomoc?", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "mozete li lizing tvrtka", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li ima li navigaciju", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes trebam auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "moze li popis opreme", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "registracija vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li koji je moj email", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "molim te pokazi moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "dokumentacija?", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "mozete li moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "jel mozes koja je lizing kuca", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "ukloni prijavu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "molim te moji tripovi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "slobodna vozila za sutra", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "moze li kad je servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes unesi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "jel mozes staklo je razbijeno", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te zdravo", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "molim te obrisi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "molim te koji je person", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "jel mozes kad imam auto", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "jel mozes hvala puno", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "molim te tablica vozila", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "koji su auti na raspolaganju", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "molim te unesi 15000", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "molim te kojoj kompaniji pripada moje vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "moj identifikator", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "stanje kilometraze", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te pokazi rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "jel mozes hocu rezervirati vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "molim te info o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te do servisa", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes koji je telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes upisi km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "fala?", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "tko sam ja?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "mozete li odrzavanje", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li trenutna kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li zadnji servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes imam problem s autom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "cije je vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te lista mojih rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "jel mozes broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "moze li trebam unijeti kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "jel mozes putni nalozi", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "moze li koji je moj email", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "slobodna auta?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "jel mozes zakupi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mozete li lista mojih rezervacija", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "mozete li moj telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "molim te trebam na servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li ne trebam vise vozilo", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "slobodni automobili", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "troskovi", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "mozete li rezervacija vozila", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "moze li daj mi auto", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "jel mozes moja putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "mozete li kako koristiti", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "ukloni stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "molim te cije je vozilo", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li koji je tenant id", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "delete case", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "jel mozes koja je firma", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li pomoc", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "ukupno vozila?", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "jel mozes moj tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "hvala", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "jel mozes otkazi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "moze li koja je tablica", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "trebam vozilo?", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "trenutna kilometraza?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "lizing tvrtka", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes treba mi vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "daj informacije o meni", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "pokazi mi kilometrazu?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "upisi kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "moze li sto je u vozilu", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li prikazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "molim te nesto ne radi", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "moze li koje vozilo imam", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li detalji o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes vrijedi registracija", "intent": "GET_REGISTRATION_EXPIRY", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes koja oprema", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "nezauzeti auti", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "cijene", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "jel mozes ima li navigaciju", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
+{"text": "mozete li servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "person id?", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moze li osobni podaci", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "prazna vozila", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "molim te otkazi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "imam stetu?", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "moze li leasing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "pokazi stete?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "mozete li registracija vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li hvala", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "jel mozes unesi 45000 km", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "molim te ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koja vozila su slobodna", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "registracija auta?", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "svi automobili", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "jel mozes putovanje", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "mozete li hvala lijepa", "intent": "THANKS", "action": "NONE", "tool": null}
 {"text": "moze li dobro jutro", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "moji podaci brzo", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
-{"text": "jel mozes zdravo", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "molim te moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "mozete li povijest steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
-{"text": "unesi 15000 odmah", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
-{"text": "zahvaljujem odmah", "intent": "THANKS", "action": "NONE", "tool": null}
-{"text": "tablica vozila", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "mozete li tablica vozila", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
-{"text": "ima li navigaciju hitno", "intent": "GET_VEHICLE_EQUIPMENT", "action": "GET", "tool": "get_MasterData"}
-{"text": "dobro jutro odmah", "intent": "GREETING", "action": "NONE", "tool": null}
-{"text": "sve rezervacije odmah", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
-{"text": "zelim vozilo odmah", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "makni stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "mozete li otkazi putovanje", "intent": "DELETE_TRIP", "action": "DELETE", "tool": "delete_Trips_id"}
+{"text": "leasing", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te sto mozes", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "person identifier", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "moze li koje tablice imam", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "koliko kilometara ima moje vozilo?", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li trebam auto za ponedjeljak", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "mozete li zadnji servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te problem s autom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "molim te koje tablice imam", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te sudar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "mozete li moje vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "lista steta?", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "koja je lizing kuca", "intent": "GET_LEASING", "action": "GET", "tool": "get_MasterData"}
+{"text": "zelim vidjeti person id", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "koji je person?", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "jel mozes koji dokumenti", "intent": "GET_VEHICLE_DOCUMENTS", "action": "GET", "tool": "get_Vehicles_id_documents"}
+{"text": "broj vozila?", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "jel mozes prijavljene stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "moze li prosli servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes nesreca", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "jel mozes sljedeci servis", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te nova steta", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "prikazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "thanks", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "jel mozes hvala ti", "intent": "THANKS", "action": "NONE", "tool": null}
+{"text": "daj racune", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "upute", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "trebam moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "koji je moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "mozete li moja putovanja", "intent": "GET_TRIPS", "action": "GET", "tool": "get_Trips"}
+{"text": "moze li imam kvar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
+{"text": "kolko sam presao", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "jel mozes cao", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "moj profil?", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "molim te help", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "tko sam ja", "intent": "GET_PERSON_INFO", "action": "GET", "tool": "get_PersonData_personIdOrEmail"}
+{"text": "jel mozes moja kilometraza", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "ima li sto dostupno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "pokazi flotu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "sto znas?", "intent": "HELP", "action": "NONE", "tool": null}
+{"text": "trebam brisat booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "moze li sto je moj tenant", "intent": "GET_TENANT_ID", "action": "GET", "tool": null}
+{"text": "mozete li cancel rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "moze li obrisi booking", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "koja je kompanija", "intent": "GET_VEHICLE_COMPANY", "action": "GET", "tool": "get_MasterData"}
+{"text": "detalji o vozilu", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "moze li hocu rezervirati vozilo", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "hocu obrisati slucaj", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "jel mozes prikazi stete", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "moze li moje bookinge", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
+{"text": "koji je moj uuid", "intent": "GET_PERSON_ID", "action": "GET", "tool": null}
+{"text": "molim te hej", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "moze li slobodna auta", "intent": "BOOK_VEHICLE", "action": "POST", "tool": "get_AvailableVehicles"}
+{"text": "brisanje stete", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "koje su tablice?", "intent": "GET_PLATE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te pregled steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
+{"text": "phone number", "intent": "GET_PHONE", "action": "GET", "tool": null}
+{"text": "moze li dodaj kilometrazu", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "moze li unos kilometraze", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
+{"text": "otkazi rezervaciju", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}
+{"text": "mozete li dobar dan", "intent": "GREETING", "action": "NONE", "tool": null}
+{"text": "info vozilo", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
+{"text": "pokazi mi sto je slobodno", "intent": "GET_AVAILABLE_VEHICLES", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "moze li stanje kilometar sata", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "molim te stanje kilometraze", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
+{"text": "ne trebam vise tu stetu", "intent": "DELETE_CASE", "action": "DELETE", "tool": "delete_Cases_id"}
+{"text": "ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "daj pregled troskova", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
+{"text": "ukloni rezervaciju?", "intent": "CANCEL_RESERVATION", "action": "DELETE", "tool": "delete_VehicleCalendar_id"}

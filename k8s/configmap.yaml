@@ -46,49 +46,13 @@ data:
   AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4o-mini"
   AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "text-embedding-ada-002"
 
----
 # =============================================================================
-# SECRETS TEMPLATE - DO NOT COMMIT ACTUAL VALUES
+# SECRETS: Do NOT store secrets in this file.
+# Use Sealed Secrets (k8s/sealed-secrets.yaml) or create manually:
 #
-# Create actual secret with:
 # kubectl create secret generic mobility-secrets \
 #   --from-literal=DATABASE_URL="postgresql+asyncpg://..." \
 #   --from-literal=REDIS_URL="redis://..." \
 #   --from-literal=AZURE_OPENAI_API_KEY="..." \
-#   ...
+#   ... (see sealed-secrets.yaml for full list of required keys)
 # =============================================================================
-
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mobility-secrets
-  labels:
-    app: mobility-bot
-type: Opaque
-stringData:
-  # Database (REQUIRED)
-  DATABASE_URL: "postgresql+asyncpg://bot_user:PASSWORD@postgres-service:5432/mobility_db"
-  BOT_DATABASE_URL: "postgresql+asyncpg://bot_user:PASSWORD@postgres-service:5432/mobility_db"
-  ADMIN_DATABASE_URL: "postgresql+asyncpg://admin_user:PASSWORD@postgres-service:5432/mobility_db"
-
-  # Redis (REQUIRED)
-  REDIS_URL: "redis://redis-service:6379/0"
-
-  # MobilityOne API (REQUIRED)
-  MOBILITY_API_URL: "https://api.mobilityone.example.com"
-  MOBILITY_AUTH_URL: "https://auth.mobilityone.example.com/oauth2/token"
-  MOBILITY_CLIENT_ID: "YOUR_CLIENT_ID"
-  MOBILITY_CLIENT_SECRET: "YOUR_CLIENT_SECRET"
-  MOBILITY_TENANT_ID: "YOUR_DEFAULT_TENANT_ID"
-
-  # Azure OpenAI (REQUIRED)
-  AZURE_OPENAI_ENDPOINT: "https://YOUR_RESOURCE.openai.azure.com"
-  AZURE_OPENAI_API_KEY: "YOUR_API_KEY"
-
-  # Infobip WhatsApp (REQUIRED)
-  INFOBIP_API_KEY: "YOUR_INFOBIP_API_KEY"
-  INFOBIP_BASE_URL: "api.infobip.com"
-  INFOBIP_SENDER_NUMBER: "YOUR_WHATSAPP_NUMBER"
-
-  # Optional
-  SENTRY_DSN: ""

@@ -14,10 +14,9 @@ Performance:
 
 import json
 import logging
-import os
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,14 +32,12 @@ CACHE_DIR = Path(__file__).parent.parent / ".cache"
 EMBEDDINGS_FILE = CACHE_DIR / "tool_embeddings.json"
 EMBEDDING_DIM = 1536  # Azure OpenAI text-embedding-ada-002
 
-
 @dataclass
 class SearchResult:
     """Result from FAISS search."""
     tool_id: str
     score: float  # Cosine similarity (0-1)
     method: str   # HTTP method (GET/POST/PUT/DELETE)
-
 
 class FAISSVectorStore:
     """
@@ -185,14 +182,10 @@ class FAISSVectorStore:
 
         Does NOT use training_queries.json (UNRELIABLE).
         """
-        from openai import AsyncAzureOpenAI
+        from services.openai_client import get_embedding_client
 
         if self._openai_client is None:
-            self._openai_client = AsyncAzureOpenAI(
-                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-                api_key=settings.AZURE_OPENAI_API_KEY,
-                api_version=settings.AZURE_OPENAI_API_VERSION
-            )
+            self._openai_client = get_embedding_client()
 
         # Load existing cached embeddings
         self._embeddings = self._load_cached_embeddings()
@@ -691,14 +684,10 @@ class FAISSVectorStore:
 
     async def _get_query_embedding(self, query: str) -> Optional[List[float]]:
         """Get embedding for query text."""
-        from openai import AsyncAzureOpenAI
+        from services.openai_client import get_embedding_client
 
         if self._openai_client is None:
-            self._openai_client = AsyncAzureOpenAI(
-                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-                api_key=settings.AZURE_OPENAI_API_KEY,
-                api_version=settings.AZURE_OPENAI_API_VERSION
-            )
+            self._openai_client = get_embedding_client()
 
         try:
             response = await self._openai_client.embeddings.create(
@@ -729,10 +718,8 @@ class FAISSVectorStore:
             "cache_exists": EMBEDDINGS_FILE.exists()
         }
 
-
 # Singleton instance
 _faiss_store: Optional[FAISSVectorStore] = None
-
 
 def get_faiss_store() -> FAISSVectorStore:
     """Get singleton FAISSVectorStore instance."""
@@ -740,7 +727,6 @@ def get_faiss_store() -> FAISSVectorStore:
     if _faiss_store is None:
         _faiss_store = FAISSVectorStore()
     return _faiss_store
-
 
 async def initialize_faiss_store(
     tool_documentation: Dict,

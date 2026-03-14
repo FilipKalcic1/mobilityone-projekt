@@ -34,7 +34,7 @@ class Settings(BaseSettings):
         description="PostgreSQL connection string (e.g., postgresql+asyncpg://user:pass@host:5432/db)"
     )
     DB_POOL_SIZE: int = Field(default=20)
-    DB_MAX_OVERFLOW: int = Field(default=30)
+    DB_MAX_OVERFLOW: int = Field(default=40)
     DB_POOL_RECYCLE: int = Field(default=3600)
     
     # ---
@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     )
     REDIS_MAX_CONNECTIONS: int = Field(default=100)
     REDIS_STATS_KEY_TOOLS: str = Field(default="stats:tools_loaded")
+
+    # Redis Sentinel (optional - for HA failover)
+    REDIS_SENTINEL_ENABLED: bool = Field(default=False)
+    REDIS_SENTINEL_HOSTS: Optional[str] = Field(
+        default=None,
+        description="Comma-separated sentinel hosts (e.g., sentinel1:26379,sentinel2:26379)"
+    )
+    REDIS_SENTINEL_MASTER: str = Field(default="mymaster")
+    REDIS_SENTINEL_PASSWORD: Optional[str] = Field(default=None)
     
     # ---
     # INFOBIP (WhatsApp) - Optional, not required for startup

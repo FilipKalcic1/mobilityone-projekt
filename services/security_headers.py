@@ -31,6 +31,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Control referrer information leakage
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
+        # Content Security Policy - restrict resource loading
+        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+
+        # Permissions Policy - disable unused browser features
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
         # Prevent caching of sensitive API responses
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"

@@ -40,7 +40,9 @@ from pydantic import BaseModel, Field, field_validator
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 import redis.asyncio as aioredis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import JSONResponse, Response
 
 # Load main .env (contains all config including admin tokens)
 env_path = Path(__file__).parent / ".env"
@@ -57,6 +59,11 @@ from services.admin_review import AdminReviewService, SecurityError
 from services.model_drift_detector import get_drift_detector
 from services.cost_tracker import CostTracker
 from services.conflict_resolver import ConflictResolver
+from services.feedback_analyzer import FeedbackAnalyzer
+from services.query_pattern_learner import QueryPatternLearner
+from services.quality_tracker import get_quality_tracker
+from services.feedback_learning_service import get_feedback_learning_service
+from services.gdpr_masking import GDPRMaskingService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -86,7 +93,7 @@ async def lifespan(app: FastAPI):
     # Verify database connection
     try:
         async with AsyncSessionLocal() as session:
-            from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
         logger.info("Database connection verified (admin_user)")
     except Exception as e:
@@ -127,7 +134,6 @@ async def lifespan(app: FastAPI):
     if app.state.redis:
         await app.state.redis.aclose()
     await engine.dispose()
-
 
 # ---
 # APP CONFIGURATION
@@ -190,7 +196,6 @@ if settings.ADMIN_ALLOWED_IPS:
     if ADMIN_ALLOWED_IPS:
         logger.info(f"Admin IP whitelist enabled: {len(ADMIN_ALLOWED_IPS)} entries")
 
-
 def is_ip_allowed(client_ip: str) -> bool:
     """Check if client IP is in the whitelist."""
     if ADMIN_ALLOWED_IPS is None:
@@ -206,7 +211,6 @@ def is_ip_allowed(client_ip: str) -> bool:
         logger.warning(f"Invalid client IP format: {client_ip}")
         return False
 
-
 async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
     """Verify admin token and return admin_id."""
     admin_id = VALID_ADMIN_TOKENS.get(token)
@@ -218,13 +222,14 @@ async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
         )
     return admin_id
 
-
 # ---
 # RATE LIMITING
 # ---
 
 class RedisRateLimiter:
     """Redis-based rate limiter for production."""
+
+    _MAX_FALLBACK_KEYS = 200  # Cap in-memory keys to prevent unbounded growth
 
     def __init__(self, requests_per_minute: int = 30):
         self.requests_per_minute = requests_per_minute
@@ -270,6 +275,16 @@ class RedisRateLimiter:
         now = time.time()
         minute_ago = now - 60
         self._fallback[key] = [ts for ts in self._fallback[key] if ts > minute_ago]
+        # Evict stale keys to prevent unbounded dict growth from many unique IPs
+        if len(self._fallback) > self._MAX_FALLBACK_KEYS:
+            stale = [k for k, v in self._fallback.items() if not v]
+            for k in stale:
+                del self._fallback[k]
+            # If still over limit, drop oldest-accessed keys
+            if len(self._fallback) > self._MAX_FALLBACK_KEYS:
+                oldest = sorted(self._fallback, key=lambda k: max(self._fallback[k], default=0))
+                for k in oldest[:len(self._fallback) - self._MAX_FALLBACK_KEYS]:
+                    del self._fallback[k]
         if len(self._fallback[key]) >= self.requests_per_minute:
             return False
         self._fallback[key].append(now)
@@ -283,17 +298,15 @@ class RedisRateLimiter:
                 await self.redis.zremrangebyscore(redis_key, 0, now - 60)
                 count = await self.redis.zcard(redis_key)
                 return max(0, self.requests_per_minute - count)
-            except Exception:
-                pass
+            except (ConnectionError, OSError) as e:
+                logging.debug(f"Redis unavailable for rate limit check, falling back to in-memory: {e}")
         now = time.time()
         count = sum(1 for ts in self._fallback[key] if ts > now - 60)
         return max(0, self.requests_per_minute - count)
 
-
 rate_limiter = RedisRateLimiter(
     requests_per_minute=settings.ADMIN_RATE_LIMIT_PER_MINUTE
 )
-
 
 async def check_rate_limit(
     request: Request,
@@ -323,7 +336,6 @@ async def check_rate_limit(
 
     return admin_id
 
-
 # ---
 # DATABASE DEPENDENCY
 # ---
@@ -336,13 +348,11 @@ async def get_db() -> AsyncSession:
         finally:
             await session.close()
 
-
 async def get_admin_service(
     db: AsyncSession = Depends(get_db)
 ) -> AdminReviewService:
     """Get AdminReviewService with database session."""
     return AdminReviewService(db)
-
 
 # ---
 # SCHEMAS
@@ -375,13 +385,11 @@ class ReviewUpdateSchema(BaseModel):
     @classmethod
     def sanitize_correction(cls, v):
         if v:
-            import re
             dangerous = ['<script', 'javascript:', 'onclick', 'onerror']
             for pattern in dangerous:
                 if pattern.lower() in v.lower():
                     raise ValueError("Correction contains prohibited content")
         return v
-
 
 class HallucinationResponse(BaseModel):
     """Response schema for hallucination report."""
@@ -394,7 +402,6 @@ class HallucinationResponse(BaseModel):
     category: Optional[str]
     correction: Optional[str]
 
-
 class StatisticsResponse(BaseModel):
     """Response schema for statistics."""
     total_errors: int
@@ -403,7 +410,6 @@ class StatisticsResponse(BaseModel):
     hallucinations_pending_review: int
     false_positives_skipped: int
     category_breakdown: Dict[str, int]
-
 
 # ---
 # API ENDPOINTS
@@ -416,7 +422,7 @@ async def health_check(request: Request):
     db_status = "disconnected"
     try:
         async with AsyncSessionLocal() as session:
-            from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
@@ -448,21 +454,19 @@ async def health_check(request: Request):
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
-
 @app.get("/ready")
 async def readiness_check(request: Request):
     """Readiness probe - returns 200 only when database is available."""
-    from fastapi.responses import JSONResponse
+
 
     try:
         async with AsyncSessionLocal() as session:
-            from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
     except Exception:
         return JSONResponse(status_code=503, content={"ready": False, "reason": "database unavailable"})
 
     return {"ready": True}
-
 
 @app.get("/metrics")
 async def metrics():
@@ -471,7 +475,6 @@ async def metrics():
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST
     )
-
 
 @app.get(
     "/admin/hallucinations",
@@ -499,7 +502,6 @@ async def list_hallucinations(
         logger.error(f"Error listing hallucinations: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/hallucinations/{report_id}",
     summary="Get hallucination detail",
@@ -524,7 +526,6 @@ async def get_hallucination_detail(
     except Exception as e:
         logger.error(f"Error getting hallucination detail: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.post(
     "/admin/hallucinations/{report_id}/lock",
@@ -584,7 +585,6 @@ async def acquire_lock(
     except Exception as e:
         logger.error(f"Error acquiring lock: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.post(
     "/admin/hallucinations/{report_id}/review",
@@ -665,7 +665,6 @@ async def review_hallucination(
         logger.error(f"Error reviewing hallucination: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/statistics",
     response_model=StatisticsResponse,
@@ -684,7 +683,6 @@ async def get_statistics(
         logger.error(f"Error getting statistics: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/audit-log",
     summary="Get audit log",
@@ -702,7 +700,6 @@ async def get_audit_log(
     except Exception as e:
         logger.error(f"Error getting audit log: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.get(
     "/admin/export/training-data",
@@ -750,7 +747,6 @@ async def export_training_data(
         logger.error(f"Error exporting training data: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/export/training-data.jsonl",
     summary="Download training data as JSONL file",
@@ -770,7 +766,7 @@ async def download_training_data_jsonl(
     Or via Python SDK:
     openai.File.create(file=open("training_data.jsonl", "rb"), purpose="fine-tune")
     """
-    from fastapi.responses import Response
+
 
     try:
         jsonl_content = await service.export_for_training_jsonl(
@@ -790,7 +786,6 @@ async def download_training_data_jsonl(
     except Exception as e:
         logger.error(f"Error downloading training data JSONL: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.get(
     "/admin/cost-stats",
@@ -846,7 +841,6 @@ async def get_cost_stats(
         logger.error(f"Error getting cost stats: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/drift-status",
     summary="Check model drift status",
@@ -899,7 +893,6 @@ async def get_drift_status(
         logger.error(f"Error checking drift status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 # ---
 # FEEDBACK ANALYSIS ENDPOINTS
 # ---
@@ -932,7 +925,7 @@ async def analyze_feedback(
         Analysis result with suggestions
     """
     try:
-        from services.feedback_analyzer import FeedbackAnalyzer
+
 
         analyzer = FeedbackAnalyzer(db)
         result = await analyzer.analyze(
@@ -946,7 +939,6 @@ async def analyze_feedback(
         logger.error(f"Error analyzing feedback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get(
     "/admin/feedback/stats",
     summary="Get feedback quick stats",
@@ -958,7 +950,7 @@ async def get_feedback_stats(
 ):
     """Get quick statistics about feedback reports."""
     try:
-        from services.feedback_analyzer import FeedbackAnalyzer
+
 
         analyzer = FeedbackAnalyzer(db)
         stats = await analyzer.get_quick_stats()
@@ -968,7 +960,6 @@ async def get_feedback_stats(
     except Exception as e:
         logger.error(f"Error getting feedback stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get(
     "/admin/feedback/analyze-comprehensive",
@@ -998,7 +989,7 @@ async def analyze_feedback_comprehensive(
         Comprehensive analysis with dictionary suggestions and query insights
     """
     try:
-        from services.feedback_analyzer import FeedbackAnalyzer
+
 
         analyzer = FeedbackAnalyzer(db)
         result = await analyzer.analyze_comprehensive(
@@ -1011,7 +1002,6 @@ async def analyze_feedback_comprehensive(
     except Exception as e:
         logger.error(f"Error in comprehensive feedback analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get(
     "/admin/feedback/learn-patterns",
@@ -1043,7 +1033,7 @@ async def learn_query_patterns(
         Learning result with mappings and insights
     """
     try:
-        from services.query_pattern_learner import QueryPatternLearner
+
 
         learner = QueryPatternLearner(db)
         result = await learner.learn(
@@ -1058,7 +1048,6 @@ async def learn_query_patterns(
         logger.error(f"Error learning query patterns: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get(
     "/admin/feedback/learning-stats",
     summary="Get query learning statistics",
@@ -1070,7 +1059,7 @@ async def get_learning_stats(
 ):
     """Get statistics about learned query patterns."""
     try:
-        from services.query_pattern_learner import QueryPatternLearner
+
 
         learner = QueryPatternLearner(db)
         stats = await learner.get_statistics()
@@ -1080,7 +1069,6 @@ async def get_learning_stats(
     except Exception as e:
         logger.error(f"Error getting learning stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get(
     "/admin/quality/summary",
@@ -1100,7 +1088,7 @@ async def get_quality_summary(
         - History count
     """
     try:
-        from services.quality_tracker import get_quality_tracker
+
 
         tracker = get_quality_tracker()
         summary = tracker.get_summary()
@@ -1110,7 +1098,6 @@ async def get_quality_summary(
     except Exception as e:
         logger.error(f"Error getting quality summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get(
     "/admin/quality/trend",
@@ -1129,7 +1116,7 @@ async def get_quality_trend(
         - Recommendations
     """
     try:
-        from services.quality_tracker import get_quality_tracker
+
 
         tracker = get_quality_tracker()
         trend = tracker.analyze_trend()
@@ -1145,7 +1132,6 @@ async def get_quality_trend(
     except Exception as e:
         logger.error(f"Error analyzing quality trend: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ---
 # FEEDBACK LEARNING SERVICE ENDPOINTS
@@ -1181,7 +1167,7 @@ async def run_learning_cycle(
         Learning result with statistics
     """
     try:
-        from services.feedback_learning_service import get_feedback_learning_service
+
 
         service = get_feedback_learning_service(db)
         result = await service.learn_and_apply(
@@ -1196,7 +1182,6 @@ async def run_learning_cycle(
         logger.error(f"Error running learning cycle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get(
     "/admin/learning/statistics",
     summary="Get learning statistics",
@@ -1208,7 +1193,7 @@ async def get_learning_statistics(
 ):
     """Get statistics about learned patterns."""
     try:
-        from services.feedback_learning_service import get_feedback_learning_service
+
 
         service = get_feedback_learning_service(db)
         stats = await service.get_statistics()
@@ -1218,7 +1203,6 @@ async def get_learning_statistics(
     except Exception as e:
         logger.error(f"Error getting learning statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post(
     "/admin/learning/export-documentation",
@@ -1243,7 +1227,7 @@ async def export_to_documentation(
         Number of tools updated
     """
     try:
-        from services.feedback_learning_service import get_feedback_learning_service
+
 
         service = get_feedback_learning_service(db)
         updates = await service.export_to_documentation(
@@ -1260,7 +1244,6 @@ async def export_to_documentation(
         logger.error(f"Error exporting to documentation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.delete(
     "/admin/learning/clear",
     summary="Clear all learned boosts",
@@ -1272,7 +1255,7 @@ async def clear_learned_boosts(
 ):
     """Clear all learned boosts (for testing/reset)."""
     try:
-        from services.feedback_learning_service import get_feedback_learning_service
+
 
         service = get_feedback_learning_service(db)
         service.clear_learned_boosts()
@@ -1285,6 +1268,91 @@ async def clear_learned_boosts(
     except Exception as e:
         logger.error(f"Error clearing learned boosts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ---
+# GDPR ERASURE
+# ---
+
+@app.post(
+    "/admin/gdpr/erase/{phone}",
+    summary="GDPR Article 17: Right to Erasure",
+    tags=["gdpr"],
+)
+async def gdpr_erase_user(
+    phone: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Erase all user data from database AND Redis.
+
+    This endpoint:
+    1. Anonymizes user records in PostgreSQL (user_mappings, messages, conversations)
+    2. Deletes all Redis keys for this user (conv_state, chat_history, user_context, tenant)
+    3. Scrubs DLQ entries containing the user's phone number
+
+    Returns a summary of all records affected.
+    """
+
+
+    gdpr = GDPRMaskingService()
+
+    try:
+        # 1. Database anonymization
+        db_result = await gdpr.anonymize_user_data(phone, db)
+
+        # 2. Redis state erasure
+        redis_result = {"keys_deleted": 0, "dlq_scrubbed": 0}
+        if request.app.state.redis:
+            redis_result = await gdpr.erase_redis_state(phone, request.app.state.redis)
+
+        return {
+            "success": True,
+            "user_hash": gdpr._hash_value(phone),
+            "database": db_result,
+            "redis": redis_result,
+        }
+
+    except Exception as e:
+        logger.error(f"GDPR erasure failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Erasure failed: {type(e).__name__}")
+
+
+# ---
+# GDPR DATA PORTABILITY
+# ---
+
+@app.get(
+    "/admin/gdpr/export/{phone}",
+    summary="GDPR Article 20: Right to Data Portability",
+    tags=["gdpr"],
+)
+async def gdpr_export_user(
+    phone: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Export all user data in structured, machine-readable JSON format.
+
+    GDPR Article 20 requires data controllers to provide users with their
+    personal data in a structured, commonly used, machine-readable format.
+
+    Returns: JSON with user profile, conversations, messages,
+    hallucination reports, and Redis ephemeral state.
+    """
+
+
+    gdpr = GDPRMaskingService()
+    redis_client = getattr(request.app.state, "redis", None)
+
+    try:
+        export = await gdpr.export_user_data(phone, db, redis_client=redis_client)
+        return export
+
+    except Exception as e:
+        logger.error(f"GDPR export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {type(e).__name__}")
 
 
 # ---

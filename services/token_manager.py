@@ -39,7 +39,7 @@ class TokenManager:
             redis_client: Optional Redis client for caching
         """
         self._token: Optional[str] = None
-        self._expires_at: datetime = datetime.min
+        self._expires_at: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._refresh_lock = asyncio.Lock()
         self._redis = redis_client
         self._last_failure: Optional[datetime] = None
@@ -51,6 +51,7 @@ class TokenManager:
         self.scope = settings.MOBILITY_SCOPE
 
         self._cache_key = "mobility:access_token"
+        self._http_client: Optional[httpx.AsyncClient] = None
 
         logger.info(f"TokenManager initialized: {self.auth_url}")
     
@@ -96,10 +97,16 @@ class TokenManager:
 
             return await self._fetch_new_token()
     
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """Get or create cached HTTP client for token requests."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=5.0)
+        return self._http_client
+
     async def _fetch_new_token(self) -> str:
         """Fetch new token from auth server."""
         logger.info("Fetching new OAuth2 token...")
-        
+
         # IMPORTANT: Form-encoded, NOT JSON
         payload = {
             "client_id": self.client_id,
@@ -112,43 +119,43 @@ class TokenManager:
         if self.scope:
             payload["scope"] = self.scope
             logger.debug(f"Requesting token with scope: {self.scope}")
-        
+
         headers = {
             "Content-Type": "application/x-www-form-urlencoded"
         }
-        
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(
-                    self.auth_url,
-                    data=payload,
-                    headers=headers
-                )
-                
-                if response.status_code != 200:
-                    error_text = response.text[:500]
-                    logger.error(f"Token fetch failed: {response.status_code} - {error_text}")
-                    raise Exception(f"Auth failed ({response.status_code}): {error_text}")
-                
-                data = response.json()
-                
-                self._token = data["access_token"]
-                expires_in = int(data.get("expires_in", 3600))
-                self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-                self._last_failure = None  # Clear failure state on success
 
-                logger.info(f"Token acquired, expires in {expires_in}s")
-                
-                # Cache in Redis
-                if self._redis:
-                    try:
-                        cache_ttl = max(expires_in - 120, 60)
-                        await self._redis.setex(self._cache_key, cache_ttl, self._token)
-                        logger.debug(f"Token cached in Redis, TTL={cache_ttl}")
-                    except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
-                
-                return self._token
+        try:
+            client = await self._get_http_client()
+            response = await client.post(
+                self.auth_url,
+                data=payload,
+                headers=headers
+            )
+
+            if response.status_code != 200:
+                error_text = response.text[:500]
+                logger.error(f"Token fetch failed: {response.status_code} - {error_text}")
+                raise Exception(f"Auth failed ({response.status_code}): {error_text}")
+
+            data = response.json()
+
+            self._token = data["access_token"]
+            expires_in = int(data.get("expires_in", 3600))
+            self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            self._last_failure = None  # Clear failure state on success
+
+            logger.info(f"Token acquired, expires in {expires_in}s")
+
+            # Cache in Redis
+            if self._redis:
+                try:
+                    cache_ttl = max(expires_in - 120, 60)
+                    await self._redis.setex(self._cache_key, cache_ttl, self._token)
+                    logger.debug(f"Token cached in Redis, TTL={cache_ttl}")
+                except Exception as e:
+                    logger.warning(f"Redis cache write failed: {e}")
+
+            return self._token
                 
         except httpx.TimeoutException:
             self._last_failure = datetime.now(timezone.utc)
@@ -159,15 +166,15 @@ class TokenManager:
             logger.error(f"Token fetch network error: {e}")
             raise Exception(f"Authentication network error: {e}")
     
-    def invalidate(self) -> None:
+    async def invalidate(self) -> None:
         """Invalidate current token (call on 401)."""
         logger.info("Token invalidated")
         self._token = None
-        self._expires_at = datetime.min
-        
-        # Clear Redis cache
+        self._expires_at = datetime.min.replace(tzinfo=timezone.utc)
+
+        # Clear Redis cache synchronously to avoid race with get_token()
         if self._redis:
-            asyncio.create_task(self._clear_redis_cache())
+            await self._clear_redis_cache()
     
     async def _clear_redis_cache(self) -> None:
         """Clear Redis cache."""
@@ -176,6 +183,12 @@ class TokenManager:
         except Exception as e:
             logger.debug(f"Failed to clear Redis token cache: {e}")
     
+    async def close(self) -> None:
+        """Close HTTP client."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
+
     @property
     def is_valid(self) -> bool:
         """Check if current token is valid."""

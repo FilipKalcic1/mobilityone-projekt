@@ -10,8 +10,6 @@ import os
 import re
 from typing import Dict, List, Set, Tuple, Any, Optional
 
-from openai import AsyncAzureOpenAI
-
 from config import get_settings
 from services.tool_contracts import UnifiedToolDefinition, DependencyGraph
 from services.scoring_utils import cosine_similarity
@@ -91,12 +89,9 @@ class SearchEngine:
     }
 
     def __init__(self):
-        """Initialize search engine with OpenAI client and category data."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        """Initialize search engine with shared OpenAI client and category data."""
+        from services.openai_client import get_embedding_client
+        self.openai = get_embedding_client()
 
         # Load category and documentation data
         self._tool_categories = _load_json_file("tool_categories.json")
@@ -865,6 +860,8 @@ class SearchEngine:
             # Find best overlap with any example query
             best_overlap = 0
             for example in example_queries:
+                if not isinstance(example, str):
+                    continue
                 example_words = set(example.lower().split())
                 overlap = len(query_words & example_words)
                 best_overlap = max(best_overlap, overlap)

@@ -5,13 +5,12 @@ Extracted from engine/__init__.py for better modularity.
 """
 
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 
 from services.user_service import UserService
 from services.context import UserContextManager
 
 logger = logging.getLogger(__name__)
-
 
 class UserHandler:
     """

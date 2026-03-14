@@ -7,15 +7,14 @@ NEVER fabricate data - only return what exists in the response.
 
 import json
 import logging
-from typing import Dict, Any, Optional, List
-
-from openai import AsyncAzureOpenAI
+from typing import Dict, Any, Optional
 
 from config import get_settings
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 class LLMResponseExtractor:
     """
@@ -29,12 +28,9 @@ class LLMResponseExtractor:
     """
 
     def __init__(self):
-        """Initialize with OpenAI client."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        """Initialize with shared OpenAI client + circuit breaker."""
+        self.openai = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
 
     async def extract(
         self,
@@ -191,7 +187,9 @@ DOSTUPNI PODACI:
 Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         try:
-            response = await self.openai.chat.completions.create(
+            response = await self._circuit_breaker.call(
+                f"llm_extractor:{settings.AZURE_OPENAI_DEPLOYMENT_NAME}",
+                self.openai.chat.completions.create,
                 model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -207,6 +205,10 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
             self._validate_extraction(content, data, query)
 
             return content
+
+        except CircuitOpenError:
+            logger.warning("ResponseExtractor: circuit breaker OPEN, using fallback")
+            return self._format_fallback(data, query)
 
         except Exception as e:
             logger.error(f"LLM extraction error: {e}")
@@ -380,10 +382,8 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         return str(value)
 
-
 # Singleton instance
 _extractor = None
-
 
 def get_response_extractor() -> LLMResponseExtractor:
     """Get singleton instance of response extractor."""

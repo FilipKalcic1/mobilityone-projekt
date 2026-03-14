@@ -42,6 +42,12 @@ class UserMapping(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
+    # GDPR consent tracking
+    gdpr_consent_given = Column(Boolean, default=False)
+    gdpr_consent_at = Column(DateTime(timezone=True), nullable=True)
+    gdpr_data_retention_days = Column(Integer, default=365)
+    gdpr_anonymized_at = Column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         Index("ix_user_phone_active", "phone_number", "is_active"),
     )

@@ -20,7 +20,6 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mobility-cache-pvc
-  namespace: mobility
   labels:
     app: mobility-bot
     component: cache
@@ -49,7 +48,6 @@ spec:
 # kind: PersistentVolumeClaim
 # metadata:
 #   name: mobility-redis-pvc
-#   namespace: mobility
 # spec:
 #   accessModes:
 #     - ReadWriteOnce
@@ -69,7 +67,6 @@ spec:
 # kind: PersistentVolumeClaim
 # metadata:
 #   name: mobility-postgres-pvc
-#   namespace: mobility
 # spec:
 #   accessModes:
 #     - ReadWriteOnce

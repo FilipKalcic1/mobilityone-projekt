@@ -16,9 +16,11 @@ This module has been refactored into smaller components:
 - flow_handler.py: Flow state management
 """
 
+import asyncio
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, Optional, List
 
 from config import get_settings
@@ -30,8 +32,6 @@ from services.dependency_resolver import DependencyResolver
 from services.error_learning import ErrorLearningService
 from services.model_drift_detector import get_drift_detector
 from services.cost_tracker import CostTracker
-from services.reasoning import Planner
-
 from services.chain_planner import get_chain_planner
 from services.response_extractor import get_response_extractor
 from services.query_router import get_query_router, RouteResult
@@ -57,6 +57,11 @@ from services.flow_phrases import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Bounded pool for CPU-bound ML predictions (TF-IDF predict_proba).
+# 2 threads is enough — the GIL serializes numpy anyway, but releasing
+# the event loop prevents coroutine starvation at concurrency > 5.
+_ml_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ml_route")
 
 __all__ = ['MessageEngine']
 
@@ -117,8 +122,6 @@ class MessageEngine:
 
         self.ai = AIOrchestrator()
         self.formatter = ResponseFormatter()
-        self.planner = Planner()
-
         # Advanced planning and response extraction
         self.chain_planner = get_chain_planner()
         self.response_extractor = get_response_extractor()
@@ -129,6 +132,7 @@ class MessageEngine:
         # Unified LLM router
         self.unified_router = None
         self._unified_router_initialized = False
+        self._unified_router_lock = asyncio.Lock()
 
         # Refactored handlers
         self._tool_handler = ToolHandler(
@@ -260,10 +264,22 @@ class MessageEngine:
         _t0 = _time.perf_counter()
         logger.info(f"Processing: {sender[-4:]} - {text[:50]}")
 
+        # Early validation: empty/whitespace-only messages
+        if not text or not text.strip():
+            return "Molim napišite poruku."
+
         try:
             # 1. Identify user (delegated to UserHandler)
             # Always returns a context (guest context if not in MobilityOne)
             user_context = await self._user_handler.identify_user(sender, db_session=db_session)
+            if not user_context:
+                logger.error(f"identify_user returned None for {sender[-4:]}")
+                user_context = {
+                    "person_id": None, "phone": sender,
+                    "tenant_id": settings.tenant_id,
+                    "display_name": "Korisnik", "vehicle": {},
+                    "is_new": True, "is_guest": True
+                }
             _t1 = _time.perf_counter()
             logger.info(f"TIMING identify_user: {int((_t1-_t0)*1000)}ms")
 
@@ -382,12 +398,14 @@ class MessageEngine:
                         sender, text, user_context, conv_manager, self._handle_new_request
                     )
 
-        # Initialize unified router lazily
+        # Initialize unified router lazily (lock prevents double-init under concurrency)
         if not self._unified_router_initialized:
-            self.unified_router = await get_unified_router()
-            if self.registry and self.registry.is_ready:
-                self.unified_router.set_registry(self.registry)
-            self._unified_router_initialized = True
+            async with self._unified_router_lock:
+                if not self._unified_router_initialized:
+                    self.unified_router = await get_unified_router()
+                    if self.registry and self.registry.is_ready:
+                        self.unified_router.set_registry(self.registry)
+                    self._unified_router_initialized = True
 
         # Build conversation state for router
         conv_state = None
@@ -399,9 +417,14 @@ class MessageEngine:
                 "missing_params": conv_manager.get_missing_params()
             }
 
-        # Get unified routing decision
+        # Get unified routing decision (with fallback on failure)
         _rt0 = _time.perf_counter()
-        decision = await self.unified_router.route(text, user_context, conv_state)
+        try:
+            decision = await self.unified_router.route(text, user_context, conv_state)
+        except Exception as e:
+            logger.error(f"UNIFIED ROUTER FAILED: {e}", exc_info=True)
+            # Fall through to _handle_new_request which has its own routing
+            return await self._handle_new_request(sender, text, user_context, conv_manager)
         _rt1 = _time.perf_counter()
 
         logger.info(
@@ -457,13 +480,16 @@ class MessageEngine:
                 if isinstance(result, dict) and result.get("mid_flow_question"):
                     question = result.get("question", text)
                     logger.info(f"P1: Handling mid-flow question: '{question[:50]}'")
-                    # mid-flow question if we're not already handling one
-                    if not getattr(self, '_handling_mid_flow', False):
-                        self._handling_mid_flow = True
+                    # Per-sender guard to prevent nested mid-flow recursion
+                    # Uses conv_manager.context (per-user) instead of self (shared singleton)
+                    mid_flow_key = "_handling_mid_flow"
+                    already_handling = conv_manager.context.tool_outputs.get(mid_flow_key, False)
+                    if not already_handling:
+                        conv_manager.context.tool_outputs[mid_flow_key] = True
                         try:
                             answer = await self._handle_new_request(sender, question, user_context, conv_manager)
                         finally:
-                            self._handling_mid_flow = False
+                            conv_manager.context.tool_outputs.pop(mid_flow_key, None)
                         return f"{answer}\n\n---\n_Ceka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
                     else:
                         logger.warning("P1: Skipping nested mid-flow question to prevent recursion")
@@ -477,9 +503,29 @@ class MessageEngine:
                 logger.warning("STATE MISMATCH: is_in_flow but state=IDLE, treating as new request")
 
         if decision.action == "start_flow":
+            # Guest users cannot use flows (booking, mileage, case) - require registration
+            if user_context.get("is_guest") and not UserContextManager(user_context).person_id:
+                return (
+                    "Za ovu operaciju trebate biti registrirani u MobilityOne sustavu.\n"
+                    "Kontaktirajte svog administratora za pristup."
+                )
             return await self._handle_flow_start(decision, text, user_context, conv_manager)
 
         if decision.action == "simple_api" and decision.tool:
+            # Guest users: check if tool needs PersonId before calling API
+            if user_context.get("is_guest") and not UserContextManager(user_context).person_id:
+                tool = self.registry.get_tool(decision.tool) if self.registry else None
+                needs_person = False
+                if tool:
+                    for param_def in tool.parameters.values():
+                        if getattr(param_def, 'context_key', None) == "person_id":
+                            needs_person = True
+                            break
+                if needs_person:
+                    return (
+                        "Za dohvat osobnih podataka trebate biti registrirani u MobilityOne sustavu.\n"
+                        "Kontaktirajte svog administratora za pristup."
+                    )
             route = RouteResult(
                 matched=True,
                 tool_name=decision.tool,
@@ -509,6 +555,10 @@ class MessageEngine:
             return await self._flow_executors.handle_case_creation_flow(
                 text, user_context, conv_manager, decision.params
             )
+        if decision.flow_type in ("delete_booking", "delete_case", "delete_trip"):
+            return await self._flow_executors.handle_delete_flow(
+                decision.flow_type, text, user_context, conv_manager
+            )
         return "Neispravan flow tip."
 
     async def _handle_new_request(
@@ -521,7 +571,11 @@ class MessageEngine:
         """Handle new request with Chain Planning and Fallback Execution."""
 
         # DETERMINISTIC ROUTING - Try rules FIRST
-        route = self.query_router.route(text, user_context)
+        # predict_proba() is CPU-bound (matrix mul). On 0.5 CPU it blocks the
+        # event loop for 1-5ms, starving all other coroutines at concurrency >5.
+        # Bounded pool (2 threads) releases the loop without unbounded thread creation.
+        loop = asyncio.get_running_loop()
+        route = await loop.run_in_executor(_ml_thread_pool, self.query_router.route, text, user_context)
 
         if route.matched:
             logger.info(f"ROUTER: Deterministic match -> {route.tool_name or route.flow_type}")
@@ -608,6 +662,64 @@ class MessageEngine:
             return missing_prompt
 
         extraction_hint = getattr(plan, 'extraction_hint', None)
+
+        # FAST PATH: If ChainPlanner identified a simple single-tool plan,
+        # execute it directly instead of making another LLM call via AIOrchestrator.
+        # This saves 1-2 LLM calls per message for most queries.
+        if (plan.is_simple and plan.has_all_data and plan.primary_path
+                and len(plan.primary_path) == 1
+                and plan.primary_path[0].tool_name):
+            fast_tool = plan.primary_path[0].tool_name
+            logger.info(f"FAST PATH: ChainPlanner simple plan -> executing {fast_tool} directly (skipping AI loop)")
+            route = RouteResult(
+                matched=True,
+                tool_name=fast_tool,
+                confidence=0.9,
+                flow_type="simple"
+            )
+            result = await self._deterministic_executor.execute(
+                route, user_context, conv_manager, sender, text
+            )
+            if result:
+                return result
+            logger.warning(f"FAST PATH: {fast_tool} execution failed, falling through to AI loop")
+
+        # MULTI-TOOL FAST PATH: Execute parallel tools from deterministic pattern match
+        if (not plan.is_simple and plan.has_all_data and plan.primary_path
+                and len(plan.primary_path) > 1
+                and all(s.tool_name for s in plan.primary_path)):
+            tool_names = [s.tool_name for s in plan.primary_path]
+            logger.info(f"MULTI-TOOL FAST PATH: executing {tool_names} in parallel")
+
+            async def _exec_one(tool_name: str) -> Dict[str, Any]:
+                call = {
+                    "tool": tool_name,
+                    "parameters": {},
+                    "tool_call_id": f"multi_{tool_name}",
+                }
+                return await self._tool_handler.execute_tool_call(
+                    call, user_context, conv_manager, sender, user_query=text
+                )
+
+            results_list = await asyncio.gather(
+                *[_exec_one(t) for t in tool_names],
+                return_exceptions=True
+            )
+
+            # Combine successful results
+            combined_parts = []
+            for tool_name, res in zip(tool_names, results_list):
+                if isinstance(res, Exception):
+                    logger.warning(f"Multi-tool {tool_name} failed: {res}")
+                    continue
+                if res.get("final_response"):
+                    combined_parts.append(res["final_response"])
+                elif res.get("data"):
+                    combined_parts.append(json.dumps(res["data"], ensure_ascii=False))
+
+            if combined_parts:
+                return "\n\n".join(combined_parts)
+            logger.warning("MULTI-TOOL FAST PATH: all tools failed, falling through to AI loop")
 
         # Get fallback tools from plan
         fallback_tools = []
@@ -771,8 +883,8 @@ class MessageEngine:
                                     )
                                     if extracted:
                                         return extracted
-                                except Exception:
-                                    pass
+                                except (KeyError, TypeError, ValueError) as e:
+                                    logger.warning(f"Fallback extraction failed for {fb_tool_name}: {type(e).__name__}: {e}")
                             if fb_response.get("final_response"):
                                 return fb_response["final_response"]
                             break

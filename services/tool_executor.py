@@ -35,6 +35,8 @@ from services.circuit_breaker import CircuitBreaker, CircuitOpenError
 from services.error_parser import ErrorParser
 from services.patterns import should_skip_person_id_injection
 from services.context import UserContextManager
+from services.filter_builder import FilterBuilder
+from services.api_capabilities import get_capability_registry, ParameterSupport
 
 if TYPE_CHECKING:
     from services.tool_registry import ToolRegistry
@@ -135,7 +137,6 @@ class ToolExecutor:
 
             # Build and inject filter string for GET requests
             if tool.method == "GET":
-                from services.filter_builder import FilterBuilder
                 filter_string = FilterBuilder.build_filter_string(tool, resolved_params)
                 if filter_string:
                     if query_params is None:
@@ -152,7 +153,6 @@ class ToolExecutor:
                 person_id = ctx_manager.person_id
                 if person_id:
                     # Use APICapabilityRegistry to check if tool supports PersonId
-                    from services.api_capabilities import get_capability_registry, ParameterSupport
                     capability_registry = get_capability_registry()
 
                     should_inject = True
@@ -250,7 +250,6 @@ class ToolExecutor:
                 # This teaches the system to stop injecting personId for tools that don't support it
                 error_msg = response.error_message or ""
                 if "unknown filter field" in error_msg.lower():
-                    from services.api_capabilities import get_capability_registry
                     cap_registry = get_capability_registry()
                     if cap_registry:
                         cap_registry.record_failure(

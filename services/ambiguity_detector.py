@@ -11,15 +11,13 @@ This module:
 4. Suggests clarification questions for user when LLM can't decide
 """
 
-import re
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 
 from services.context import UserContextManager
 
 logger = logging.getLogger(__name__)
-
 
 # Suffix patterns that indicate generic operations
 GENERIC_SUFFIX_PATTERNS = [
@@ -78,7 +76,6 @@ CLARIFICATION_QUESTIONS = {
     "_multipatch": "Koje podatke želite masovno ažurirati?",
 }
 
-
 @dataclass
 class AmbiguityResult:
     """Result of ambiguity detection."""
@@ -89,7 +86,6 @@ class AmbiguityResult:
     detected_entity: Optional[str] = None
     disambiguation_hint: str = ""
     clarification_question: Optional[str] = None
-
 
 class AmbiguityDetector:
     """
@@ -321,10 +317,8 @@ class AmbiguityDetector:
 
         return False
 
-
 # Singleton instance
 _detector: Optional[AmbiguityDetector] = None
-
 
 def get_ambiguity_detector(tool_documentation: Optional[Dict] = None) -> AmbiguityDetector:
     """Get singleton AmbiguityDetector instance."""

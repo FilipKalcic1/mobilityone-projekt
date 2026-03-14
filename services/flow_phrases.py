@@ -10,10 +10,9 @@ Uses word-boundary matching to prevent substring false positives
 
 import re
 import logging
-from typing import List, Optional, Set
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
-
 
 # ---
 # PHRASE CATEGORIES
@@ -77,22 +76,24 @@ ORDINAL_PHRASES: List[str] = [
 ]
 
 # Greeting phrases
+# EU AI Act: Bot MUST self-identify as AI on every greeting interaction.
+_AI_DISCLOSURE = "Ja sam MobilityOne AI asistent."
+
 GREETING_PHRASES = {
-    "bok": "Bok! Kako vam mogu pomoći?",
-    "hej": "Hej! Kako vam mogu pomoći?",
-    "pozdrav": "Pozdrav! Kako vam mogu pomoći?",
-    "zdravo": "Zdravo! Kako vam mogu pomoći?",
-    "dobar dan": "Dobar dan! Kako vam mogu pomoći?",
-    "dobro jutro": "Dobro jutro! Kako vam mogu pomoći?",
-    "dobra večer": "Dobra večer! Kako vam mogu pomoći?",
-    "dobra vecer": "Dobra večer! Kako vam mogu pomoći?",
+    "bok": f"Bok! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "hej": f"Hej! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "pozdrav": f"Pozdrav! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "zdravo": f"Zdravo! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "dobar dan": f"Dobar dan! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "dobro jutro": f"Dobro jutro! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "dobra večer": f"Dobra večer! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
+    "dobra vecer": f"Dobra večer! {_AI_DISCLOSURE} Kako vam mogu pomoći?",
     "hvala": "Nema na čemu! Trebate li još nešto?",
     "thanks": "You're welcome! Need anything else?",
-    "help": "Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
-    "pomoc": "Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
-    "pomoć": "Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
+    "help": f"{_AI_DISCLOSURE} Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
+    "pomoc": f"{_AI_DISCLOSURE} Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
+    "pomoć": f"{_AI_DISCLOSURE} Mogu vam pomoći s:\n• Rezervacija vozila\n• Unos kilometraže\n• Prijava kvara\n• Informacije o vozilu",
 }
-
 
 # ---
 # MATCHING FUNCTIONS (Word-boundary safe)
@@ -100,7 +101,6 @@ GREETING_PHRASES = {
 
 # Cache compiled regex patterns
 _pattern_cache: dict = {}
-
 
 def _get_word_pattern(phrase: str) -> re.Pattern:
     """Get compiled regex pattern for word-boundary matching."""
@@ -113,7 +113,6 @@ def _get_word_pattern(phrase: str) -> re.Pattern:
             re.IGNORECASE
         )
     return _pattern_cache[phrase]
-
 
 def matches_any(text: str, phrases: List[str]) -> bool:
     """
@@ -142,7 +141,6 @@ def matches_any(text: str, phrases: List[str]) -> bool:
 
     return False
 
-
 def matches_show_more(text: str) -> bool:
     """Check if text is a 'show more' request.
 
@@ -154,11 +152,9 @@ def matches_show_more(text: str) -> bool:
         return False
     return matches_any(text, SHOW_MORE_PHRASES)
 
-
 def matches_confirm_yes(text: str) -> bool:
     """Check if text is a confirmation 'yes'."""
     return matches_any(text, CONFIRM_YES_PHRASES)
-
 
 def matches_confirm_no(text: str) -> bool:
     """Check if text is a confirmation 'no'."""
@@ -167,11 +163,9 @@ def matches_confirm_no(text: str) -> bool:
         return False
     return matches_any(text, CONFIRM_NO_PHRASES)
 
-
 def matches_exit_signal(text: str) -> bool:
     """Check if text is an exit/cancellation signal."""
     return matches_any(text, EXIT_SIGNALS)
-
 
 def matches_item_selection(text: str) -> bool:
     """Check if text is a numeric or ordinal item selection."""
@@ -179,7 +173,6 @@ def matches_item_selection(text: str) -> bool:
     if text_stripped.isdigit():
         return True
     return matches_any(text, ORDINAL_PHRASES)
-
 
 def matches_greeting(text: str) -> Optional[str]:
     """Check if text is a greeting and return response."""

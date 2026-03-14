@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 from services.tool_contracts import UnifiedToolDefinition, DependencyGraph
 
@@ -23,7 +23,6 @@ CACHE_DIR = Path.cwd() / ".cache"
 EMBEDDINGS_CACHE_FILE = CACHE_DIR / "tool_embeddings.json"
 METADATA_CACHE_FILE = CACHE_DIR / "tool_metadata.json"
 MANIFEST_CACHE_FILE = CACHE_DIR / "swagger_manifest.json"
-
 
 class CacheManager:
     """

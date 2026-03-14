@@ -23,6 +23,7 @@ import re
 import logging
 import ipaddress
 import base64
+import binascii
 import html
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
@@ -32,6 +33,7 @@ from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport, AuditLog
+from services.feedback_learning_service import get_feedback_learning_service
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,7 @@ class AdminReviewService:
         r';\s*--',            # SQL comment injection
         r'union\s+select',    # SQL injection
         r'insert\s+into',     # SQL injection
-        r'update\s+.*\s+set', # SQL injection
+        r'update\s+.{0,100}?\s+set', # SQL injection (bounded, non-greedy to prevent ReDOS)
     ]
 
     # Compiled patterns for performance
@@ -248,10 +250,10 @@ class AdminReviewService:
                     if self._check_dangerous_patterns(decoded.lower()):
                         logger.warning("SECURITY: Base64-encoded dangerous pattern detected")
                         return False
-                except Exception:
-                    pass  # Not valid base64, continue
-        except Exception:
-            pass
+                except (binascii.Error, ValueError):
+                    continue  # Not valid base64, skip this match
+        except re.error as e:
+            logger.warning(f"Base64 pattern scan failed: {e}")
 
         # Check for unicode escape sequences
         try:
@@ -477,7 +479,6 @@ class AdminReviewService:
         learning_triggered = False
         if correction:
             try:
-                from services.feedback_learning_service import get_feedback_learning_service
                 learning_service = get_feedback_learning_service(self.db)
                 # Run incremental learning in background (non-blocking)
                 # Full learning cycle is done via admin endpoint
@@ -728,7 +729,7 @@ Koristi samo podatke iz dostupnih API-ja, ne izmišljaj informacije."""
 
         Usage:
             jsonl_content = await service.export_for_training_jsonl(admin_id)
-            with open("training_data.jsonl", "w") as f:
+            with open("training_data.jsonl", "w", encoding="utf-8") as f:
                 f.write(jsonl_content)
         """
         import json

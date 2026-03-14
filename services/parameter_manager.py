@@ -11,12 +11,12 @@ NO domain logic - purely type system operations.
 
 import json
 import logging
+import re
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime, date
 
 from services.tool_contracts import (
     UnifiedToolDefinition,
-    ParameterDefinition,
     DependencySource,
     ToolExecutionContext
 )
@@ -533,7 +533,10 @@ class ParameterManager:
             if isinstance(value, int):
                 return value
             if isinstance(value, str):
-                # Handle "100.0" -> 100
+                # Strip non-numeric suffixes: "45000 km" -> "45000", "100.0" -> 100
+                cleaned = re.sub(r'[^\d.\-]', '', value)
+                if cleaned:
+                    return int(float(cleaned))
                 return int(float(value))
             return int(value)
 
@@ -595,7 +598,6 @@ class ParameterManager:
         Returns:
             ISO 8601 datetime string with timezone
         """
-        import re
         from datetime import timedelta
 
         if isinstance(value, datetime):
@@ -612,11 +614,18 @@ class ParameterManager:
             time_part = None
 
             # Extract time if present (e.g., "sutra u 9:00" or "sutra 9h")
-            time_match = re.search(r'(\d{1,2})[:\.]?(\d{0,2})\s*(h|sati)?', value_lower)
+            # Require separator or suffix to avoid matching bare numbers
+            time_match = re.search(r'(\d{1,2})[:\.](\d{1,2})|\b(\d{1,2})\s*(h|sati)\b', value_lower)
             if time_match:
-                hour = int(time_match.group(1))
-                minute = int(time_match.group(2)) if time_match.group(2) else 0
-                time_part = (hour, minute)
+                if time_match.group(1) is not None:
+                    hour = int(time_match.group(1))
+                    minute = int(time_match.group(2))
+                else:
+                    hour = int(time_match.group(3))
+                    minute = 0
+                # Validate hour/minute ranges
+                if 0 <= hour <= 23 and 0 <= minute <= 59:
+                    time_part = (hour, minute)
 
             # Parse Croatian date words
             if "sutra" in value_lower:
@@ -664,6 +673,10 @@ class ParameterManager:
                     return dt.isoformat() + timezone_offset
                 except ValueError:
                     continue
+
+            # Fallback: if value looks like a datetime (contains "T"), add timezone
+            if "T" in value and "+" not in value and "Z" not in value:
+                return value + timezone_offset
 
         return str(value)
 

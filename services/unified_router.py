@@ -8,16 +8,17 @@ Architecture:
 4. Execute based on decision OR ask clarification
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
-from pathlib import Path
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 
 from config import get_settings
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
 from services.circuit_breaker import CircuitOpenError
 from services.query_router import QueryRouter, RouteResult
+from services.unified_search import get_unified_search
 from services.ambiguity_detector import (
     AmbiguityDetector, AmbiguityResult, get_ambiguity_detector
 )
@@ -52,48 +53,8 @@ class RouterDecision:
     ambiguity_detected: bool = False  # Was ambiguity detected?
 
 
-# Primary tools - the 30 most common operations
-PRIMARY_TOOLS = {
-    # Vehicle Info (READ)
-    "get_MasterData": "Dohvati podatke o vozilu (registracija, kilometraža, servis)",
-    "get_Vehicles_id": "Dohvati detalje specifičnog vozila",
-    
-    # Person Info (READ) - name, email, phone, company
-    "get_PersonData_personIdOrEmail": "Dohvati podatke o korisniku (ime, prezime, email, telefon)",
-
-    # Availability & Booking
-    "get_AvailableVehicles": "Provjeri dostupna/slobodna vozila za period",
-    "get_VehicleCalendar": "Dohvati moje rezervacije",
-    "post_VehicleCalendar": "Kreiraj novu rezervaciju vozila",
-    "delete_VehicleCalendar_id": "Obriši/otkaži rezervaciju",
-
-    # Mileage
-    "get_LatestMileageReports": "Dohvati zadnju kilometražu",
-    "get_MileageReports": "Dohvati izvještaje o kilometraži",
-    "post_AddMileage": "Unesi/upiši novu kilometražu",
-
-    # Case/Damage
-    "post_AddCase": "Prijavi štetu, kvar, problem, nesreću",
-    "get_Cases": "Dohvati prijavljene slučajeve",
-
-    # Expenses
-    "get_Expenses": "Dohvati troškove",
-    "get_ExpenseGroups": "Dohvati grupe troškova",
-
-    # Trips
-    "get_Trips": "Dohvati putovanja/tripove",
-
-    # Dashboard
-    "get_DashboardItems": "Dohvati dashboard podatke",
-}
-
-# Flow triggers - which tools trigger which flows
-FLOW_TRIGGERS = {
-    "post_VehicleCalendar": "booking",
-    "get_AvailableVehicles": "booking",
-    "post_AddMileage": "mileage",
-    "post_AddCase": "case",
-}
+# Single source of truth: tool_routing.py
+from tool_routing import PRIMARY_TOOLS
 
 # Exit signals moved to services/flow_phrases.py (centralized)
 
@@ -161,8 +122,6 @@ class UnifiedRouter:
 
         try:
             # Use UnifiedSearch for consistent results
-            from services.unified_search import get_unified_search
-
             unified = get_unified_search()
             unified.set_registry(self._registry)
 
@@ -323,8 +282,9 @@ class UnifiedRouter:
         logger.info(f"UNIFIED ROUTER: Trying QueryRouter for query='{query[:50]}'")
         qr_result = self.query_router.route(query, user_context)
         logger.info(f"UNIFIED ROUTER: QR result: matched={qr_result.matched}, conf={qr_result.confidence}, flow={qr_result.flow_type if qr_result.matched else None}")
-        if qr_result.matched and qr_result.confidence >= 1.0:
-            # Only for confident matches (confidence=1.0) to avoid false positives
+        if qr_result.matched and qr_result.confidence >= 0.90:
+            # ML classifier already filtered below 0.85 in QueryRouter
+            # 90%+ confidence is reliable enough to skip LLM call (~6s saved)
             logger.info(
                 f"UNIFIED ROUTER: Fast path via QueryRouter → "
                 f"{qr_result.tool_name or qr_result.flow_type} (conf={qr_result.confidence})"
@@ -626,12 +586,16 @@ class UnifiedRouter:
             )
 
         # 2. Flows that need multi-step interaction
-        if flow_type in ("booking", "mileage_input", "case_creation"):
+        if flow_type in ("booking", "mileage_input", "case_creation",
+                          "delete_booking", "delete_case", "delete_trip"):
             # Map flow_type to canonical names
             canonical_flow = {
                 "booking": "booking",
                 "mileage_input": "mileage",
-                "case_creation": "case"
+                "case_creation": "case",
+                "delete_booking": "delete_booking",
+                "delete_case": "delete_case",
+                "delete_trip": "delete_trip",
             }.get(flow_type, flow_type)
 
             return RouterDecision(
@@ -655,12 +619,15 @@ class UnifiedRouter:
 
 # Singleton
 _router: Optional[UnifiedRouter] = None
+_router_lock = asyncio.Lock()
 
 
 async def get_unified_router() -> UnifiedRouter:
-    """Get or create singleton router instance."""
+    """Get or create singleton router instance (async-safe)."""
     global _router
     if _router is None:
-        _router = UnifiedRouter()
-        await _router.initialize()
+        async with _router_lock:
+            if _router is None:
+                _router = UnifiedRouter()
+                await _router.initialize()
     return _router

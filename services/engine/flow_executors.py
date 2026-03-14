@@ -7,7 +7,6 @@ Handles booking, mileage input, and case creation flows.
 
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from datetime import datetime, timedelta
 
 from services.context import UserContextManager
 
@@ -140,44 +139,7 @@ class FlowExecutors:
                         plate = v.get("LicencePlate") or ""
                         break
 
-        # 2. If still no vehicle, fetch first available one
-        if not vehicle_id:
-            try:
-                from services.api_gateway import HttpMethod
-
-                tomorrow = datetime.now() + timedelta(days=1)
-                result = await self.gateway.execute(
-                    method=HttpMethod.GET,
-                    path="/vehiclemgt/AvailableVehicles",
-                    params={
-                        "from": tomorrow.replace(hour=8, minute=0).isoformat(),
-                        "to": tomorrow.replace(hour=17, minute=0).isoformat()
-                    }
-                )
-
-                if result.success and result.data:
-                    data = result.data.get("Data", result.data) if isinstance(result.data, dict) else result.data
-                    vehicles = data if isinstance(data, list) else [data]
-
-                    if vehicles:
-                        v = vehicles[0]
-                        vehicle_id = v.get("Id")
-                        vehicle_name = v.get("DisplayName") or v.get("FullVehicleName") or "Vozilo"
-                        plate = v.get("LicencePlate") or ""
-
-                        # Store for later - ONLY minimal data to prevent serialization issues
-                        if hasattr(conv_manager.context, 'tool_outputs'):
-                            conv_manager.context.tool_outputs["VehicleId"] = vehicle_id
-                            # Store only minimal vehicle data
-                            minimal_vehicles = [{
-                                "Id": v.get("Id"),
-                                "DisplayName": v.get("DisplayName") or v.get("FullVehicleName") or "Vozilo",
-                                "LicencePlate": v.get("LicencePlate") or v.get("Plate") or ""
-                            } for v in vehicles]
-                            conv_manager.context.tool_outputs["all_available_vehicles"] = minimal_vehicles
-            except Exception as e:
-                logger.warning(f"Failed to fetch vehicles for mileage: {e}")
-
+        # 2. If still no vehicle, ask user instead of guessing
         if not vehicle_id:
             return (
                 "Nije prona\u0111eno vozilo za unos kilometra\u017ee.\n"
@@ -289,6 +251,8 @@ class FlowExecutors:
             "Subject": subject,
             "Message": description  # API uses "Message", not "Description"
         }
+        if vehicle_id:
+            params["VehicleId"] = vehicle_id
 
         await conv_manager.add_parameters(params)
 
@@ -304,6 +268,98 @@ class FlowExecutors:
 
         await conv_manager.request_confirmation(message)
         conv_manager.context.current_tool = "post_AddCase"
+        await conv_manager.save()
+
+        return message
+
+    # Delete flow: maps flow_type → list tool, delete tool, labels
+    DELETE_FLOW_CONFIG = {
+        "delete_booking": {
+            "list_tool": "get_VehicleCalendar",
+            "delete_tool": "delete_VehicleCalendar_id",
+            "entity_label": "rezervaciju",
+            "empty_msg": "Nemate aktivnih rezervacija za otkazivanje.",
+            "name_fields": ["VehicleName", "FullVehicleName", "DisplayName"],
+        },
+        "delete_case": {
+            "list_tool": "get_Cases",
+            "delete_tool": "delete_Cases_id",
+            "entity_label": "slučaj",
+            "empty_msg": "Nemate prijavljenih slučajeva za brisanje.",
+            "name_fields": ["Subject", "Name", "Title"],
+        },
+        "delete_trip": {
+            "list_tool": "get_Trips",
+            "delete_tool": "delete_Trips_id",
+            "entity_label": "putovanje",
+            "empty_msg": "Nemate evidentiranih putovanja za brisanje.",
+            "name_fields": ["Name", "Description", "Title"],
+        },
+    }
+
+    async def handle_delete_flow(
+        self,
+        flow_type: str,
+        text: str,
+        user_context: Dict[str, Any],
+        conv_manager: 'ConversationManager'
+    ) -> str:
+        """Handle delete flow: list items → user selects → confirm → delete."""
+        config = self.DELETE_FLOW_CONFIG.get(flow_type)
+        if not config:
+            return "Nepoznat tip operacije brisanja."
+
+        # Get list tool from registry
+        list_tool = self.flow_handler.registry.get_tool(config["list_tool"])
+        if not list_tool:
+            return f"Tehnički problem - alat '{config['list_tool']}' nije pronađen."
+
+        # Execute list API
+        from services.tool_contracts import ToolExecutionContext
+        execution_context = ToolExecutionContext(
+            user_context=user_context,
+            tool_outputs={},
+            conversation_state={}
+        )
+
+        result = await self.flow_handler.executor.execute(list_tool, {}, execution_context)
+
+        if not result.success:
+            return f"Greška pri dohvatu podataka: {result.error_message}"
+
+        # Extract items (reuse FlowHandler's helper)
+        items = self.flow_handler._extract_items(result.data)
+        items = [item for item in items if item.get("Id")]
+
+        if not items:
+            return config["empty_msg"]
+
+        # Format numbered list for user selection
+        lines = [f"**Odaberite {config['entity_label']} za brisanje:**\n"]
+        for i, item in enumerate(items, 1):
+            name = next(
+                (item[f] for f in config["name_fields"] if item.get(f)),
+                f"#{str(item.get('Id', ''))[:8]}"
+            )
+            # Add contextual details
+            detail_parts = []
+            if item.get("FromTime"):
+                detail_parts.append(f"{item['FromTime']} → {item.get('ToTime', '')}")
+            if item.get("Status"):
+                detail_parts.append(item["Status"])
+            detail = f" — {', '.join(detail_parts)}" if detail_parts else ""
+            lines.append(f"{i}. {name}{detail}")
+
+        lines.append("\n_Unesite broj za odabir._")
+        message = "\n".join(lines)
+
+        # Set up selection state
+        await conv_manager.start_flow(
+            flow_name=flow_type,
+            tool=config["delete_tool"],
+            required_params=[]
+        )
+        await conv_manager.set_displayed_items(items)
         await conv_manager.save()
 
         return message

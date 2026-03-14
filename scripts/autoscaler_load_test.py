@@ -602,7 +602,7 @@ class LoadTestRunner:
 
         # Save to file
         report_file = f"test_report_{self.metrics.test_name}_{int(time.time())}.json"
-        with open(report_file, 'w') as f:
+        with open(report_file, 'w', encoding='utf-8') as f:
             json.dump({
                 "report": report,
                 "scaling_events": self.metrics.scaling_events,

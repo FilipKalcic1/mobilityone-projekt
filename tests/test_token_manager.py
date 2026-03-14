@@ -114,11 +114,11 @@ class TestInvalidate:
     async def test_invalidate_clears_token(self, tm):
         tm._token = "old_token"
         tm._expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-        tm.invalidate()
+        await tm.invalidate()
         assert tm._token is None
         assert tm.is_valid is False
 
-    def test_invalidate_without_redis(self, tm_no_redis):
+    async def test_invalidate_without_redis(self, tm_no_redis):
         tm_no_redis._token = "old"
-        tm_no_redis.invalidate()
+        await tm_no_redis.invalidate()
         assert tm_no_redis._token is None

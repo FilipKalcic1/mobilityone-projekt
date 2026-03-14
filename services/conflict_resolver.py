@@ -47,6 +47,9 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
+from models import HallucinationReport
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,10 +81,13 @@ class EditLock:
 
     def is_expired(self) -> bool:
         # Use timezone-aware comparison
-        expires = datetime.fromisoformat(self.expires_at.replace('Z', '+00:00'))
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) > expires
+        try:
+            expires = datetime.fromisoformat(self.expires_at.replace('Z', '+00:00'))
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            return datetime.now(timezone.utc) > expires
+        except (ValueError, TypeError):
+            return True  # Corrupted lock data → treat as expired for safety
 
 
 @dataclass
@@ -154,7 +160,6 @@ class ConflictResolver:
             db_session: Database session for persistence
             redis_client: Redis for distributed locking (required in production)
         """
-        from config import get_settings
         _settings = get_settings()
         self.db = db_session
         self.redis = redis_client
@@ -675,7 +680,7 @@ class ConflictResolver:
         fields: List[str]
     ) -> Dict[str, Any]:
         """Fetch current values from database for specified fields."""
-        from models import HallucinationReport
+
 
         try:
             uuid_id = UUID(record_id)
@@ -884,7 +889,7 @@ class ConflictResolver:
         admin_id: str
     ) -> None:
         """Apply changes to database."""
-        from models import HallucinationReport
+
 
         try:
             uuid_id = UUID(record_id)

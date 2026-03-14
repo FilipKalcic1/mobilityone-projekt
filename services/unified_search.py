@@ -19,20 +19,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
-# ML-based intent detection (replaces regex-based action_intent_detector.py)
+from tool_routing import PRIMARY_ACTION_TOOLS as _PRIMARY_ACTION_TOOLS
+
+# ML-based intent detection
 from services.intent_classifier import (
     detect_action_intent,
     ActionIntent,
-    IntentDetectionResult,
-    # ML-based query type classification (replaces regex)
     classify_query_type_ml,
-    QueryTypePrediction
 )
 from services.faiss_vector_store import get_faiss_store, SearchResult
-# Keep old imports for backwards compatibility, but use ML
 from services.query_type_classifier import (
     get_query_type_classifier,
-    classify_query_type,
     QueryType,
     QueryTypeResult
 )
@@ -51,7 +48,8 @@ class UnifiedSearchResult:
     method: str   # HTTP method
     description: str  # Tool description
     origin_guide: Dict[str, str] = field(default_factory=dict)  # Parameter origin guide
-    boosts_applied: List[str] = field(default_factory=list)  # Debug: which boosts
+    boosts_applied: list = field(default_factory=list)  # Debug: (name, multiplier, score_after) tuples
+    base_score: float = 0.0  # Debug: score before boosts
 
 
 @dataclass
@@ -89,6 +87,24 @@ class UnifiedSearch:
     QUERY_TYPE_BOOST = 2.00     # 100% boost for matching query type suffix (was 50%)
     QUERY_TYPE_PENALTY = 0.40   # 60% penalty for wrong query type suffix (was 40%)
     BASE_ENTITY_BOOST = 1.50    # 50% boost for base entity tools (no complex suffixes)
+
+    # Entity detection keywords for boost matching (class constant, not rebuilt per call)
+    ENTITY_KEYWORDS = {
+        "companies": ["kompanij", "tvrtk", "firm", "poduzeć"],
+        "vehicles": ["vozil", "auto", "automobil", "flot"],
+        "persons": ["osob", "korisnik", "zaposlenik", "radnik", "voditelj"],
+        "expenses": ["trošk", "troška", "izdatak", "račun", "cijena"],
+        "trips": ["putovanj", "trip", "vožnj", "putni"],
+        "cases": ["slučaj", "šteta", "steta", "kvar", "incident"],
+        "equipment": ["oprem", "uređaj", "stroj"],
+        "partners": ["partner", "dobavljač", "klijent"],
+        "teams": ["tim", "grupa", "odjel"],
+        "orgunits": ["organizacij", "jedinic", "odjel"],
+        "costcenters": ["troškovn", "centar troška", "cost center"],
+        "vehiclecalendar": ["rezervacij", "booking", "kalendar"],
+        "documents": ["dokument", "prilog", "datoteka", "pdf"],
+        "metadata": ["metapodac", "struktur", "shema", "polja"],
+    }
 
     def __init__(self, registry: Optional["ToolRegistry"] = None):
         """Initialize unified search."""
@@ -320,90 +336,8 @@ class UnifiedSearch:
             total_candidates=total_candidates
         )
 
-    # V3.0: Primary action tools - these are the most common user-facing endpoints
-    # They get a significant boost when their keywords are detected
-    PRIMARY_ACTION_TOOLS = {
-        "get_masterdata": {
-            "keywords": [
-                "kilometr", "koliko km", "koliko imam", "stanje km", "moja km",
-                "registracij", "tablic", "lizing", "leasing",
-                "podaci o vozil", "podaci vozil", "informacij", "moje vozilo",
-                "koji auto", "servis", "do servisa"
-            ],
-            "boost": 2.0  # Increased from 1.8
-        },
-        "post_addmileage": {
-            "keywords": [
-                "unesi km", "upiši km", "dodaj km", "dodaj kilometr",
-                "unesi kilometr", "upiši kilometr", "nova km", "prijeđen",
-                "prijavi km", "prijavi kilometr"
-            ],
-            "boost": 1.8
-        },
-        "post_addcase": {
-            "keywords": [
-                "šteta", "steta", "prijavi kvar", "prijavi štetu",
-                "udario", "ogrebao", "oštetio", "oštećenj",
-                "incident", "nesreća", "ima kvar", "imam kvar",
-                "nova šteta", "novi kvar"
-            ],
-            "boost": 2.0  # Increased from 1.8
-        },
-        "post_vehiclecalendar": {
-            "keywords": [
-                "rezerviraj", "rezervacija", "nova rezervacija",
-                "booking", "zauzmi", "trebam auto", "trebam vozilo",
-                "želim rezerv", "hoću rezerv", "napravi rezerv"
-            ],
-            "boost": 1.8
-        },
-        "get_vehiclecalendar": {
-            "keywords": ["moje rezervacij", "moji booking", "kalendar vozil"],
-            "boost": 1.5
-        },
-        "get_availablevehicles": {
-            "keywords": ["slobodn", "dostupn", "raspoloživ", "available", "ima li slobodn"],
-            "boost": 1.5
-        },
-        "get_trips": {
-            "keywords": ["putovanj", "trip", "vožnj", "putni nalog"],
-            "boost": 1.5
-        },
-        "get_expenses": {
-            "keywords": ["troškov", "troška", "izdatak", "račun", "potrošio"],
-            "boost": 1.5
-        },
-        "get_persondata_personidoremail": {
-            "keywords": ["moji podaci", "moj profil", "moje ime", "tko sam"],
-            "boost": 1.5
-        },
-        # Added more primary tools
-        "get_cases": {
-            "keywords": ["slučaj", "slucaj", "štete", "stete", "prijave", "kvarovi", "moji slučajevi"],
-            "boost": 1.5
-        },
-        "delete_vehiclecalendar_id": {
-            "keywords": ["obriši rezerv", "obrisi rezerv", "otkaži booking", "otkazi booking",
-                        "cancel booking", "poništi rezerv", "ponisti rezerv"],
-            "boost": 1.8
-        },
-        "get_vehicles": {
-            "keywords": ["sva vozila", "popis vozila", "lista vozila", "vozila u floti"],
-            "boost": 1.5
-        },
-        "get_vehicles_agg": {
-            "keywords": ["statistika vozila", "ukupno vozila", "broj vozila", "agregacija vozil"],
-            "boost": 1.5
-        },
-        "get_companies": {
-            "keywords": ["sve kompanije", "popis kompanija", "lista kompanija", "tvrtke"],
-            "boost": 1.5
-        },
-        "get_persons": {
-            "keywords": ["sve osobe", "popis osoba", "lista osoba", "zaposlenici", "korisnici"],
-            "boost": 1.5
-        },
-    }
+    # Single source of truth: config/tool_routing.py
+    PRIMARY_ACTION_TOOLS = _PRIMARY_ACTION_TOOLS
 
     def _apply_boosts(
         self,
@@ -423,31 +357,15 @@ class UnifiedSearch:
         query_type_confidence = query_type_result.confidence
 
         # ENTITY DETECTION - boost tools that match entity mentioned in query
-        ENTITY_KEYWORDS = {
-            "companies": ["kompanij", "tvrtk", "firm", "poduzeć"],
-            "vehicles": ["vozil", "auto", "automobil", "flot"],
-            "persons": ["osob", "korisnik", "zaposlenik", "radnik", "voditelj"],
-            "expenses": ["trošk", "troška", "izdatak", "račun", "cijena"],
-            "trips": ["putovanj", "trip", "vožnj", "putni"],
-            "cases": ["slučaj", "šteta", "steta", "kvar", "incident"],
-            "equipment": ["oprem", "uređaj", "stroj"],
-            "partners": ["partner", "dobavljač", "klijent"],
-            "teams": ["tim", "grupa", "odjel"],
-            "orgunits": ["organizacij", "jedinic", "odjel"],
-            "costcenters": ["troškovn", "centar troška", "cost center"],
-            "vehiclecalendar": ["rezervacij", "booking", "kalendar"],
-            "documents": ["dokument", "prilog", "datoteka", "pdf"],
-            "metadata": ["metapodac", "struktur", "shema", "polja"],
-        }
-
         detected_entity = None
-        for entity, keywords in ENTITY_KEYWORDS.items():
+        for entity, keywords in self.ENTITY_KEYWORDS.items():
             if any(kw in query_lower for kw in keywords):
                 detected_entity = entity
                 break
 
         for result in results:
-            boosts = []
+            boosts = []  # List of (name, multiplier, score_after)
+            base_score = result.score  # Track original score for logging
             tool_lower = result.tool_id.lower()
 
             # V3.0: PRIMARY ACTION TOOL BOOST
@@ -456,7 +374,7 @@ class UnifiedSearch:
                 tool_config = self.PRIMARY_ACTION_TOOLS[tool_lower]
                 if any(kw in query_lower for kw in tool_config["keywords"]):
                     result.score *= tool_config["boost"]
-                    boosts.append("primary_action")
+                    boosts.append(("primary_action", tool_config["boost"], result.score))
 
             # ENTITY MATCH BOOST - AGGRESSIVE
             # If query mentions specific entity, strongly boost/penalize tools
@@ -467,11 +385,11 @@ class UnifiedSearch:
                     tool_entity = tool_parts[1].lower()
                     if tool_entity == detected_entity or detected_entity in tool_entity:
                         result.score *= 2.50  # 150% boost for entity match (was 80%)
-                        boosts.append("entity_match")
+                        boosts.append(("entity_match", 2.50, result.score))
                     else:
                         # Penalize tools that don't match detected entity
                         result.score *= 0.50  # 50% penalty (was 30%)
-                        boosts.append("entity_mismatch")
+                        boosts.append(("entity_mismatch", 0.50, result.score))
 
             # V3.0: GENERIC CRUD PENALTY
             # Penalize generic CRUD endpoints when specific action tools are more appropriate
@@ -487,14 +405,14 @@ class UnifiedSearch:
                 penalty_config = generic_crud_penalty[tool_lower]
                 if any(kw in query_lower for kw in penalty_config["penalty_if"]):
                     result.score *= penalty_config["factor"]
-                    boosts.append("generic_crud_penalty")
+                    boosts.append(("generic_crud_penalty", penalty_config["factor"], result.score))
 
             # Category boost
             if matched_categories:
                 tool_categories = self._get_tool_categories(result.tool_id)
                 if any(cat in tool_categories for cat in matched_categories):
                     result.score *= self.CATEGORY_BOOST
-                    boosts.append("category")
+                    boosts.append(("category", self.CATEGORY_BOOST, result.score))
 
             # Documentation boost (if query words appear in tool documentation)
             if self._tool_documentation and result.tool_id in self._tool_documentation:
@@ -509,7 +427,7 @@ class UnifiedSearch:
                 query_words = [w for w in query_lower.split() if len(w) > 3]
                 if any(word in doc_text for word in query_words):
                     result.score *= self.DOCUMENTATION_BOOST
-                    boosts.append("doc")
+                    boosts.append(("doc", self.DOCUMENTATION_BOOST, result.score))
 
             # Query Type boost (NEW in v2.0) - replaces example boost
             # Lowered threshold from 0.7 to 0.4 for broader coverage
@@ -521,7 +439,7 @@ class UnifiedSearch:
                 )
                 if is_preferred:
                     result.score *= self.QUERY_TYPE_BOOST
-                    boosts.append("query_type")
+                    boosts.append(("query_type", self.QUERY_TYPE_BOOST, result.score))
 
                 # Penalize if tool matches excluded suffix
                 is_excluded = any(
@@ -530,7 +448,7 @@ class UnifiedSearch:
                 )
                 if is_excluded:
                     result.score *= self.QUERY_TYPE_PENALTY  # 40% penalty (v3.0: increased)
-                    boosts.append("excluded")
+                    boosts.append(("excluded", self.QUERY_TYPE_PENALTY, result.score))
 
             # Base Entity Boost (NEW in v2.0)
             # For LIST queries: boost tools without complex suffixes (get_X, not get_X_id_documents)
@@ -543,15 +461,15 @@ class UnifiedSearch:
                     is_primary = self._is_pure_entity_tool(tool_lower)
                     if is_primary:
                         result.score *= 1.80  # 80% boost - highest priority
-                        boosts.append("primary_entity")
+                        boosts.append(("primary_entity", 1.80, result.score))
                     # Medium boost for secondary entities (Types, Groups, etc.)
                     elif self._is_secondary_entity_tool(tool_lower):
                         result.score *= 1.40  # 40% boost
-                        boosts.append("secondary_entity")
+                        boosts.append(("secondary_entity", 1.40, result.score))
                     # Small boost for other base list tools
                     else:
                         result.score *= self.BASE_ENTITY_BOOST
-                        boosts.append("base_list")
+                        boosts.append(("base_list", self.BASE_ENTITY_BOOST, result.score))
                 # Penalize Lookup, Helper, Aggregate, and filter-type tools for generic list queries
                 # V3.0: Extended penalty list to catch more false positives
                 penalty_patterns = [
@@ -561,7 +479,7 @@ class UnifiedSearch:
                 ]
                 if any(x in tool_lower for x in penalty_patterns):
                     result.score *= 0.4  # 60% penalty (increased from 50%)
-                    boosts.append("helper_penalty")
+                    boosts.append(("helper_penalty", 0.4, result.score))
 
             elif query_type_result.query_type == QueryType.SINGLE_ENTITY:
                 # Check if this is a simple _id endpoint
@@ -577,24 +495,38 @@ class UnifiedSearch:
                     ]
                     if entity_name in primary_entities:
                         result.score *= 1.80  # 80% boost for primary entities
-                        boosts.append("primary_id")
+                        boosts.append(("primary_id", 1.80, result.score))
                     else:
                         result.score *= self.BASE_ENTITY_BOOST
-                        boosts.append("simple_id")
+                        boosts.append(("simple_id", self.BASE_ENTITY_BOOST, result.score))
                 # Penalize complex suffixes for single entity queries
                 if any(s in tool_lower for s in ['_documents', '_metadata', '_thumb', '_agg', '_groupby']):
                     result.score *= 0.6  # 40% penalty
-                    boosts.append("complex_suffix_penalty")
+                    boosts.append(("complex_suffix_penalty", 0.6, result.score))
                 # Penalize Lookup tools
                 if 'lookup' in tool_lower:
                     result.score *= 0.5  # 50% penalty
-                    boosts.append("lookup_penalty")
+                    boosts.append(("lookup_penalty", 0.5, result.score))
 
             # Cap score at 1.0
             result.score = min(result.score, 1.0)
 
             # Store boosts for debugging
             result.boosts_applied = boosts
+            result.base_score = base_score
+
+        # Log per-boost breakdown for top-3 results with intermediate scores
+        top3 = sorted(results, key=lambda r: r.score, reverse=True)[:3]
+        for r in top3:
+            if r.boosts_applied:
+                chain = " \u2192 ".join(
+                    f"{name}(\u00d7{mult:.1f})={score:.3f}"
+                    for name, mult, score in r.boosts_applied
+                )
+                logger.debug(
+                    "Boost: %s base=%.3f \u2192 %s \u2192 cap=%.3f",
+                    r.tool_id, r.base_score, chain, r.score
+                )
 
         return results
 

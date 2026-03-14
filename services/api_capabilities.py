@@ -24,7 +24,7 @@ With DYNAMIC detection:
 
 import logging
 import json
-from typing import Dict, List, Set, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
@@ -33,14 +33,12 @@ logger = logging.getLogger(__name__)
 
 CAPABILITIES_CACHE_FILE = Path.cwd() / ".cache" / "api_capabilities.json"
 
-
 class ParameterSupport(Enum):
     """How a tool supports a parameter."""
     NATIVE = "native"           # Has direct parameter (e.g., personId in query)
     FILTER = "filter"           # Supports via Filter parameter (e.g., Filter=PersonId(=)xxx)
     NOT_SUPPORTED = "not_supported"  # Doesn't support this parameter
     UNKNOWN = "unknown"         # Not yet tested
-
 
 @dataclass
 class ToolCapability:
@@ -99,7 +97,6 @@ class ToolCapability:
             last_error=data.get("last_error"),
             learned_patterns=data.get("learned_patterns", {})
         )
-
 
 class APICapabilityRegistry:
     """
@@ -392,15 +389,12 @@ class APICapabilityRegistry:
         """Public method to persist learned capabilities."""
         await self._save_cache()
 
-
 # Global instance (initialized by worker)
 _capability_registry: Optional[APICapabilityRegistry] = None
-
 
 def get_capability_registry() -> Optional[APICapabilityRegistry]:
     """Get global capability registry instance."""
     return _capability_registry
-
 
 async def initialize_capability_registry(tool_registry) -> APICapabilityRegistry:
     """

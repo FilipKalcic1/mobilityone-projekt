@@ -373,7 +373,7 @@ if __name__ == "__main__":
 
     # Save Grafana dashboard
     dashboard_path = "scripts/grafana_autoscaler_dashboard.json"
-    with open(dashboard_path, 'w') as f:
+    with open(dashboard_path, 'w', encoding='utf-8') as f:
         json.dump(GRAFANA_DASHBOARD, f, indent=2)
     print(f"\nGrafana dashboard saved to: {dashboard_path}")
 

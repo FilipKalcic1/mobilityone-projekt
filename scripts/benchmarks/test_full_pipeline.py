@@ -22,7 +22,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.query_router import QueryRouter
-from services.action_intent_detector import detect_action_intent
+from services.intent_classifier import detect_action_intent
 from services.unified_search import get_unified_search
 
 

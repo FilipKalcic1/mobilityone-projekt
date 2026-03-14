@@ -40,6 +40,17 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+
+def _task_error_logger(task: asyncio.Task) -> None:
+    """Module-level done callback — avoids circular ref from bound methods."""
+    try:
+        exc = task.exception()
+        if exc and not isinstance(exc, asyncio.CancelledError):
+            logger.error(f"RAGScheduler task failed: {exc}")
+    except (asyncio.CancelledError, asyncio.InvalidStateError):
+        pass
+
+
 # Thread-safe singleton lock
 _singleton_lock = asyncio.Lock()
 
@@ -135,12 +146,13 @@ class RAGScheduler:
         await self._load_metrics()
 
         # Start periodic refresh task
+        # Use a non-bound callback to avoid cycle: self → task → callback → self
         self._task = asyncio.create_task(self._refresh_loop())
-        self._task.add_done_callback(self._task_done_callback)
+        self._task.add_done_callback(_task_error_logger)
 
         # Start pub/sub listener for force refresh
         self._pubsub_task = asyncio.create_task(self._pubsub_listener())
-        self._pubsub_task.add_done_callback(self._task_done_callback)
+        self._pubsub_task.add_done_callback(_task_error_logger)
 
         logger.info("RAGScheduler started")
 
@@ -178,6 +190,10 @@ class RAGScheduler:
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
+        # Break reference cycles: self → task → callback
+        self._task = None
+        self._pubsub_task = None
+
         # Clean up pubsub
         if self._pubsub:
             try:
@@ -189,8 +205,8 @@ class RAGScheduler:
         # Release lock if we hold it
         try:
             await self.redis.delete(self.REDIS_KEY_LOCK)
-        except Exception:
-            pass
+        except (ConnectionError, OSError) as e:
+            logger.debug(f"Could not release RAG lock during shutdown: {e}")
 
         logger.info("RAGScheduler stopped")
 
@@ -284,8 +300,8 @@ class RAGScheduler:
                     try:
                         await self._pubsub.unsubscribe(self.REDIS_CHANNEL_REFRESH)
                         await self._pubsub.subscribe(self.REDIS_CHANNEL_REFRESH)
-                    except Exception:
-                        pass
+                    except (ConnectionError, OSError) as reconnect_err:
+                        logger.warning(f"Pubsub reconnect failed, will retry next loop: {reconnect_err}")
                 except Exception as e:
                     logger.error(f"Pub/sub error: {e}")
                     await asyncio.sleep(5)

@@ -3,15 +3,15 @@ import asyncio
 import json
 import logging
 import random
-import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 from openai import RateLimitError, APIStatusError, APITimeoutError
+from prometheus_client import Counter as PromCounter, Histogram, Gauge
 
 from config import get_settings
-from services.sanitizer import sanitize
 from services.patterns import PatternRegistry
 from services.context import UserContextManager
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
@@ -19,6 +19,39 @@ from services.circuit_breaker import CircuitOpenError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Prometheus LLM metrics
+LLM_REQUEST_DURATION = Histogram(
+    'llm_request_duration_seconds',
+    'LLM API call duration in seconds',
+    ['model', 'operation'],
+    buckets=[0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0]
+)
+LLM_TOKENS_USED = PromCounter(
+    'llm_tokens_total',
+    'Total LLM tokens used',
+    ['model', 'type']  # type: prompt | completion
+)
+LLM_REQUESTS_TOTAL = PromCounter(
+    'llm_requests_total',
+    'Total LLM API requests',
+    ['model', 'status']  # status: success | error | rate_limit | timeout
+)
+LLM_COST_USD = PromCounter(
+    'llm_cost_usd_total',
+    'Estimated LLM cost in USD',
+    ['model']
+)
+LLM_RATE_LIMIT_HITS = PromCounter(
+    'llm_rate_limit_hits_total',
+    'Total LLM rate limit hits',
+    ['model']
+)
+LLM_CIRCUIT_OPEN = Gauge(
+    'llm_circuit_breaker_open',
+    'Whether LLM circuit breaker is open (1=open, 0=closed)',
+    ['model']
+)
 
 try:
     import tiktoken
@@ -29,8 +62,12 @@ except ImportError:
 # Token budgeting constants
 MAX_TOOLS_FOR_LLM = getattr(settings, 'MAX_TOOLS_FOR_LLM', 25)
 MIN_TOOLS_FOR_LLM = 5
-MAX_HISTORY_MESSAGES = 20
-MAX_TOKEN_LIMIT = 8000
+# History budget: 10 messages max, 2000 tokens max for conversation history.
+# At 20 concurrent requests, worst case = 20 × 2000 tokens × ~4 bytes = 160KB.
+# Remaining token budget (6000) for system prompt + tools + response.
+MAX_HISTORY_MESSAGES = 10
+MAX_HISTORY_TOKEN_LIMIT = 2000  # Token cap for conversation history portion only
+MAX_TOKEN_LIMIT = 8000          # Total budget including system prompt + tools
 
 # Token counting overhead constants
 CROATIAN_CHARS_PER_TOKEN = 4.6
@@ -147,6 +184,7 @@ class AIOrchestrator:
         last_error = None
 
         for attempt in range(self.MAX_RETRIES):
+            _start = time.monotonic()
             try:
                 # Circuit breaker: fail-fast if LLM is down
                 response = await self._circuit_breaker.call(
@@ -154,11 +192,31 @@ class AIOrchestrator:
                     self.client.chat.completions.create,
                     **call_args
                 )
+                _elapsed = time.monotonic() - _start
                 self._total_requests += 1
 
+                # Prometheus metrics
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(_elapsed)
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="success").inc()
+                LLM_CIRCUIT_OPEN.labels(model=self.model).set(0)
+
+                usage_data = None
                 if hasattr(response, 'usage') and response.usage:
                     self._total_prompt_tokens += response.usage.prompt_tokens
                     self._total_completion_tokens += response.usage.completion_tokens
+
+                    # Token and cost metrics
+                    LLM_TOKENS_USED.labels(model=self.model, type="prompt").inc(response.usage.prompt_tokens)
+                    LLM_TOKENS_USED.labels(model=self.model, type="completion").inc(response.usage.completion_tokens)
+                    cost = (response.usage.prompt_tokens * settings.LLM_INPUT_PRICE_PER_1K +
+                            response.usage.completion_tokens * settings.LLM_OUTPUT_PRICE_PER_1K) / 1000
+                    LLM_COST_USD.labels(model=self.model).inc(cost)
+
+                    usage_data = {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.prompt_tokens + response.usage.completion_tokens
+                    }
 
                     logger.debug(
                         f"Tokens: prompt={response.usage.prompt_tokens}, "
@@ -171,16 +229,6 @@ class AIOrchestrator:
                     return {"type": "error", "content": "AI returned empty response"}
 
                 message = response.choices[0].message
-
-                # Tool call
-                # Extract usage for cost tracking
-                usage_data = None
-                if hasattr(response, 'usage') and response.usage:
-                    usage_data = {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "total_tokens": response.usage.prompt_tokens + response.usage.completion_tokens
-                    }
 
                 if message.tool_calls and len(message.tool_calls) > 0:
                     # Parse ALL tool calls from LLM response
@@ -228,6 +276,9 @@ class AIOrchestrator:
                 return {"type": "text", "content": content, "usage": usage_data}
 
             except RateLimitError as e:
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="rate_limit").inc()
+                LLM_RATE_LIMIT_HITS.labels(model=self.model).inc()
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                 last_error = e
                 result = await self._handle_rate_limit(attempt, "RateLimitError")
                 if result:
@@ -236,16 +287,23 @@ class AIOrchestrator:
 
             except APIStatusError as e:
                 if e.status_code == 429:
+                    LLM_REQUESTS_TOTAL.labels(model=self.model, status="rate_limit").inc()
+                    LLM_RATE_LIMIT_HITS.labels(model=self.model).inc()
+                    LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                     last_error = e
                     result = await self._handle_rate_limit(attempt, "APIStatusError 429")
                     if result:
                         return result
                     continue
 
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="error").inc()
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                 logger.error(f"API error {e.status_code}: {e.message}")
                 return {"type": "error", "content": f"API greška: {e.message}"}
 
             except APITimeoutError as e:
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="timeout").inc()
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                 last_error = e
                 result = await self._handle_timeout(attempt)
                 if result:
@@ -253,6 +311,8 @@ class AIOrchestrator:
                 continue
 
             except CircuitOpenError as e:
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="circuit_open").inc()
+                LLM_CIRCUIT_OPEN.labels(model=self.model).set(1)
                 logger.warning(f"Circuit breaker OPEN - LLM unavailable: {e}")
                 return {
                     "type": "error",
@@ -365,7 +425,19 @@ class AIOrchestrator:
         self,
         messages: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
+        """
+        Sliding window on conversation history.
 
+        Strategy (middle-out truncation):
+        1. Keep system prompt intact
+        2. Keep first message (establishes user identity/intent)
+        3. Keep last N messages (recent context)
+        4. If middle exceeds MAX_HISTORY_TOKEN_LIMIT, summarize it
+        5. Hard cap: conversation history never exceeds 2000 tokens
+
+        This prevents linear RAM growth from long-running chat sessions
+        at 1GB pod limit.
+        """
         # 1. Extract system prompt
         system_message = None
         if messages and messages[0]["role"] == "system":
@@ -374,56 +446,53 @@ class AIOrchestrator:
         else:
             conversation = messages
 
-        # 2. Token check
-        current_tokens = self._count_tokens(messages)
+        # 2. Enforce message count cap
+        if len(conversation) > MAX_HISTORY_MESSAGES:
+            conversation = conversation[-MAX_HISTORY_MESSAGES:]
 
-        # Under the limit, no trimming needed
-        if current_tokens <= MAX_TOKEN_LIMIT:
-            return messages
+        # 3. Check token budget for conversation portion only
+        conv_tokens = self._count_tokens(conversation)
 
-        # 3. Trim context
-        split_index = max(0, len(conversation) - MAX_HISTORY_MESSAGES)
-        
-        to_summarize = conversation[:split_index]
-        recent_history = conversation[split_index:]
+        if conv_tokens <= MAX_HISTORY_TOKEN_LIMIT:
+            # Under budget — return as-is
+            result = []
+            if system_message:
+                result.append(system_message)
+            result.extend(conversation)
+            return result
 
-        # 4. SUMMARIZATION (better than entities alone)
+        # 4. Over budget — middle-out truncation
+        # Keep first message + last 4 messages, summarize the middle
+        keep_recent = min(4, len(conversation))
+        recent_history = conversation[-keep_recent:]
+        to_summarize = conversation[:-keep_recent] if keep_recent < len(conversation) else []
+
+        final_messages = []
+        if system_message:
+            final_messages.append(system_message)
+
         if to_summarize:
-
             summary_text = self._summarize_conversation(to_summarize)
-            
-            # Insert summary as a SYSTEM message right after the main system prompt
-            context_message = {
-                "role": "system", 
+            final_messages.append({
+                "role": "system",
                 "content": f"Sažetak prethodnog razgovora: {summary_text}"
-            }
-            
-            # 5. Reconstruct
+            })
+
+        final_messages.extend(recent_history)
+
+        # 5. Final safety check — if still over total budget, hard-trim
+        final_tokens = self._count_tokens(final_messages)
+        if final_tokens > MAX_TOKEN_LIMIT:
+            logger.warning(
+                f"History still over total limit ({final_tokens} > {MAX_TOKEN_LIMIT}). "
+                f"Hard-trimming to last 3 messages"
+            )
             final_messages = []
             if system_message:
                 final_messages.append(system_message)
-            
-            final_messages.append(context_message)
-            final_messages.extend(recent_history)
+            final_messages.extend(recent_history[-3:])
 
-            # Summary might still push us over the limit
-            final_tokens = self._count_tokens(final_messages)
-            if final_tokens > MAX_TOKEN_LIMIT:
-                logger.warning(
-                    f"Summary still over limit ({final_tokens} > {MAX_TOKEN_LIMIT}). "
-                    f"Trimming recent_history further (20 → 10 messages)"
-                )
-                # Fallback: Keep only last 10 messages instead of 20
-                recent_history = recent_history[-10:]
-                final_messages = []
-                if system_message:
-                    final_messages.append(system_message)
-                final_messages.append(context_message)
-                final_messages.extend(recent_history)
-
-            return final_messages
-
-        return messages
+        return final_messages
 
     def _extract_entities(self, messages: List[Dict[str, str]]) -> Dict[str, List[str]]:
         """
@@ -490,7 +559,7 @@ class AIOrchestrator:
         entities = self._extract_entities(messages)
         summary_parts = []
 
-        if entities:
+        if any(entities.values()):
             summary_parts.append(f"Ranije entiteti: {self._format_entity_context(entities)}")
 
         role_counts = Counter(m.get("role") for m in messages)
@@ -576,10 +645,12 @@ Vrati SAMO JSON, bez drugog teksta."""
         if context:
             system += f"\n\nDodatni kontekst: {context}"
         
-        # Retry loop with backoff for rate limits
+        # Retry loop with backoff for rate limits + circuit breaker
         for attempt in range(self.MAX_RETRIES):
             try:
-                response = await self.client.chat.completions.create(
+                response = await self._circuit_breaker.call(
+                    f"llm:{self.model}",
+                    self.client.chat.completions.create,
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system},
@@ -603,6 +674,9 @@ Vrati SAMO JSON, bez drugog teksta."""
 
             except json.JSONDecodeError:
                 logger.warning("Parameter extraction JSON error")
+                return {}
+            except CircuitOpenError:
+                logger.warning("Circuit breaker OPEN - skipping parameter extraction")
                 return {}
             except RateLimitError:
                 if attempt < self.MAX_RETRIES - 1:

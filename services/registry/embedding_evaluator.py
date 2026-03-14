@@ -13,12 +13,11 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class QueryTestCase:
@@ -30,7 +29,6 @@ class QueryTestCase:
     # Optionally: {"tool_id": relevance_score}
     # relevance 3 = perfect match, 2 = acceptable, 1 = partial, 0 = irrelevant
     category: str = "general"           # For grouping (vehicle, booking, etc.)
-
 
 @dataclass
 class EvaluationResult:
@@ -93,7 +91,6 @@ class EvaluationResult:
             return "D (Poor)"
         else:
             return "F (Critical)"
-
 
 class EmbeddingEvaluator:
     """
@@ -613,7 +610,6 @@ class EmbeddingEvaluator:
                 print(f"   - {q}")
 
         print("=" * 60 + "\n")
-
 
 # Convenience function
 def create_evaluation_dataset():

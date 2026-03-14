@@ -20,7 +20,7 @@ USE CASE:
 
 import json
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Storage path
 QUALITY_HISTORY_FILE = Path.cwd() / ".cache" / "quality_history.json"
-
 
 @dataclass
 class QualitySnapshot:
@@ -52,7 +51,6 @@ class QualitySnapshot:
     def from_dict(cls, data: Dict) -> "QualitySnapshot":
         return cls(**data)
 
-
 @dataclass
 class QualityTrend:
     """Quality trend analysis."""
@@ -74,7 +72,6 @@ class QualityTrend:
             "is_degraded": self.is_degraded,
             "recommendation": self.recommendation,
         }
-
 
 class QualityTracker:
     """
@@ -338,7 +335,6 @@ class QualityTracker:
         if self.history_file.exists():
             self.history_file.unlink()
         logger.warning("Quality history cleared")
-
 
 # Convenience function
 def get_quality_tracker() -> QualityTracker:

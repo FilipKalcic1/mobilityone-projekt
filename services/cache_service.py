@@ -14,11 +14,10 @@ Phase 4:
 import json
 import logging
 from datetime import datetime, date
-from typing import Any, Optional, Callable, Awaitable, List
+from typing import Any, Optional, Callable, Awaitable
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
-
 
 class SafeJSONEncoder(json.JSONEncoder):
     """
@@ -43,7 +42,6 @@ class SafeJSONEncoder(json.JSONEncoder):
             return str(obj)
         except Exception:
             return super().default(obj)
-
 
 class CacheService:
     """Redis cache wrapper."""

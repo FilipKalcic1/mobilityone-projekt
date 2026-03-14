@@ -20,11 +20,10 @@ v15.0 CHANGES:
 
 import logging
 import re
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
-
 
 class ResponseFormatter:
     """

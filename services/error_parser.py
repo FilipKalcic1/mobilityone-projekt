@@ -10,11 +10,9 @@ NO business logic - purely error interpretation.
 """
 
 import logging
-from typing import Dict, Any, Optional
-
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 class ErrorParser:
     """

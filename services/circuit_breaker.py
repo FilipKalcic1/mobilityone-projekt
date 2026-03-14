@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Dict, Optional
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 logger = logging.getLogger(__name__)

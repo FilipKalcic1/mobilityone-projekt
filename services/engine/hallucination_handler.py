@@ -6,7 +6,7 @@ Extracted from engine/__init__.py for better modularity.
 
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from services.context import UserContextManager
 
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from services.error_learning import ErrorLearningService
 
 logger = logging.getLogger(__name__)
-
 
 # Patterns that indicate user is reporting wrong answer
 HALLUCINATION_PATTERNS = [
@@ -34,7 +33,6 @@ HALLUCINATION_PATTERNS = [
     "nije u redu",
     "ne, nije",
 ]
-
 
 class HallucinationHandler:
     """

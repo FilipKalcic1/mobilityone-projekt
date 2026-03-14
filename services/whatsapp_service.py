@@ -24,7 +24,6 @@ import re
 import unicodedata
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass
-from datetime import datetime
 
 import httpx
 
@@ -82,8 +81,9 @@ class WhatsAppService:
     # Infobip limits
     MAX_MESSAGE_LENGTH = 4096  # WhatsApp text limit
     MAX_RETRIES = 3
-    BASE_DELAY = 1.0  # Base delay for exponential backoff
-    MAX_JITTER = 0.5  # Random jitter (0-0.5 seconds)
+    BASE_DELAY = 1.0   # Base delay for exponential backoff
+    MAX_BACKOFF = 60.0  # Hard cap: prevents CPU death spiral on 0.5 CPU
+    MAX_JITTER = 1.0    # Random jitter (0-1s) — decorrelates fleet retries
 
     def __init__(
         self,
@@ -105,6 +105,10 @@ class WhatsAppService:
 
         # Validate configuration
         self._validate_config()
+
+        # Reusable HTTP client — avoids connection setup per message.
+        # On 0.5 CPU, TLS handshake per send wastes ~50ms of the 100ms CFS window.
+        self._client = httpx.AsyncClient(timeout=30.0)
 
         # Stats
         self._messages_sent = 0
@@ -470,12 +474,11 @@ class WhatsAppService:
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        url,
-                        json=payload,
-                        headers=headers
-                    )
+                response = await self._client.post(
+                    url,
+                    json=payload,
+                    headers=headers
+                )
 
                 # Success
                 if response.status_code in (200, 201):
@@ -597,14 +600,20 @@ class WhatsAppService:
         min_delay: int = 0
     ) -> float:
         """
-        Calculate exponential backoff with jitter.
+        Calculate exponential backoff with jitter and hard cap.
 
-        Formula: max(min_delay, 2^attempt * base) + random(0, jitter)
+        Formula: min(MAX_BACKOFF, max(min_delay, 2^attempt * base)) + random(0, jitter)
+
+        The cap at 60s prevents a CPU death spiral on 0.5 CPU pods:
+        without it, linear/uncapped retries during an Infobip outage
+        tie up all semaphore slots with sleeping coroutines, starving
+        new messages.
         """
         exponential_delay = (2 ** attempt) * self.BASE_DELAY
+        capped = min(self.MAX_BACKOFF, max(min_delay, exponential_delay))
         jitter = random.uniform(0, self.MAX_JITTER)
 
-        return max(min_delay, exponential_delay) + jitter
+        return capped + jitter
 
     # ---
     # BATCH SENDING (FOR FUTURE USE)
@@ -637,6 +646,12 @@ class WhatsAppService:
     # ---
     # STATS & HEALTH
     # ---
+
+    async def close(self) -> None:
+        """Close the reusable HTTP client to release connections."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
     def get_stats(self) -> Dict[str, Any]:
         """Get service statistics."""

@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.WARNING)
 
 from services.faiss_vector_store import initialize_faiss_store
 from services.llm_reranker import rerank_with_llm
-from services.action_intent_detector import detect_action_intent
+from services.intent_classifier import detect_action_intent
 
 
 def load_tool_documentation() -> Dict:

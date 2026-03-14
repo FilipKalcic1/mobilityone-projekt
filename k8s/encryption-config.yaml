@@ -1,0 +1,37 @@
+# =============================================================================
+# etcd Encryption Configuration for Secrets at Rest
+#
+# CLUSTER-LEVEL CONFIGURATION — must be applied by cluster admin.
+# This file encrypts all K8s Secrets in etcd using AES-CBC.
+#
+# PREREQUISITES:
+# 1. Generate a 32-byte encryption key:
+#    head -c 32 /dev/urandom | base64
+# 2. Place this file on the control plane node at:
+#    /etc/kubernetes/encryption-config.yaml
+# 3. Add to kube-apiserver manifest:
+#    --encryption-provider-config=/etc/kubernetes/encryption-config.yaml
+# 4. Restart kube-apiserver
+# 5. Re-encrypt existing secrets:
+#    kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+#
+# MANAGED K8S (EKS/AKS/GKE):
+# - EKS: Enable via `aws eks create-cluster --encryption-config`
+# - AKS: Enabled by default with platform-managed keys
+# - GKE: Enabled by default with Google-managed keys
+#
+# Verify encryption is active:
+#   kubectl get secret mobility-secrets -o yaml | grep -c "enc:"
+# =============================================================================
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              # REPLACE with output of: head -c 32 /dev/urandom | base64
+              secret: "<BASE64_ENCODED_32_BYTE_KEY>"
+      - identity: {}  # Fallback: read unencrypted secrets during migration

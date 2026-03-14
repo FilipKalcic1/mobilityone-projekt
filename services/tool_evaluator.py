@@ -30,16 +30,14 @@ PRIMJER KORIŠTENJA:
 
 import logging
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from collections import defaultdict
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 EVALUATION_CACHE_FILE = Path.cwd() / ".cache" / "tool_evaluations.json"
-
 
 @dataclass
 class ToolMetrics:
@@ -161,7 +159,6 @@ class ToolMetrics:
             first_call=data.get("first_call"),
             last_call=data.get("last_call")
         )
-
 
 class ToolEvaluator:
     """
@@ -460,10 +457,8 @@ class ToolEvaluator:
             "worst_performers": bottom_5
         }
 
-
 # Global instance
 _tool_evaluator: Optional[ToolEvaluator] = None
-
 
 def get_tool_evaluator() -> ToolEvaluator:
     """Get global tool evaluator instance."""

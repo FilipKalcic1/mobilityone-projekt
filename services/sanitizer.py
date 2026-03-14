@@ -11,10 +11,9 @@ SECURITY:
 
 import re
 import logging
-from typing import Any, Dict, List, Set, Union
+from typing import Any, Dict, Set
 
 logger = logging.getLogger(__name__)
-
 
 class DataSanitizer:
     """
@@ -219,10 +218,8 @@ class DataSanitizer:
         
         return f"{masked_local}@{domain}"
 
-
 # Singleton instance
 _sanitizer = None
-
 
 def get_sanitizer() -> DataSanitizer:
     """Get singleton sanitizer instance."""
@@ -231,11 +228,9 @@ def get_sanitizer() -> DataSanitizer:
         _sanitizer = DataSanitizer()
     return _sanitizer
 
-
 def sanitize(data: Any) -> Any:
     """Convenience function to sanitize data."""
     return get_sanitizer().sanitize(data)
-
 
 def sanitize_log(message: str, context: Dict = None) -> str:
     """Convenience function for log sanitization."""

@@ -30,10 +30,9 @@ from typing import Dict, Any, Optional, List, Tuple
 
 from services.patterns import PatternRegistry, ValuePattern
 from services.context import UserContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ResolutionResult:
@@ -49,7 +48,6 @@ class ResolutionResult:
     # Flag to indicate user selection is needed (e.g., no default vehicle)
     needs_user_selection: bool = False
 
-
 @dataclass
 class EntityReference:
     """
@@ -62,7 +60,6 @@ class EntityReference:
     value: str  # Original text ("Vozilo 1", "moje vozilo", "Golf")
     ordinal_index: Optional[int] = None  # For "Vozilo 1" → 0 (0-indexed)
     is_possessive: bool = False  # For "moje vozilo", "moj auto"
-
 
 class DependencyResolver:
     """

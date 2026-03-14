@@ -16,12 +16,10 @@ Primjer:
 
 import logging
 import json
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field, asdict
-from collections import defaultdict
 
 from services.gdpr_masking import GDPRMaskingService, get_masking_service
 
@@ -29,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 # Cache file path for JSON persistence
 ERROR_LEARNING_CACHE_FILE = Path.cwd() / ".cache" / "error_learning.json"
-
 
 @dataclass
 class ErrorPattern:
@@ -42,7 +39,6 @@ class ErrorPattern:
     occurrence_count: int = 1
     last_seen: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved: bool = False
-
 
 @dataclass
 class HallucinationReport:
@@ -69,7 +65,6 @@ class HallucinationReport:
     correction: Optional[str] = None  # Ljudska korekcija
     category: Optional[str] = None  # "wrong_data", "outdated", "misunderstood"
 
-
 @dataclass
 class CorrectionRule:
     """Automatic correction rule learned from errors."""
@@ -80,7 +75,6 @@ class CorrectionRule:
     confidence: float  # 0.0 to 1.0
     success_count: int = 0
     failure_count: int = 0
-
 
 class ErrorLearningService:
     """
@@ -149,6 +143,11 @@ class ErrorLearningService:
 
         # Hallucination reports - in-memory cache (DB is source of truth)
         self._hallucination_reports: List[HallucinationReport] = []
+
+        # Memory caps — prevents unbounded growth on long-lived pods
+        self._MAX_ERROR_PATTERNS = 500
+        self._MAX_LEARNED_RULES = 100
+        self._MAX_HALLUCINATION_REPORTS = 200
 
         # Statistics
         self._total_errors = 0
@@ -261,6 +260,15 @@ class ErrorLearningService:
                 resolved=was_corrected
             )
             self._error_patterns[pattern_key] = pattern
+
+        # Evict oldest unresolved patterns if over cap
+        if len(self._error_patterns) > self._MAX_ERROR_PATTERNS:
+            unresolved = sorted(
+                ((k, p) for k, p in self._error_patterns.items() if not p.resolved),
+                key=lambda x: x[1].occurrence_count
+            )
+            for k, _ in unresolved[:len(self._error_patterns) - self._MAX_ERROR_PATTERNS]:
+                del self._error_patterns[k]
 
         # Log for analysis
         logger.info(
@@ -489,6 +497,11 @@ class ErrorLearningService:
                 )
                 self._learned_rules.append(new_rule)
 
+                # Cap learned rules: drop lowest-confidence if over limit
+                if len(self._learned_rules) > self._MAX_LEARNED_RULES:
+                    self._learned_rules.sort(key=lambda r: r.confidence, reverse=True)
+                    self._learned_rules = self._learned_rules[:self._MAX_LEARNED_RULES]
+
                 logger.info(
                     f"🎓 Learned new rule: {pattern.error_code} → "
                     f"{pattern.correction} (from {pattern.occurrence_count} occurrences)"
@@ -614,14 +627,18 @@ class ErrorLearningService:
         )
         self._hallucination_reports.append(report)
 
+        # Cap in-memory cache: DB is source of truth, keep only recent entries
+        if len(self._hallucination_reports) > self._MAX_HALLUCINATION_REPORTS:
+            self._hallucination_reports = self._hallucination_reports[-self._MAX_HALLUCINATION_REPORTS:]
+
         # 3. Persist to Redis if available (cache)
         if self.redis:
             await self._persist_hallucination(report)
 
-        # Log for monitoring
+        # Log for monitoring (use masked versions — GDPR Article 25)
         logger.warning(
-            f"Hallucination reported: query='{user_query[:50]}...' "
-            f"feedback='{user_feedback}' conversation={conversation_id}"
+            f"Hallucination reported: query='{masked_query[:50]}...' "
+            f"feedback='{masked_feedback}' conversation={conversation_id}"
         )
 
         # Send to drift detector (closes the feedback loop)

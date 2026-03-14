@@ -62,13 +62,10 @@ import logging
 import re
 from typing import Dict, List, Optional
 
-from openai import AsyncAzureOpenAI
-
 from config import get_settings
 from services.tool_contracts import (
     UnifiedToolDefinition,
     ParameterDefinition,
-    DependencySource,
     DependencyGraph
 )
 
@@ -87,12 +84,9 @@ class EmbeddingEngine:
     """
 
     def __init__(self):
-        """Initialize embedding engine with OpenAI client."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        """Initialize embedding engine with shared OpenAI client."""
+        from services.openai_client import get_embedding_client
+        self.openai = get_embedding_client()
         logger.debug("EmbeddingEngine initialized")
 
     def build_embedding_text(

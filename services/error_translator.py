@@ -16,7 +16,7 @@ into a dedicated, learnable service.
 import logging
 import re
 import json
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Optional, List
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 ERROR_PATTERNS_FILE = Path.cwd() / ".cache" / "error_patterns.json"
-
 
 @dataclass
 class ErrorPattern:
@@ -67,7 +66,6 @@ class ErrorPattern:
         feedback = feedback.replace("{tool_name}", tool_name)
         feedback = feedback.replace("{error}", error[:200])
         return feedback
-
 
 class ErrorTranslator:
     """
@@ -368,10 +366,8 @@ class ErrorTranslator:
         except Exception as e:
             logger.error(f"Failed to save error patterns: {e}")
 
-
 # Global instance
 _error_translator: Optional[ErrorTranslator] = None
-
 
 def get_error_translator() -> ErrorTranslator:
     """Get global error translator instance."""

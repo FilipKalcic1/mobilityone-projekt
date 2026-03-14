@@ -601,7 +601,7 @@ class GDPRMaskingService:
 
             if user_mapping:
                 # Find conversations for this user and anonymize associated reports
-                from models import Conversation
+                from models import Conversation, Message
                 conv_result = await db_session.execute(
                     select(Conversation.id).where(
                         Conversation.user_id == user_mapping
@@ -610,7 +610,18 @@ class GDPRMaskingService:
                 conversation_ids = [str(c) for c in conv_result.scalars().all()]
 
                 if conversation_ids:
-                    # Anonymize reports for these conversations
+                    # 2a. Anonymize messages in those conversations
+                    msg_result = await db_session.execute(
+                        update(Message)
+                        .where(Message.conversation_id.in_(conversation_ids))
+                        .values(
+                            content="[GDPR DELETED]",
+                            metadata=None
+                        )
+                    )
+                    anonymized["messages"] = msg_result.rowcount
+
+                    # 2b. Anonymize hallucination reports for these conversations
                     report_result = await db_session.execute(
                         update(HallucinationReport)
                         .where(HallucinationReport.conversation_id.in_(conversation_ids))
@@ -621,6 +632,28 @@ class GDPRMaskingService:
                         )
                     )
                     anonymized["hallucination_reports"] = report_result.rowcount
+
+                # 2c. Anonymize conversations themselves
+                conv_anon_result = await db_session.execute(
+                    update(Conversation)
+                    .where(Conversation.user_id == user_mapping)
+                    .values(state="anonymized")
+                )
+                anonymized["conversations"] = conv_anon_result.rowcount
+
+            # 3. Mark user mapping as anonymized with timestamp
+            from datetime import datetime, timezone as tz
+            await db_session.execute(
+                update(UserMapping)
+                .where(UserMapping.phone_number == user_id)
+                .values(
+                    phone_number=f"[GDPR:{hashed_id[:12]}]",
+                    display_name="[GDPR DELETED]",
+                    is_active=False,
+                    gdpr_anonymized_at=datetime.now(tz.utc)
+                )
+            )
+            anonymized["user_mapping"] = 1
 
             await db_session.commit()
 
@@ -636,6 +669,234 @@ class GDPRMaskingService:
             await db_session.rollback()
             logger.error(f"GDPR erasure failed: {e}")
             raise
+
+    async def erase_redis_state(self, user_id: str, redis_client) -> Dict:
+        """
+        GDPR Article 17: Erase all user state from Redis.
+
+        Deletes conversation state, chat history, user context, tenant cache,
+        and scrubs DLQ entries containing this user's phone number.
+
+        Args:
+            user_id: User phone number
+            redis_client: Async Redis client
+
+        Returns:
+            Summary of deleted keys
+        """
+        erased = {"keys_deleted": 0, "dlq_scrubbed": 0}
+
+        # Generate all phone variations for key lookup
+        digits = "".join(c for c in user_id if c.isdigit())
+        phone_variants = {user_id, digits}
+        if digits.startswith("385"):
+            phone_variants.add("0" + digits[3:])
+            phone_variants.add("+" + digits)
+        elif digits.startswith("0"):
+            phone_variants.add("385" + digits[1:])
+
+        try:
+            # 1. Delete known Redis key patterns for this user
+            key_patterns = [
+                "conv_state:{phone}",
+                "chat_history:{phone}",
+                "user_context:{phone}",
+                "tenant:{phone}",
+            ]
+
+            for phone in phone_variants:
+                for pattern in key_patterns:
+                    key = pattern.format(phone=phone)
+                    deleted = await redis_client.delete(key)
+                    erased["keys_deleted"] += deleted
+
+            # 2. Scrub DLQ entries containing this user's data
+            dlq_key = "dlq:webhook"
+            dlq_len = await redis_client.llen(dlq_key)
+            if dlq_len > 0:
+                # Read all DLQ entries, remove those matching user
+                entries = await redis_client.lrange(dlq_key, 0, -1)
+                to_remove = []
+                for entry in entries:
+                    try:
+                        entry_str = entry if isinstance(entry, str) else entry.decode("utf-8")
+                        if any(phone in entry_str for phone in phone_variants):
+                            to_remove.append(entry)
+                    except Exception:
+                        continue
+
+                for entry in to_remove:
+                    await redis_client.lrem(dlq_key, 1, entry)
+                    erased["dlq_scrubbed"] += 1
+
+            hashed = self._hash_value(user_id)
+            logger.warning(
+                f"GDPR REDIS ERASURE: User {hashed} — "
+                f"{erased['keys_deleted']} keys deleted, "
+                f"{erased['dlq_scrubbed']} DLQ entries scrubbed"
+            )
+
+        except Exception as e:
+            logger.error(f"GDPR Redis erasure failed: {e}")
+            raise
+
+        return erased
+
+    async def export_user_data(
+        self,
+        user_id: str,
+        db_session,
+        redis_client=None
+    ) -> Dict:
+        """
+        GDPR Article 20: Right to Data Portability.
+
+        Export all user data in a structured, machine-readable JSON format.
+        Pulls from BOTH Postgres AND Redis for complete portability.
+
+        Args:
+            user_id: User identifier (phone number)
+            db_session: Database session
+            redis_client: Optional async Redis client for ephemeral state export
+
+        Returns:
+            Dict with all user data (user_mappings, conversations, messages,
+            tool_executions, hallucination_reports, redis_state)
+        """
+        from sqlalchemy import select
+        from models import UserMapping, Conversation, Message, HallucinationReport
+
+        export = {
+            "gdpr_export_version": "1.1",
+            "export_type": "GDPR Article 20 — Right to Data Portability",
+            "user_identifier_hash": self._hash_value(user_id),
+            "user_profile": None,
+            "conversations": [],
+            "hallucination_reports": [],
+            "redis_state": None,
+        }
+
+        try:
+            # 1. User profile
+            user_result = await db_session.execute(
+                select(UserMapping).where(UserMapping.phone_number == user_id)
+            )
+            user = user_result.scalar_one_or_none()
+
+            if not user:
+                logger.info(f"GDPR export: no user found for hash {self._hash_value(user_id)}")
+                return export
+
+            export["user_profile"] = {
+                "phone_number": user.phone_number,
+                "display_name": user.display_name,
+                "tenant_id": user.tenant_id,
+                "is_active": user.is_active,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "gdpr_consent_given": user.gdpr_consent_given,
+                "gdpr_consent_at": user.gdpr_consent_at.isoformat() if user.gdpr_consent_at else None,
+            }
+
+            # 2. Conversations + messages
+            conv_result = await db_session.execute(
+                select(Conversation).where(Conversation.user_id == user.id)
+            )
+            conversations = conv_result.scalars().all()
+
+            for conv in conversations:
+                msg_result = await db_session.execute(
+                    select(Message)
+                    .where(Message.conversation_id == conv.id)
+                    .order_by(Message.timestamp)
+                )
+                messages = msg_result.scalars().all()
+
+                conv_data = {
+                    "conversation_id": str(conv.id),
+                    "started_at": conv.started_at.isoformat() if conv.started_at else None,
+                    "ended_at": conv.ended_at.isoformat() if conv.ended_at else None,
+                    "status": conv.status,
+                    "flow_type": conv.flow_type,
+                    "messages": [
+                        {
+                            "role": msg.role,
+                            "content": msg.content,
+                            "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+                            "tool_name": msg.tool_name,
+                        }
+                        for msg in messages
+                    ],
+                }
+                export["conversations"].append(conv_data)
+
+            # 3. Hallucination reports for user's conversations
+            conv_ids = [str(c.id) for c in conversations]
+            if conv_ids:
+                report_result = await db_session.execute(
+                    select(HallucinationReport)
+                    .where(HallucinationReport.conversation_id.in_(conv_ids))
+                    .order_by(HallucinationReport.created_at)
+                )
+                reports = report_result.scalars().all()
+
+                export["hallucination_reports"] = [
+                    {
+                        "user_query": r.user_query,
+                        "bot_response": r.bot_response,
+                        "user_feedback": r.user_feedback,
+                        "model": r.model,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "category": r.category,
+                        "correction": r.correction,
+                    }
+                    for r in reports
+                ]
+
+            # 4. Redis ephemeral state (conv_state, chat_history, user_context)
+            if redis_client:
+                redis_state = {}
+                digits = "".join(c for c in user_id if c.isdigit())
+                phone_variants = {user_id, digits}
+                if digits.startswith("385"):
+                    phone_variants.add("0" + digits[3:])
+                    phone_variants.add("+" + digits)
+                elif digits.startswith("0"):
+                    phone_variants.add("385" + digits[1:])
+
+                key_prefixes = ["conv_state", "chat_history", "user_context"]
+                for phone in phone_variants:
+                    for prefix in key_prefixes:
+                        key = f"{prefix}:{phone}"
+                        try:
+                            val = await redis_client.get(key)
+                            if val:
+                                val_str = val if isinstance(val, str) else val.decode("utf-8")
+                                try:
+                                    import json as _json
+                                    redis_state[key] = _json.loads(val_str)
+                                except (ValueError, TypeError):
+                                    redis_state[key] = val_str
+                        except Exception:
+                            continue
+
+                if redis_state:
+                    export["redis_state"] = redis_state
+
+            hashed = self._hash_value(user_id)
+            redis_keys = len(export.get("redis_state") or {})
+            logger.info(
+                f"GDPR DATA EXPORT: User {hashed} — "
+                f"{len(export['conversations'])} conversations, "
+                f"{sum(len(c['messages']) for c in export['conversations'])} messages, "
+                f"{len(export['hallucination_reports'])} hallucination reports, "
+                f"{redis_keys} redis keys"
+            )
+
+        except Exception as e:
+            logger.error(f"GDPR data export failed: {e}")
+            raise
+
+        return export
 
     def mask_log_message(self, message: str) -> str:
         """

@@ -102,7 +102,7 @@ class UserContext(BaseModel):
         vehicle_data = data.get("vehicle")
         vehicle = None
         if vehicle_data:
-            vehicle = VehicleContext(raw=vehicle_data, **vehicle_data)
+            vehicle = VehicleContext(**{**vehicle_data, "raw": vehicle_data})
 
         return cls(
             person_id=data.get("person_id"),
@@ -243,7 +243,7 @@ class ContextService:
         """
         self.redis = redis_client
         self.ttl = settings.CACHE_TTL_CONTEXT
-        self.max_history = 20
+        self.max_history = 10  # Matches MAX_HISTORY_MESSAGES in ai_orchestrator
 
     def _validate_user_id(self, user_id: str) -> bool:
         """

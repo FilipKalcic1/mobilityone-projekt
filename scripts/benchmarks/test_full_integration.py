@@ -62,7 +62,7 @@ async def test_action_intent_gate():
     print("TEST 2: ACTION INTENT GATE")
     print("=" * 70)
 
-    from services.action_intent_detector import detect_action_intent
+    from services.intent_classifier import detect_action_intent
 
     test_cases = [
         ("unesi kilometrazu", "POST"),
@@ -96,7 +96,7 @@ async def test_faiss_search_with_intent():
     print("=" * 70)
 
     from services.faiss_vector_store import FAISSVectorStore
-    from services.action_intent_detector import detect_action_intent
+    from services.intent_classifier import detect_action_intent
 
     # Initialize FAISS
     tool_doc_path = project_root / "config" / "tool_documentation.json"

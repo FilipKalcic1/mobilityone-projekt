@@ -7,6 +7,7 @@ and fallback strategies for complex queries.
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional
@@ -18,6 +19,82 @@ from services.context import UserContextManager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+# ──────────────────────────────────────────────────────────────
+# MULTI-TOOL PATTERNS: Deterministic shortcuts for common
+# multi-tool queries. Skips LLM planning entirely.
+# Each pattern maps to parallel-executable tools.
+# ──────────────────────────────────────────────────────────────
+
+MULTI_TOOL_PATTERNS = [
+    # 3-tool patterns FIRST (more specific = higher priority)
+    {
+        # "kilometrazu, troskove i putovanja"
+        "keywords_all": [
+            [r"kilometra[žz]|km"],
+            [r"troš|trosk|rashod|expense"],
+            [r"putovanj|trip|vožnj"],
+        ],
+        "tools": ["get_MasterData", "get_Expenses", "get_Trips"],
+        "understanding": "Kilometraža, troškovi i putovanja",
+    },
+    # 2-tool patterns
+    {
+        # "daj mi kilometrazu i troskove" / "km i rashode"
+        "keywords_all": [
+            [r"kilometra[žz]|km|stanje km"],
+            [r"troš|trosk|rashod|izdatak|expense"],
+        ],
+        "tools": ["get_MasterData", "get_Expenses"],
+        "understanding": "Kilometraža i troškovi",
+    },
+    {
+        # "km i putovanja"
+        "keywords_all": [
+            [r"kilometra[žz]|km|stanje km"],
+            [r"putovanj|trip|vožnj"],
+        ],
+        "tools": ["get_MasterData", "get_Trips"],
+        "understanding": "Kilometraža i putovanja",
+    },
+    {
+        # "troskovi i putovanja"
+        "keywords_all": [
+            [r"troš|trosk|rashod|izdatak|expense"],
+            [r"putovanj|trip|vožnj"],
+        ],
+        "tools": ["get_Expenses", "get_Trips"],
+        "understanding": "Troškovi i putovanja",
+    },
+    {
+        # "podatke o vozilu i moje podatke"
+        "keywords_all": [
+            [r"vozil|auto"],
+            [r"korisni[kc]|osob|profil|moj[ie] podatk"],
+        ],
+        "tools": ["get_MasterData", "get_PersonData_personIdOrEmail"],
+        "understanding": "Podaci o vozilu i korisniku",
+    },
+    {
+        # "rezervacije i troskove"
+        "keywords_all": [
+            [r"rezervacij|booking|kalendar"],
+            [r"troš|trosk|rashod|expense"],
+        ],
+        "tools": ["get_VehicleCalendar", "get_Expenses"],
+        "understanding": "Rezervacije i troškovi",
+    },
+    {
+        # "slucajeve i troskove"
+        "keywords_all": [
+            [r"slu[čc]aj|šteta|steta|kvar|prijav|slucaj"],
+            [r"troš|trosk|rashod|expense"],
+        ],
+        "tools": ["get_Cases", "get_Expenses"],
+        "understanding": "Slučajevi i troškovi",
+    },
+]
 
 
 class StepType(Enum):
@@ -102,6 +179,12 @@ class ChainPlanner:
         """
         logger.info(f"Planning chain for: {query[:50]}...")
 
+        # Check for deterministic multi-tool patterns (no LLM needed)
+        multi_plan = self._check_multi_tool_patterns(query)
+        if multi_plan:
+            logger.info(f"MULTI-TOOL FAST PATH: {[s.tool_name for s in multi_plan.primary_path]}")
+            return multi_plan
+
         # Check for simple cases first
         simple_plan = self._check_simple_cases(query, user_context, tool_scores)
         if simple_plan:
@@ -182,6 +265,35 @@ class ChainPlanner:
                 ],
                 extraction_hint=self._get_extraction_hint(query)
             )
+
+        return None
+
+    def _check_multi_tool_patterns(self, query: str) -> Optional[ExecutionPlan]:
+        """Check for deterministic multi-tool patterns that skip LLM planning."""
+        query_lower = query.lower()
+
+        for pattern in MULTI_TOOL_PATTERNS:
+            keyword_groups = pattern["keywords_all"]
+            # ALL keyword groups must match (each group needs at least one regex hit)
+            if all(
+                any(re.search(regex, query_lower) for regex in group)
+                for group in keyword_groups
+            ):
+                steps = [
+                    PlanStep(
+                        step_number=i + 1,
+                        step_type=StepType.EXECUTE_TOOL,
+                        tool_name=tool,
+                        reason=f"Multi-tool pattern: {pattern['understanding']}",
+                    )
+                    for i, tool in enumerate(pattern["tools"])
+                ]
+                return ExecutionPlan(
+                    understanding=pattern["understanding"],
+                    is_simple=False,
+                    has_all_data=True,
+                    primary_path=steps,
+                )
 
         return None
 
