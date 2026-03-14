@@ -17,10 +17,8 @@ from services.query_router import (
 
 @pytest.fixture
 def router():
-    """Router with mocked classifier."""
-    r = QueryRouter()
-    r._classifier = MagicMock()
-    return r
+    """Router with mocked ensemble prediction."""
+    return QueryRouter()
 
 
 def _prediction(intent="GET_MILEAGE", confidence=0.99, tool="get_MasterData"):
@@ -57,52 +55,60 @@ class TestRouteResult:
 # ===========================================================================
 
 class TestRoute:
-    def test_high_confidence_known_intent(self, router):
-        router._classifier.predict.return_value = _prediction("GET_MILEAGE", 0.99, "get_MasterData")
+    @patch("services.query_router.predict_with_ensemble")
+    def test_high_confidence_known_intent(self, mock_predict, router):
+        mock_predict.return_value = _prediction("GET_MILEAGE", 0.99, "get_MasterData")
         result = router.route("koliko km ima auto?")
         assert result.matched is True
         assert result.tool_name == "get_MasterData"
         assert "LastMileage" in result.extract_fields
         assert result.flow_type == "simple"
 
-    def test_low_confidence_not_matched(self, router):
-        router._classifier.predict.return_value = _prediction("GET_MILEAGE", 0.5, "get_MasterData")
+    @patch("services.query_router.predict_with_ensemble")
+    def test_low_confidence_not_matched(self, mock_predict, router):
+        mock_predict.return_value = _prediction("GET_MILEAGE", 0.5, "get_MasterData")
         result = router.route("nesto nejasno")
         assert result.matched is False
         assert result.confidence == 0.5
 
-    def test_threshold_boundary(self, router):
-        router._classifier.predict.return_value = _prediction("GET_MILEAGE", ML_CONFIDENCE_THRESHOLD - 0.001)
+    @patch("services.query_router.predict_with_ensemble")
+    def test_threshold_boundary(self, mock_predict, router):
+        mock_predict.return_value = _prediction("GET_MILEAGE", ML_CONFIDENCE_THRESHOLD - 0.001)
         result = router.route("q")
         assert result.matched is False
 
-    def test_above_threshold(self, router):
-        router._classifier.predict.return_value = _prediction("GET_MILEAGE", ML_CONFIDENCE_THRESHOLD)
+    @patch("services.query_router.predict_with_ensemble")
+    def test_above_threshold(self, mock_predict, router):
+        mock_predict.return_value = _prediction("GET_MILEAGE", ML_CONFIDENCE_THRESHOLD)
         result = router.route("q")
         assert result.matched is True
 
-    def test_unknown_intent_uses_ml_tool(self, router):
-        router._classifier.predict.return_value = _prediction("UNKNOWN_INTENT", 0.99, "some_tool")
+    @patch("services.query_router.predict_with_ensemble")
+    def test_unknown_intent_uses_ml_tool(self, mock_predict, router):
+        mock_predict.return_value = _prediction("UNKNOWN_INTENT", 0.99, "some_tool")
         result = router.route("q")
         assert result.matched is True
         assert result.tool_name == "some_tool"
         assert result.flow_type == "simple"
 
-    def test_greeting_direct_response(self, router):
-        router._classifier.predict.return_value = _prediction("GREETING", 0.99, None)
+    @patch("services.query_router.predict_with_ensemble")
+    def test_greeting_direct_response(self, mock_predict, router):
+        mock_predict.return_value = _prediction("GREETING", 0.99, None)
         result = router.route("bok")
         assert result.matched is True
         assert result.tool_name is None
         assert result.flow_type == "direct_response"
 
-    def test_help_intent(self, router):
-        router._classifier.predict.return_value = _prediction("HELP", 0.99, None)
+    @patch("services.query_router.predict_with_ensemble")
+    def test_help_intent(self, mock_predict, router):
+        mock_predict.return_value = _prediction("HELP", 0.99, None)
         result = router.route("pomoc")
         assert result.matched is True
         assert "Mogu vam pomoci" in result.response_template
 
-    def test_booking_intent(self, router):
-        router._classifier.predict.return_value = _prediction("BOOK_VEHICLE", 0.99, "get_AvailableVehicles")
+    @patch("services.query_router.predict_with_ensemble")
+    def test_booking_intent(self, mock_predict, router):
+        mock_predict.return_value = _prediction("BOOK_VEHICLE", 0.99, "get_AvailableVehicles")
         result = router.route("rezerviraj auto")
         assert result.matched is True
         assert result.flow_type == "booking"
