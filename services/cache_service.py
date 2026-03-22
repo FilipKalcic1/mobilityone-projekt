@@ -45,16 +45,16 @@ class SafeJSONEncoder(json.JSONEncoder):
 
 class CacheService:
     """Redis cache wrapper."""
-    
-    def __init__(self, redis_client):
+
+    def __init__(self, redis_client) -> None:
         """
         Initialize cache service.
-        
+
         Args:
             redis_client: Redis async client
         """
         self.redis = redis_client
-    
+
     async def get(self, key: str) -> Optional[str]:
         """Get value from cache."""
         try:
@@ -62,7 +62,7 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache get failed: {e}")
             return None
-    
+
     async def get_json(self, key: str) -> Optional[Any]:
         """Get JSON value from cache."""
         try:
@@ -73,7 +73,7 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache get_json failed: {e}")
             return None
-    
+
     async def set(self, key: str, value: Any, ttl: int = 300) -> bool:
         """
         Set value with TTL.
@@ -116,7 +116,7 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache set_json failed: {e}")
             return False
-    
+
     async def delete(self, key: str) -> bool:
         """Delete key from cache."""
         try:
@@ -168,9 +168,10 @@ class CacheService:
         """Check if key exists."""
         try:
             return await self.redis.exists(key) > 0
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Cache exists check failed: {e}")
             return False
-    
+
     async def get_or_compute(
         self,
         key: str,
@@ -179,12 +180,12 @@ class CacheService:
     ) -> Any:
         """
         Get from cache or compute value.
-        
+
         Args:
             key: Cache key
             compute_fn: Async function to compute value if not cached
             ttl: Time to live
-            
+
         Returns:
             Cached or computed value
         """
@@ -192,24 +193,24 @@ class CacheService:
         cached = await self.get_json(key)
         if cached is not None:
             return cached
-        
+
         # Compute value
         result = await compute_fn()
-        
-        # Cache result
+
+        # Cache result (set_json matches get_json read path)
         if result is not None:
-            await self.set(key, result, ttl)
-        
+            await self.set_json(key, result, ttl)
+
         return result
-    
-    async def increment(self, key: str, ttl: int = None) -> int:
+
+    async def increment(self, key: str, ttl: Optional[int] = None) -> int:
         """
         Increment counter.
-        
+
         Args:
             key: Counter key
             ttl: Optional TTL for first increment
-            
+
         Returns:
             New value
         """

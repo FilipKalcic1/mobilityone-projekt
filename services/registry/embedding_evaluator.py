@@ -102,7 +102,7 @@ class EmbeddingEvaluator:
         results = evaluator.evaluate(search_function, test_cases)
     """
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Optional[Path] = None) -> None:
         """Initialize evaluator."""
         self.data_dir = data_dir or Path(__file__).parent.parent.parent / "data"
         self.data_dir.mkdir(exist_ok=True)
@@ -580,24 +580,24 @@ class EmbeddingEvaluator:
         print("EMBEDDING SEARCH EVALUATION REPORT")
         print("=" * 60)
 
-        print(f"\n📊 CORE METRICS:")
+        print("\n📊 CORE METRICS:")
         print(f"   MRR (Mean Reciprocal Rank): {result.mrr:.4f}")
         print(f"   NDCG@5:  {result.ndcg_at_5:.4f}")
         print(f"   NDCG@10: {result.ndcg_at_10:.4f}")
 
-        print(f"\n🎯 HIT RATES:")
+        print("\n🎯 HIT RATES:")
         print(f"   Hit@1:  {result.hit_at_1 * 100:.1f}%")
         print(f"   Hit@3:  {result.hit_at_3 * 100:.1f}%")
         print(f"   Hit@5:  {result.hit_at_5 * 100:.1f}%")
         print(f"   Hit@10: {result.hit_at_10 * 100:.1f}%")
 
-        print(f"\n📈 SUMMARY:")
+        print("\n📈 SUMMARY:")
         print(f"   Total queries: {result.total_queries}")
         print(f"   Successful: {result.successful_queries}")
         print(f"   Failed: {len(result.failed_queries)}")
 
         if result.category_mrr:
-            print(f"\n📁 BY CATEGORY:")
+            print("\n📁 BY CATEGORY:")
             for cat, mrr in sorted(result.category_mrr.items()):
                 print(f"   {cat}: MRR={mrr:.4f}")
 
@@ -605,7 +605,7 @@ class EmbeddingEvaluator:
         print(f"\n🏆 QUALITY GRADE: {grade}")
 
         if result.failed_queries:
-            print(f"\n❌ FAILED QUERIES (sample):")
+            print("\n❌ FAILED QUERIES (sample):")
             for q in result.failed_queries[:5]:
                 print(f"   - {q}")
 

@@ -39,7 +39,11 @@ from typing import Dict, List, Optional, Set, FrozenSet
 from dataclasses import dataclass, field
 from enum import Enum
 
+from services.tracing import get_tracer, trace_span
+from services.errors import InfrastructureError, ErrorCode
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("gdpr_masking")
 
 # Thread-safe singleton lock
 _singleton_lock = threading.Lock()
@@ -170,7 +174,7 @@ class GDPRMaskingService:
         self,
         use_hashing: bool = True,
         hash_salt: Optional[str] = None
-    ):
+    ) -> None:
         """
         Initialize masking service.
 
@@ -335,7 +339,7 @@ class GDPRMaskingService:
         # Additional check: don't match obvious non-OIB patterns
         # OIB shouldn't be all same digits or sequential
         if len(set(oib)) == 1:  # All same digit like 11111111111
-            logger.debug(f"Rejected OIB candidate: all same digits")
+            logger.debug("Rejected OIB candidate: all same digits")
             return False
 
         # MOD 11,10 validation
@@ -393,40 +397,43 @@ class GDPRMaskingService:
         Returns:
             MaskingResult with masked text and detected PII
         """
-        if not text:
-            return MaskingResult(
-                original_text="",
-                masked_text="",
-                pii_found=[],
-                pii_count=0
+        with trace_span(_tracer, "gdpr_masking.mask_pii", {
+            "text_length": len(text) if text else 0,
+        }):
+            if not text:
+                return MaskingResult(
+                    original_text="",
+                    masked_text="",
+                    pii_found=[],
+                    pii_count=0
+                )
+
+            matches = self.detect_pii(text)
+            masked_text = text
+
+            # Replace from end to start (to preserve positions)
+            for match in matches:
+                masked_text = (
+                    masked_text[:match.start] +
+                    match.masked +
+                    masked_text[match.end:]
+                )
+
+            result = MaskingResult(
+                original_text=text,
+                masked_text=masked_text,
+                pii_found=matches,
+                pii_count=len(matches)
             )
 
-        matches = self.detect_pii(text)
-        masked_text = text
+            if matches:
+                # Mask the log message itself to avoid logging PII
+                logger.info(
+                    f"GDPR: Masked {len(matches)} PII items: "
+                    f"{[m.pii_type.value for m in matches]}"
+                )
 
-        # Replace from end to start (to preserve positions)
-        for match in matches:
-            masked_text = (
-                masked_text[:match.start] +
-                match.masked +
-                masked_text[match.end:]
-            )
-
-        result = MaskingResult(
-            original_text=text,
-            masked_text=masked_text,
-            pii_found=matches,
-            pii_count=len(matches)
-        )
-
-        if matches:
-            # Mask the log message itself to avoid logging PII
-            logger.info(
-                f"GDPR: Masked {len(matches)} PII items: "
-                f"{[m.pii_type.value for m in matches]}"
-            )
-
-        return result
+            return result
 
     async def mask_pii_async(self, text: str) -> MaskingResult:
         """
@@ -461,40 +468,44 @@ class GDPRMaskingService:
         Returns:
             Dictionary with masked values
         """
-        if not data or not isinstance(data, dict):
-            return data
+        with trace_span(_tracer, "gdpr_masking.mask_dict", {
+            "field_count": len(data) if data and isinstance(data, dict) else 0,
+            "current_depth": _current_depth,
+        }):
+            if not data or not isinstance(data, dict):
+                return data
 
-        # Prevent infinite recursion
-        if _current_depth >= max_depth:
-            logger.warning(f"GDPR masking: max depth {max_depth} reached, stopping recursion")
-            return data
+            # Prevent infinite recursion
+            if _current_depth >= max_depth:
+                logger.warning(f"GDPR masking: max depth {max_depth} reached, stopping recursion")
+                return data
 
-        result = {}
+            result = {}
 
-        # Use frozenset for O(1) lookup
-        if fields_to_mask:
-            fields_lower: FrozenSet[str] = frozenset(f.lower() for f in fields_to_mask)
-        else:
-            fields_lower = self._mask_fields_lower
-
-        for key, value in data.items():
-            key_lower = key.lower() if isinstance(key, str) else str(key).lower()
-
-            if isinstance(value, str) and key_lower in fields_lower:
-                mask_result = self.mask_pii(value)
-                result[key] = mask_result.masked_text
-            elif isinstance(value, dict):
-                result[key] = self.mask_dict(
-                    value, fields_to_mask, max_depth, _current_depth + 1
-                )
-            elif isinstance(value, list):
-                result[key] = self._mask_list(
-                    value, fields_to_mask, max_depth, _current_depth + 1
-                )
+            # Use frozenset for O(1) lookup
+            if fields_to_mask:
+                fields_lower: FrozenSet[str] = frozenset(f.lower() for f in fields_to_mask)
             else:
-                result[key] = value
+                fields_lower = self._mask_fields_lower
 
-        return result
+            for key, value in data.items():
+                key_lower = key.lower() if isinstance(key, str) else str(key).lower()
+
+                if isinstance(value, str) and key_lower in fields_lower:
+                    mask_result = self.mask_pii(value)
+                    result[key] = mask_result.masked_text
+                elif isinstance(value, dict):
+                    result[key] = self.mask_dict(
+                        value, fields_to_mask, max_depth, _current_depth + 1
+                    )
+                elif isinstance(value, list):
+                    result[key] = self._mask_list(
+                        value, fields_to_mask, max_depth, _current_depth + 1
+                    )
+                else:
+                    result[key] = value
+
+            return result
 
     def _mask_list(
         self,
@@ -667,7 +678,13 @@ class GDPRMaskingService:
 
         except Exception as e:
             await db_session.rollback()
-            logger.error(f"GDPR erasure failed: {e}")
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"GDPR erasure failed: {e}",
+                metadata={"user_hash": self._hash_value(user_id)},
+                cause=e,
+            )
+            logger.error(str(err))
             raise
 
     async def erase_redis_state(self, user_id: str, redis_client) -> Dict:
@@ -737,7 +754,13 @@ class GDPRMaskingService:
             )
 
         except Exception as e:
-            logger.error(f"GDPR Redis erasure failed: {e}")
+            err = InfrastructureError(
+                ErrorCode.REDIS_UNAVAILABLE,
+                f"GDPR Redis erasure failed: {e}",
+                metadata={"user_hash": self._hash_value(user_id)},
+                cause=e,
+            )
+            logger.error(str(err))
             raise
 
         return erased
@@ -893,7 +916,13 @@ class GDPRMaskingService:
             )
 
         except Exception as e:
-            logger.error(f"GDPR data export failed: {e}")
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"GDPR data export failed: {e}",
+                metadata={"user_hash": self._hash_value(user_id)},
+                cause=e,
+            )
+            logger.error(str(err))
             raise
 
         return export

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -126,7 +127,31 @@ REQUEST_LATENCY = Histogram(
     ['method', 'endpoint']
 )
 TOOLS_LOADED = Gauge('tools_loaded_total', 'Number of tools loaded in registry')
-ACTIVE_CONNECTIONS = Gauge('active_connections', 'Number of active connections')
+
+
+class MetricsMiddleware(BaseHTTPMiddleware):
+    """Record Prometheus HTTP request metrics (count + latency)."""
+
+    # Paths excluded from metrics to avoid noise from probes/scraping
+    _SKIP_PATHS = {"/health", "/ready", "/metrics"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in self._SKIP_PATHS:
+            return await call_next(request)
+
+        method = request.method
+        start = time.monotonic()
+        response = await call_next(request)
+        elapsed = time.monotonic() - start
+
+        # Normalize path to avoid high-cardinality label explosion
+        path = request.url.path.rstrip("/") or "/"
+        status = str(response.status_code)
+
+        REQUEST_COUNT.labels(method=method, endpoint=path, status=status).inc()
+        REQUEST_LATENCY.labels(method=method, endpoint=path).observe(elapsed)
+
+        return response
 
 async def wait_for_database(max_retries: int = 30, base_delay: int = 2) -> bool:
     """Wait for database to be available and create tables."""
@@ -297,6 +322,9 @@ app = FastAPI(
 
 # Payload size guard (outermost - runs first, rejects before JSON parsing)
 app.add_middleware(PayloadSizeGuardMiddleware)
+
+# Prometheus HTTP metrics (count + latency for all non-probe endpoints)
+app.add_middleware(MetricsMiddleware)
 
 # Request ID
 app.add_middleware(RequestIDMiddleware)

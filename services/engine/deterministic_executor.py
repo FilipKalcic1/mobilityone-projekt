@@ -120,6 +120,32 @@ class DeterministicExecutor:
                     "\u017delite li rezervirati vozilo?"
                 )
 
+        # ── GENERIC FLOW: detect ANY remaining missing required user-params ──
+        # At this point, personIdOrEmail and VehicleId have been injected.
+        # If the tool STILL needs user-provided params that are missing,
+        # start a gathering flow instead of executing (which would fail).
+        tool_user_params = tool.get_user_params()
+        missing_user_params = [
+            p_name for p_name, p_def in tool_user_params.items()
+            if p_def.required and p_name not in params
+        ]
+
+        if missing_user_params:
+            is_mutation = tool.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+            flow_name = f"generic_{'mutation' if is_mutation else 'query'}"
+
+            await conv_manager.start_flow(
+                flow_name=flow_name,
+                tool=route.tool_name,
+                required_params=missing_user_params
+            )
+            if params:
+                await conv_manager.add_parameters(params)
+            await conv_manager.save()
+
+            logger.info(f"DETERMINISTIC: Generic flow for {route.tool_name}, missing={missing_user_params}")
+            return self.build_missing_data_prompt(missing_user_params)
+
         # Create execution context
         from services.tool_contracts import ToolExecutionContext
         execution_context = ToolExecutionContext(

@@ -92,6 +92,8 @@ class FakeRedisStream:
 class TestWebhookToWorkerPipeline:
     """Proves messages flow from webhook POST all the way to worker pickup."""
 
+    pytestmark = pytest.mark.asyncio
+
     @pytest.fixture
     def fake_redis(self):
         return FakeRedisStream()
@@ -116,7 +118,7 @@ class TestWebhookToWorkerPipeline:
                 app.include_router(router, prefix="/webhook")
                 yield TestClient(app)
 
-    def test_infobip_message_reaches_worker(self, client, fake_redis):
+    async def test_infobip_message_reaches_worker(self, client, fake_redis):
         """
         FULL PIPELINE TEST:
         1. Infobip sends POST with standard format
@@ -154,22 +156,18 @@ class TestWebhookToWorkerPipeline:
 
         # === STEP 3: Simulate worker reading from stream ===
         # Create consumer group (like worker does on startup)
-        asyncio.get_event_loop().run_until_complete(
-            fake_redis.xgroup_create("whatsapp_stream_inbound", "workers", "$", mkstream=True)
-        )
+        await fake_redis.xgroup_create("whatsapp_stream_inbound", "workers", "$", mkstream=True)
 
         # Workaround: set delivery index to 0 so worker reads from beginning
         # (In real Redis, "$" means "from now", but our messages are already there)
         fake_redis.groups["whatsapp_stream_inbound"]["workers"] = 0
 
         # Worker reads from stream
-        worker_messages = asyncio.get_event_loop().run_until_complete(
-            fake_redis.xreadgroup(
-                groupname="workers",
-                consumername="worker_test",
-                streams={"whatsapp_stream_inbound": ">"},
-                count=5
-            )
+        worker_messages = await fake_redis.xreadgroup(
+            groupname="workers",
+            consumername="worker_test",
+            streams={"whatsapp_stream_inbound": ">"},
+            count=5
         )
 
         assert len(worker_messages) == 1, "Worker should receive 1 stream"
@@ -186,7 +184,7 @@ class TestWebhookToWorkerPipeline:
         print(f"  STREAM  -> WORKER: sender={worker_data['sender']}, text='{worker_data['text'][:40]}'")
         print(f"  Pipeline OK!")
 
-    def test_multiple_messages_all_reach_worker(self, client, fake_redis):
+    async def test_multiple_messages_all_reach_worker(self, client, fake_redis):
         """Multiple messages from different users all flow through."""
         messages = [
             ("385991111111", "Bok, trebam pomoc"),
@@ -210,18 +208,14 @@ class TestWebhookToWorkerPipeline:
         assert len(stream_entries) == 3
 
         # Worker picks up all 3
-        asyncio.get_event_loop().run_until_complete(
-            fake_redis.xgroup_create("whatsapp_stream_inbound", "workers", "$", mkstream=True)
-        )
+        await fake_redis.xgroup_create("whatsapp_stream_inbound", "workers", "$", mkstream=True)
         fake_redis.groups["whatsapp_stream_inbound"]["workers"] = 0
 
-        worker_messages = asyncio.get_event_loop().run_until_complete(
-            fake_redis.xreadgroup(
-                groupname="workers",
-                consumername="worker_test",
-                streams={"whatsapp_stream_inbound": ">"},
-                count=10
-            )
+        worker_messages = await fake_redis.xreadgroup(
+            groupname="workers",
+            consumername="worker_test",
+            streams={"whatsapp_stream_inbound": ">"},
+            count=10
         )
 
         _, entries = worker_messages[0]

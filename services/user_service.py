@@ -20,20 +20,22 @@ from config import get_settings
 from services.api_gateway import HttpMethod
 from services.schema_extractor import get_schema_extractor
 from services.tenant_service import get_tenant_service
-
+from services.errors import ConversationError, ErrorCode
+from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("user_service")
 settings = get_settings()
 
 class UserService:
     """
     User identity management.
-    
+
     Handles:
     - User lookup by phone
     - Auto-onboarding from API
     - Context building
     """
-    
+
     def __init__(
         self,
         db: AsyncSession,
@@ -62,60 +64,97 @@ class UserService:
     async def get_active_identity(self, phone: str) -> Optional['UserMapping']:
         """
         Get user from database, trying multiple phone formats.
-        
+
         Args:
             phone: Phone number
-            
+
         Returns:
             UserMapping or None
         """
+        with trace_span(_tracer, "user_service.get_active_identity", {"phone_suffix": phone[-4:] if phone else ""}) as span:
+            try:
+                # Generate possible phone number variations
+                variations = set([phone])
+
+                digits_only = "".join(filter(str.isdigit, phone))
+                if digits_only != phone:
+                    variations.add(digits_only)
+
+                # From +385... to 385...
+                if phone.startswith("+"):
+                    variations.add(phone[1:])
+
+                # From 385... to +385...
+                if phone.startswith("385"):
+                    variations.add("+" + phone)
+
+                # From 385... to 0...
+                if digits_only.startswith("385") and len(digits_only) > 3:
+                    variations.add("0" + digits_only[3:])
+
+                # From 0... to 385...
+                if digits_only.startswith("0") and len(digits_only) > 1:
+                    variations.add("385" + digits_only[1:])
+
+                logger.debug(f"Attempting user lookup with phone variations: {variations}")
+
+                span.set_attribute("variations_count", len(variations))
+
+                stmt = select(UserMapping).where(
+                    UserMapping.phone_number.in_(list(variations)),
+                    UserMapping.is_active == True
+                ).limit(1)
+
+                result = await self.db.execute(stmt)
+                user = result.scalars().first()
+
+                if user:
+                    logger.info(f"Found active user for phone '***{phone[-4:]}' using variation '***{user.phone_number[-4:]}'")
+                    span.set_attribute("result.found", True)
+                else:
+                    err = ConversationError(
+                        ErrorCode.USER_NOT_FOUND,
+                        f"No active user found for phone ***{phone[-4:]} with {len(variations)} variations",
+                        metadata={"sender_suffix": phone[-4:], "variations_count": len(variations)},
+                    )
+                    logger.info(f"{err}")
+                    span.set_attribute("result.found", False)
+
+                return user
+            except SQLAlchemyError as e:
+                logger.error(f"DB lookup failed for phone '***{phone[-4:]}': {type(e).__name__}: {e}")
+                span.set_attribute("result.error", type(e).__name__)
+                return None
+            except Exception as e:
+                logger.error(f"Unexpected error in user lookup for phone '***{phone[-4:]}': {type(e).__name__}: {e}")
+                span.set_attribute("result.error", type(e).__name__)
+                return None
+
+    async def record_consent(self, phone: str, given: bool) -> bool:
+        """Record GDPR consent decision for a user.
+
+        Args:
+            phone: User phone number
+            given: True if user accepted, False if declined
+
+        Returns:
+            True if consent was recorded successfully
+        """
         try:
-            # Generate possible phone number variations
-            variations = set([phone])
-            
-            digits_only = "".join(filter(str.isdigit, phone))
-            if digits_only != phone:
-                variations.add(digits_only)
+            user = await self.get_active_identity(phone)
+            if not user:
+                logger.warning(f"Cannot record consent - user not found: ***{phone[-4:]}")
+                return False
 
-            # From +385... to 385...
-            if phone.startswith("+"):
-                variations.add(phone[1:])
-
-            # From 385... to +385...
-            if phone.startswith("385"):
-                variations.add("+" + phone)
-            
-            # From 385... to 0...
-            if digits_only.startswith("385") and len(digits_only) > 3:
-                variations.add("0" + digits_only[3:])
-            
-            # From 0... to 385...
-            if digits_only.startswith("0") and len(digits_only) > 1:
-                variations.add("385" + digits_only[1:])
-
-            logger.debug(f"Attempting user lookup with phone variations: {variations}")
-
-            stmt = select(UserMapping).where(
-                UserMapping.phone_number.in_(list(variations)),
-                UserMapping.is_active == True
-            ).limit(1)
-
-            result = await self.db.execute(stmt)
-            user = result.scalars().first()
-            
-            if user:
-                logger.info(f"Found active user for phone '***{phone[-4:]}' using variation '***{user.phone_number[-4:]}'")
-
-            else:
-                logger.info(f"No active user found for phone '***{phone[-4:]}' with {len(variations)} variations")
-                
-            return user
+            user.gdpr_consent_given = given
+            user.gdpr_consent_at = datetime.now(timezone.utc) if given else None
+            await self.db.commit()
+            logger.info(f"GDPR consent {'accepted' if given else 'declined'} for ***{phone[-4:]}")
+            return True
         except SQLAlchemyError as e:
-            logger.error(f"DB lookup failed for phone '***{phone[-4:]}': {type(e).__name__}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error in user lookup for phone '***{phone[-4:]}': {type(e).__name__}: {e}")
-            return None
+            logger.error(f"Failed to record consent for ***{phone[-4:]}: {e}")
+            await self.db.rollback()
+            return False
 
     async def try_auto_onboard(self, phone: str) -> Optional[Tuple[str, str]]:
         """
@@ -126,79 +165,88 @@ class UserService:
         - Stops on first match (no redundant calls)
         - Fast path: ~1 API call for most cases
         """
-        if not self.gateway:
-            logger.error(f"ONBOARD FAIL: Gateway is None!")
-            return None
+        with trace_span(_tracer, "user_service.try_auto_onboard", {"phone_suffix": phone[-4:] if phone else ""}) as span:
+            if not self.gateway:
+                logger.error("ONBOARD FAIL: Gateway is None!")
+                span.set_attribute("result.error", "gateway_none")
+                return None
 
-        logger.info(f"AUTO-ONBOARD START for {phone[-4:]}...")
+            logger.info(f"AUTO-ONBOARD START for {phone[-4:]}...")
 
-        try:
-            digits_only = "".join(c for c in phone if c.isdigit())
+            try:
+                digits_only = "".join(c for c in phone if c.isdigit())
 
-            # Only 2 key variations: international (385...) and local (0...)
-            # These cover 99% of cases without redundant API calls
-            variations = []
-            if digits_only.startswith("385"):
-                variations.append(digits_only)                        # 385991234567
-                variations.append("0" + digits_only[3:])             # 0991234567
-            elif digits_only.startswith("0") and len(digits_only) >= 9:
-                variations.append("385" + digits_only[1:])           # 385991234567
-                variations.append(digits_only)                        # 0991234567
-            else:
-                variations.append(digits_only)                        # as-is
+                # Only 2 key variations: international (385...) and local (0...)
+                # These cover 99% of cases without redundant API calls
+                variations = []
+                if digits_only.startswith("385"):
+                    variations.append(digits_only)                        # 385991234567
+                    variations.append("0" + digits_only[3:])             # 0991234567
+                elif digits_only.startswith("0") and len(digits_only) >= 9:
+                    variations.append("385" + digits_only[1:])           # 385991234567
+                    variations.append(digits_only)                        # 0991234567
+                else:
+                    variations.append(digits_only)                        # as-is
 
-            for phone_var in variations:
-                logger.info(f"Lookup: Phone(=)***{phone_var[-4:]}")
+                span.set_attribute("variations_count", len(variations))
 
-                response = await self.gateway.execute(
-                    method=HttpMethod.GET,
-                    path="/tenantmgt/Persons",
-                    params={"Filter": f"Phone(=){phone_var}"},
-                    max_retries=0  # Fail fast - don't retry on auth/network errors
-                )
+                for phone_var in variations:
+                    logger.info(f"Lookup: Phone(=)***{phone_var[-4:]}")
 
-                if not response.success:
-                    if response.status_code == 0:
-                        # Network/auth error - no point trying other phone variations
-                        logger.warning(f"Network/auth error for Phone=***{phone_var[-4:]} - stopping lookup")
-                        break
-                    elif response.status_code == 500:
-                        # Server error - try next variation (might be transient)
-                        logger.warning(f"Server error 500 for Phone=***{phone_var[-4:]} - trying next variation")
-                        continue
-                    continue
+                    response = await self.gateway.execute(
+                        method=HttpMethod.GET,
+                        path="/tenantmgt/Persons",
+                        params={"Filter": f"Phone(=){phone_var}"},
+                        max_retries=0  # Fail fast - don't retry on auth/network errors
+                    )
 
-                data = response.data
-                items = data if isinstance(data, list) else data.get("Data", [])
-
-                if items:
-                    person = items[0]
-                    person_id = person.get("Id")
-                    display_name = person.get("DisplayName", "Korisnik")
-
-                    # Validate phone matches
-                    api_phone = str(person.get("Phone") or person.get("Mobile") or "")
-                    if not self._phones_match(phone, api_phone):
-                        logger.warning(
-                            f"Phone mismatch! Input: {phone[-4:]}, API: {api_phone[-4:] if api_phone else 'N/A'}"
-                        )
+                    if not response.success:
+                        if response.status_code == 0:
+                            # Network/auth error - no point trying other phone variations
+                            logger.warning(f"Network/auth error for Phone=***{phone_var[-4:]} - stopping lookup")
+                            break
+                        elif response.status_code == 500:
+                            # Server error - try next variation (might be transient)
+                            logger.warning(f"Server error 500 for Phone=***{phone_var[-4:]} - trying next variation")
+                            continue
                         continue
 
-                    logger.info(f"User found: {display_name}")
-                    await self._upsert_mapping(phone, person_id, display_name)
-                    vehicle_info = await self._get_vehicle_info(person_id)
-                    return (display_name, vehicle_info)
+                    data = response.data
+                    items = data if isinstance(data, list) else data.get("Data", [])
 
-            logger.info(f"User not in MobilityOne: {phone[-4:]}...")
-            return None
+                    if items:
+                        person = items[0]
+                        person_id = person.get("Id")
+                        display_name = person.get("DisplayName", "Korisnik")
 
-        except SQLAlchemyError as e:
-            logger.error(f"Auto-onboard DB error: {type(e).__name__}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Auto-onboard failed: {type(e).__name__}: {e}", exc_info=True)
-            return None
-    
+                        # Validate phone matches
+                        api_phone = str(person.get("Phone") or person.get("Mobile") or "")
+                        if not self._phones_match(phone, api_phone):
+                            logger.warning(
+                                f"Phone mismatch! Input: {phone[-4:]}, API: {api_phone[-4:] if api_phone else 'N/A'}"
+                            )
+                            continue
+
+                        logger.info(f"User found: {display_name}")
+                        await self._upsert_mapping(phone, person_id, display_name)
+                        vehicle_info = await self._get_vehicle_info(person_id)
+                        span.set_attribute("result.found", True)
+                        span.set_attribute("result.display_name", display_name)
+                        return (display_name, vehicle_info)
+
+                logger.info(f"User not in MobilityOne: {phone[-4:]}...")
+                span.set_attribute("result.found", False)
+                return None
+
+            except SQLAlchemyError as e:
+                logger.error(f"Auto-onboard DB error: {type(e).__name__}: {e}")
+                span.set_attribute("result.error", type(e).__name__)
+                return None
+            except Exception as e:
+                logger.error(f"Auto-onboard failed: {type(e).__name__}: {e}", exc_info=True)
+                span.set_attribute("result.error", type(e).__name__)
+                return None
+
     def _extract_name(self, person: Dict) -> str:
         """Extract display name from person data."""
         name = (
@@ -206,7 +254,7 @@ class UserService:
             f"{person.get('FirstName', '')} {person.get('LastName', '')}".strip() or
             "Korisnik"
         )
-        
+
         # Clean "A-1 - Surname, Name" format
         if " - " in name:
             parts = name.split(" - ")
@@ -217,45 +265,45 @@ class UserService:
                     name = f"{firstname} {surname}"
                 else:
                     name = name_part
-        
+
         return name
-    
+
     def _phones_match(self, input_phone: str, api_phone: str) -> bool:
         """
         Validate that phone numbers match.
-        
+
         Compares last 9 digits to handle different formats:
         - +385955087196
         - 385955087196
         - 0955087196
-        
+
         Args:
             input_phone: Phone from user input
             api_phone: Phone from API response
-            
+
         Returns:
             True if phones match
         """
         clean_input = "".join(c for c in str(input_phone) if c.isdigit())
         clean_api = "".join(c for c in str(api_phone) if c.isdigit())
-        
+
         # Exact match
         if clean_input == clean_api:
             return True
-        
+
         # Last 9 digits match (handles country code differences)
         if len(clean_input) >= 9 and len(clean_api) >= 9:
             return clean_input[-9:] == clean_api[-9:]
-        
+
         return False
-    
+
     async def _get_vehicle_info(self, person_id: str) -> Dict[str, Any]:
         """
         Get ALL vehicle data for person.
-        
+
         Returns complete data dict from API - no field filtering.
         Schema-driven: returns whatever API provides.
-        
+
         Returns:
             Dict with ALL fields from MasterData API response
         """
@@ -266,7 +314,7 @@ class UserService:
                 params={"personId": person_id},
                 max_retries=1
             )
-            
+
             if not response.success:
                 logger.warning(f"MasterData API failed for person_id={person_id[:8]}...")
                 return {}
@@ -274,12 +322,12 @@ class UserService:
             # Use SchemaExtractor - returns ALL fields, no filtering
             extractor = get_schema_extractor()
             vehicle_data = extractor.extract_all(response.data, "get_MasterData")
-            
+
             # Get vehicle ID from MasterData response for matching
             master_vehicle_id = vehicle_data.get("Id")
             if not master_vehicle_id:
                 return vehicle_data
-            
+
             # WORKAROUND: Use /vehiclemgt/Vehicles endpoint which WORKS with 'vehicles' scope!
             # This has fresh PeriodicActivities data (unlike automation/MasterData)
             try:
@@ -293,7 +341,7 @@ class UserService:
                     },
                     max_retries=1
                 )
-                
+
                 if vehicles_response.success and vehicles_response.data:
                     # Extract vehicles from response
                     vehicles = vehicles_response.data.get("Data", []) if isinstance(vehicles_response.data, dict) else vehicles_response.data
@@ -312,7 +360,7 @@ class UserService:
                             # If user has MULTIPLE vehicles, DON'T guess - leave None
                             if len(vehicles) == 1:
                                 matching_vehicle = vehicles[0]
-                                logger.info(f"Single vehicle found for driver, using it")
+                                logger.info("Single vehicle found for driver, using it")
                             else:
                                 # Multiple vehicles, no match - DON'T guess!
                                 logger.warning(
@@ -320,7 +368,7 @@ class UserService:
                                     f"expected ID {master_vehicle_id} not found. "
                                     f"Available: {[v.get('RegistrationNumber', v.get('Id', 'unknown')[:8]) for v in vehicles[:3]]}"
                                 )
-                        
+
                         if matching_vehicle:
                             # Extract FRESH PeriodicActivities
                             if "PeriodicActivities" in matching_vehicle and matching_vehicle["PeriodicActivities"]:
@@ -329,14 +377,14 @@ class UserService:
                                 vehicle_data["PeriodicActivities"] = fresh_activities
 
             except Exception as e:
-                logger.debug(f"Could not fetch from /vehiclemgt/Vehicles: {e}")
-            
+                logger.warning(f"Could not fetch from /vehiclemgt/Vehicles: {e}")
+
             return vehicle_data
-            
+
         except Exception as e:
-            logger.debug(f"Vehicle info failed: {e}")
+            logger.warning(f"Vehicle info failed: {e}")
             return {}
-    
+
     async def _upsert_mapping(self, phone: str, person_id: str, name: str) -> None:
         """
         Save user mapping to database with dynamic tenant resolution.
@@ -378,7 +426,7 @@ class UserService:
         except Exception as e:
             logger.error(f"Save mapping unexpected error: {type(e).__name__}: {e}")
             await self.db.rollback()
-    
+
     async def build_context(
         self,
         person_id: str,
@@ -428,7 +476,7 @@ class UserService:
             "vehicle": {}
         }
         logger.info(f"BUILD_CONTEXT: Created context with keys: {list(context.keys())}, tenant={tenant_id}")
-        
+
         if not self.gateway:
             return context
 
@@ -463,27 +511,27 @@ class UserService:
                 await self.cache.set(cache_key, json.dumps(context), ttl=cache_ttl)
             except Exception as e:
                 logger.debug(f"Cache write failed: {e}")
-        
+
         return context
 
     async def invalidate_context_cache(self, person_id: str) -> bool:
         """
         Invalidate cached context for a user.
-        
+
         Call this when:
         - Vehicle data changes
         - User reports stale data
         - After refresh_user_from_api()
-        
+
         Args:
             person_id: MobilityOne person ID
-            
+
         Returns:
             True if cache was invalidated
         """
         if not self.cache:
             return False
-            
+
         cache_key = f"context:{person_id}"
         try:
             await self.cache.delete(cache_key)
@@ -496,15 +544,15 @@ class UserService:
     async def refresh_user_from_api(self, phone: str) -> Optional[Tuple[str, str]]:
         """
         Force refresh user data from API, ignoring database cache.
-        
+
         Use this when:
         - User reports wrong vehicle info
         - Suspected stale data
         - After vehicle change
-        
+
         Args:
             phone: Phone number
-            
+
         Returns:
             (display_name, vehicle_info) tuple or None
         """
@@ -528,19 +576,19 @@ class UserService:
 
         # Now do fresh onboard
         return await self.try_auto_onboard(phone)
-    
+
     async def verify_user_identity(self, phone: str) -> Dict[str, Any]:
         """
         Debug method to verify user identity chain.
-        
+
         Returns detailed info about:
         - Database record
         - API lookup result
         - Phone validation status
-        
+
         Args:
             phone: Phone number
-            
+
         Returns:
             Debug info dictionary
         """
@@ -551,7 +599,7 @@ class UserService:
             "phone_match": None,
             "recommendation": None
         }
-        
+
         # 1. Check database
         db_user = await self.get_active_identity(phone)
         if db_user:
@@ -560,7 +608,7 @@ class UserService:
                 "display_name": db_user.display_name,
                 "updated_at": str(db_user.updated_at) if db_user.updated_at else None
             }
-        
+
         # 2. Check API
         if self.gateway:
             digits_only = "".join(c for c in phone if c.isdigit())
@@ -569,28 +617,28 @@ class UserService:
                 "/tenantmgt/Persons",
                 params={"Filter": f"Phone(=){digits_only}", "Rows": 5}
             )
-            
+
             if response.success:
                 items = response.data.get("Data", []) if isinstance(response.data, dict) else response.data
                 if items:
                     api_person = items[0]
                     api_phone = api_person.get("Phone") or api_person.get("Mobile") or ""
-                    
+
                     result["api"] = {
                         "person_id": api_person.get("Id"),
                         "display_name": api_person.get("DisplayName"),
                         "phone": api_phone,
                         "total_matches": len(items)
                     }
-                    
+
                     # 3. Phone validation
                     result["phone_match"] = self._phones_match(phone, api_phone)
-        
+
         # 4. Recommendation
         if result["database"] and result["api"]:
             db_id = result["database"]["person_id"]
             api_id = result["api"]["person_id"]
-            
+
             if db_id != api_id:
                 result["recommendation"] = "⚠️ DATABASE STALE! person_id mismatch. Run refresh_user_from_api()"
             elif not result["phone_match"]:
@@ -603,5 +651,5 @@ class UserService:
             result["recommendation"] = "⚠️ User in database but NOT in API! May be deleted in MobilityOne"
         else:
             result["recommendation"] = "❌ User not found anywhere"
-        
+
         return result

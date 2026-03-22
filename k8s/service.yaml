@@ -48,8 +48,9 @@ spec:
 
 ---
 # =============================================================================
-# REDIS SERVICE (if deploying Redis in-cluster)
+# REDIS SERVICE
 # =============================================================================
+# OPTION A: In-cluster Redis (dev/staging) — points to redis.yaml StatefulSet
 apiVersion: v1
 kind: Service
 metadata:
@@ -66,6 +67,20 @@ spec:
   selector:
     app: redis
 
+# OPTION B: Managed Redis (production) — uncomment and replace Option A
+# When using Azure Cache for Redis or ElastiCache, replace the Service above
+# with an ExternalName service so all pods resolve redis-service to managed host:
+#
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: redis-service
+# spec:
+#   type: ExternalName
+#   externalName: your-redis.redis.cache.windows.net  # Azure Cache for Redis hostname
+#   # AWS: your-redis.xxxxx.use1.cache.amazonaws.com
+#   # GCP: 10.0.0.x (Memorystore uses private IP)
+
 ---
 # =============================================================================
 # INGRESS - External access to API
@@ -75,20 +90,21 @@ kind: Ingress
 metadata:
   name: mobility-ingress
   annotations:
-    # For NGINX Ingress Controller
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    # For cert-manager TLS
+    # Rate limiting at ingress level (defense-in-depth with app-level rate limiter)
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+    # cert-manager TLS — requires cert-manager installed in cluster
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
-  # TODO: Replace with your actual domain before deploying
   tls:
     - hosts:
-        - bot.mobilityone.example.com  # CHANGE THIS to your real domain
+        - bot.mobilityone.io
       secretName: mobility-tls
   rules:
-    - host: bot.mobilityone.example.com  # CHANGE THIS to your real domain
+    - host: bot.mobilityone.io
       http:
         paths:
           # WhatsApp webhook endpoint
@@ -114,6 +130,16 @@ spec:
 # =============================================================================
 # NETWORK POLICIES - Per-component traffic restriction
 # =============================================================================
+# NOTE: Egress rules allow external HTTPS (0.0.0.0/0:443) for:
+#   - MobilityOne API (dev-k1.mobilityone.io)
+#   - Azure OpenAI (*.openai.azure.com)
+#   - Infobip (*.api.infobip.com)
+#   - Managed PostgreSQL (*.postgres.database.azure.com) if used
+#   - Managed Redis (*.redis.cache.windows.net) if used
+#
+# For tighter security, replace 0.0.0.0/0 with specific CIDRs of your
+# managed services. Run: nslookup <hostname> to get IPs.
+# =============================================================================
 
 # --- API Network Policy (public-facing, ingress from nginx) ---
 apiVersion: networking.k8s.io/v1
@@ -129,7 +155,7 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Only from ingress controller
+    # From ingress controller
     - from:
         - namespaceSelector:
             matchLabels:
@@ -152,7 +178,9 @@ spec:
       ports:
         - protocol: UDP
           port: 53
-    # PostgreSQL
+        - protocol: TCP
+          port: 53
+    # In-cluster PostgreSQL (if used)
     - to:
         - podSelector:
             matchLabels:
@@ -160,7 +188,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Redis
+    # In-cluster Redis (if used)
     - to:
         - podSelector:
             matchLabels:
@@ -168,7 +196,7 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
-    # External HTTPS (MobilityOne API, Azure OpenAI, Infobip)
+    # External HTTPS (MobilityOne API, Azure OpenAI, Infobip, managed DB/Redis)
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -179,8 +207,31 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Managed PostgreSQL (Azure default port — needed when using managed DB)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Managed Redis (Azure Cache uses port 6380 for TLS)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6380
+
 ---
-# --- Worker Network Policy (no ingress needed) ---
+# --- Worker Network Policy (no external ingress needed) ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -194,7 +245,7 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Workers don't need external ingress - only internal health checks
+    # Workers: only internal health checks from same app
     - from:
         - podSelector:
             matchLabels:
@@ -209,7 +260,9 @@ spec:
       ports:
         - protocol: UDP
           port: 53
-    # PostgreSQL
+        - protocol: TCP
+          port: 53
+    # In-cluster PostgreSQL
     - to:
         - podSelector:
             matchLabels:
@@ -217,7 +270,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Redis
+    # In-cluster Redis
     - to:
         - podSelector:
             matchLabels:
@@ -236,6 +289,29 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Managed PostgreSQL
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Managed Redis (TLS port)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6380
+
 ---
 # --- Admin API Network Policy (internal only, no public ingress) ---
 apiVersion: networking.k8s.io/v1
@@ -268,7 +344,9 @@ spec:
       ports:
         - protocol: UDP
           port: 53
-    # PostgreSQL (admin uses full-access user)
+        - protocol: TCP
+          port: 53
+    # In-cluster PostgreSQL (admin uses full-access user)
     - to:
         - podSelector:
             matchLabels:
@@ -276,7 +354,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Redis
+    # In-cluster Redis
     - to:
         - podSelector:
             matchLabels:
@@ -284,3 +362,47 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # Managed PostgreSQL
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Managed Redis (TLS port)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6380
+
+# =============================================================================
+# CERT-MANAGER PREREQUISITE
+# =============================================================================
+# Install cert-manager for automatic TLS certificate provisioning:
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
+#
+# Create ClusterIssuer for Let's Encrypt:
+#   apiVersion: cert-manager.io/v1
+#   kind: ClusterIssuer
+#   metadata:
+#     name: letsencrypt-prod
+#   spec:
+#     acme:
+#       server: https://acme-v02.api.letsencrypt.org/directory
+#       email: admin@mobilityone.io
+#       privateKeySecretRef:
+#         name: letsencrypt-prod-key
+#       solvers:
+#         - http01:
+#             ingress:
+#               class: nginx

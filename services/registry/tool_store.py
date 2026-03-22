@@ -23,7 +23,7 @@ class ToolStore:
     - Provide lookup methods
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize empty store."""
         self.tools: Dict[str, UnifiedToolDefinition] = {}
         self.embeddings: Dict[str, List[float]] = {}

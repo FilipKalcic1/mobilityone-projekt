@@ -22,17 +22,13 @@ Usage:
     vehicle_id = ctx.get_vehicle_id_or_ask()
 """
 
-import re
 import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from services.patterns import UUID_PATTERN
 
-# UUID validation pattern
-UUID_PATTERN = re.compile(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-)
+logger = logging.getLogger(__name__)
 
 
 # ---
@@ -405,7 +401,7 @@ class UserContextManager:
         """Check if value is valid UUID."""
         if not value or not isinstance(value, str):
             return False
-        return UUID_PATTERN.match(value) is not None
+        return UUID_PATTERN.fullmatch(value) is not None
 
     def validate(self) -> List[str]:
         """

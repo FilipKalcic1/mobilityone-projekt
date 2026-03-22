@@ -6,6 +6,7 @@ Handles booking, mileage input, and case creation flows.
 """
 
 import logging
+import re
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from services.context import UserContextManager
@@ -65,7 +66,7 @@ class FlowExecutors:
         if flow_result.get("final_response"):
             return flow_result["final_response"]
 
-        return flow_result.get("error", "Greska pri provjeri dostupnosti.")
+        return flow_result.get("error", "Greška pri provjeri dostupnosti.")
 
     async def handle_booking_flow(
         self,
@@ -116,9 +117,21 @@ class FlowExecutors:
         """
         # Use params from router if available (single-pass)
         router_params = router_params or {}
-        mileage_params = {
-            "Value": router_params.get("Value") or router_params.get("value") or router_params.get("mileage")
-        }
+        raw_value = router_params.get("Value") or router_params.get("value") or router_params.get("mileage")
+
+        # Clean European number format (45.000 or 45,000 → 45000)
+        if raw_value and isinstance(raw_value, str):
+            cleaned = raw_value
+            # Loop to handle multiple separators (e.g., 1.234.567 → 1234567)
+            while True:
+                new = re.sub(r'(\d)[.,](\d{3})\b', r'\1\2', cleaned)
+                if new == cleaned:
+                    break
+                cleaned = new
+            numbers = re.findall(r'\d+', cleaned)
+            raw_value = int(numbers[0]) if numbers else raw_value
+
+        mileage_params = {"Value": raw_value}
 
         # Try to get vehicle from multiple sources - use UserContextManager
         ctx = UserContextManager(user_context)
@@ -165,12 +178,22 @@ class FlowExecutors:
                 f"Kolika je trenutna kilometra\u017ea? _(npr. '14500')_"
             )
 
-        # Have all params - ask for confirmation
+        # Have all params - ask for confirmation (one-shot path)
         value = mileage_params["Value"]
 
+        # Must call start_flow BEFORE request_confirmation so flow_name
+        # and tool are set in state. Without this, get_current_flow() returns
+        # None during confirmation handling.
+        await conv_manager.start_flow(
+            flow_name="mileage_input",
+            tool="post_AddMileage",
+            required_params=["Value"]
+        )
         await conv_manager.add_parameters({
             "VehicleId": vehicle_id,
-            "Value": value
+            "Value": value,
+            "_vehicle_name": vehicle_name,
+            "_vehicle_plate": plate
         })
 
         message = (
@@ -181,7 +204,6 @@ class FlowExecutors:
         )
 
         await conv_manager.request_confirmation(message)
-        conv_manager.context.current_tool = "post_AddMileage"
         await conv_manager.save()
 
         return message

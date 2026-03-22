@@ -11,7 +11,7 @@ STRATEGIES:
     4. English fallback (readable formatting)
 
 USAGE:
-    helper = TranslationHelper()
+    helper = _get_helper()
 
     # Translate a single term
     croatian = helper.translate("vehicle")  # "vozilo"
@@ -47,7 +47,7 @@ class TranslationHelper:
     - Formatted English fallback
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with dictionaries from EmbeddingEngine."""
         # Import here to avoid circular imports
         from services.registry.embedding_engine import EmbeddingEngine
@@ -278,6 +278,16 @@ class TranslationHelper:
         return list(set(terms))
 
 
+_cached_helper: Optional["TranslationHelper"] = None
+
+
+def _get_helper() -> "TranslationHelper":
+    global _cached_helper
+    if _cached_helper is None:
+        _cached_helper = TranslationHelper()
+    return _cached_helper
+
+
 def translate_term(term: str, prefer_genitive: bool = False) -> str:
     """
     Convenience function for quick translation.
@@ -289,7 +299,7 @@ def translate_term(term: str, prefer_genitive: bool = False) -> str:
     Returns:
         Croatian translation or formatted English
     """
-    helper = TranslationHelper()
+    helper = _get_helper()
     result = helper.translate(term, prefer_genitive)
     return result.translated
 
@@ -304,6 +314,6 @@ def suggest_mapping(term: str) -> List[str]:
     Returns:
         List of suggested Croatian translations
     """
-    helper = TranslationHelper()
+    helper = _get_helper()
     suggestions = helper.suggest_translations(term)
     return [s.translated for s in suggestions]

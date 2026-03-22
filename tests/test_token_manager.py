@@ -48,6 +48,8 @@ class TestIsValid:
 
 
 class TestGetToken:
+    pytestmark = pytest.mark.asyncio
+
     async def test_returns_cached_token(self, tm):
         tm._token = "cached_token"
         tm._expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -95,6 +97,8 @@ class TestGetToken:
 
 
 class TestFetchNewToken:
+    pytestmark = pytest.mark.asyncio
+
     async def test_auth_failure_raises(self, tm, mock_redis):
         mock_redis.get.return_value = None
         with patch("httpx.AsyncClient") as mock_client_cls:
@@ -111,6 +115,8 @@ class TestFetchNewToken:
 
 
 class TestInvalidate:
+    pytestmark = pytest.mark.asyncio
+
     async def test_invalidate_clears_token(self, tm):
         tm._token = "old_token"
         tm._expires_at = datetime.now(timezone.utc) + timedelta(hours=1)

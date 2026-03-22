@@ -15,7 +15,11 @@ from typing import Dict, Any, List, Optional
 from decimal import Decimal
 from uuid import UUID
 
+from services.tracing import get_tracer, trace_span
+from services.errors import ConversationError, InfrastructureError, ErrorCode
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("conversation_manager")
 
 
 def _make_json_safe(obj: Any, max_depth: int = 10) -> Any:
@@ -137,7 +141,7 @@ class ConversationContext:
     # Npr: {"VehicleId": "uuid-123", "PersonId": "uuid-456"}
     tool_outputs: Dict[str, Any] = field(default_factory=dict)
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset to idle state."""
         self.state = ConversationState.IDLE.value
         self.current_flow = None
@@ -153,22 +157,22 @@ class ConversationContext:
 class ConversationManager:
     """
     Manages conversation state with Redis persistence.
-    
+
     Features:
     - Multi-turn flow tracking
     - State survives restarts (Redis storage)
     - Parameter accumulation
     - Item selection handling
     """
-    
+
     FLOW_TIMEOUT_SECONDS = 1800  # 30 minutes
     REDIS_KEY_PREFIX = "conv_state:"
     REDIS_TTL = 86400  # 24 hours
-    
-    def __init__(self, user_id: str, redis_client=None):
+
+    def __init__(self, user_id: str, redis_client=None) -> None:
         """
         Initialize for user.
-        
+
         Args:
             user_id: User identifier (phone number)
             redis_client: Redis client for persistence
@@ -177,134 +181,157 @@ class ConversationManager:
         self.redis = redis_client
         self.context = ConversationContext()
         self._loaded = False
-    
+
     @property
     def _redis_key(self) -> str:
         """Redis key for this user's state."""
         return f"{self.REDIS_KEY_PREFIX}{self.user_id}"
-    
+
     async def load(self) -> None:
         """Load state from Redis."""
         if not self.redis or self._loaded:
             logger.debug(f"Skipping load: redis={bool(self.redis)}, loaded={self._loaded}")
             return
 
-        try:
-            data = await self.redis.get(self._redis_key)
-            if data:
-                state_dict = json.loads(data)
-                self.context = ConversationContext(**state_dict)
-                # INFO level to ensure we see state loading
-                logger.info(
-                    f"CONV LOADED: user={self.user_id[-4:]}, state={self.context.state}, "
-                    f"flow={self.context.current_flow}, tool={self.context.current_tool}, "
-                    f"missing={self.context.missing_params}, items={len(self.context.displayed_items)}"
+        with trace_span(_tracer, "conversation_manager.load", {
+            "user_id_suffix": self.user_id[-4:],
+        }):
+            try:
+                data = await self.redis.get(self._redis_key)
+                if data:
+                    state_dict = json.loads(data)
+                    self.context = ConversationContext(**state_dict)
+                    # INFO level to ensure we see state loading
+                    logger.info(
+                        f"CONV LOADED: user={self.user_id[-4:]}, state={self.context.state}, "
+                        f"flow={self.context.current_flow}, tool={self.context.current_tool}, "
+                        f"missing={self.context.missing_params}, items={len(self.context.displayed_items)}"
+                    )
+                else:
+                    logger.info(f"CONV LOADED: user={self.user_id[-4:]}, NO STATE IN REDIS (fresh start)")
+                self._loaded = True
+            except Exception as e:
+                err = ConversationError(
+                    ErrorCode.REDIS_UNAVAILABLE,
+                    f"CONV LOAD FAILED: user={self.user_id[-4:]}, error={e}",
+                    metadata={"user_id_suffix": self.user_id[-4:]},
+                    cause=e,
                 )
-            else:
-                logger.info(f"CONV LOADED: user={self.user_id[-4:]}, NO STATE IN REDIS (fresh start)")
-            self._loaded = True
-        except Exception as e:
-            logger.error(f"CONV LOAD FAILED: user={self.user_id[-4:]}, error={e}", exc_info=True)
-            self._loaded = True
-    
+                logger.error(str(err), exc_info=True)
+                self._loaded = True
+
     async def save(self) -> None:
         """Save state to Redis with JSON-safe conversion."""
         if not self.redis:
             return
 
-        try:
-            self.context.last_updated = datetime.now(timezone.utc).isoformat()
-
-            # CRITICAL FIX: Convert to JSON-safe format BEFORE serialization
-            # This prevents flow state loss due to complex API objects
-            context_dict = asdict(self.context)
-            safe_dict = _make_json_safe(context_dict)
-
-            data = json.dumps(safe_dict, ensure_ascii=False)
-            await self.redis.setex(self._redis_key, self.REDIS_TTL, data)
-
-            # CRITICAL: Log at INFO level to track state saves
-            logger.info(
-                f"CONV SAVED: user={self.user_id[-4:]}, state={self.context.state}, "
-                f"flow={self.context.current_flow}, tool={self.context.current_tool}, "
-                f"items={len(self.context.displayed_items)}"
-            )
-        except Exception as e:
-            # CRITICAL: Log with stack trace for debugging!
-            logger.error(
-                f"CRITICAL: Failed to save state for {self.user_id[-4:]}: {e}",
-                exc_info=True
-            )
-            # Try to save minimal state as fallback
+        with trace_span(_tracer, "conversation_manager.save", {
+            "user_id_suffix": self.user_id[-4:],
+            "state": self.context.state,
+        }):
             try:
-                minimal_state = {
-                    "state": self.context.state,
-                    "current_flow": self.context.current_flow,
-                    "current_tool": self.context.current_tool,
-                    "missing_params": self.context.missing_params,
-                    "last_updated": datetime.now(timezone.utc).isoformat()
-                }
-                await self.redis.setex(
-                    self._redis_key,
-                    self.REDIS_TTL,
-                    json.dumps(minimal_state)
+                self.context.last_updated = datetime.now(timezone.utc).isoformat()
+
+                # CRITICAL FIX: Convert to JSON-safe format BEFORE serialization
+                # This prevents flow state loss due to complex API objects
+                context_dict = asdict(self.context)
+                safe_dict = _make_json_safe(context_dict)
+
+                data = json.dumps(safe_dict, ensure_ascii=False)
+                await self.redis.setex(self._redis_key, self.REDIS_TTL, data)
+
+                # CRITICAL: Log at INFO level to track state saves
+                logger.info(
+                    f"CONV SAVED: user={self.user_id[-4:]}, state={self.context.state}, "
+                    f"flow={self.context.current_flow}, tool={self.context.current_tool}, "
+                    f"items={len(self.context.displayed_items)}"
                 )
-                logger.warning(f"Saved MINIMAL state for {self.user_id[-4:]} as fallback")
-            except Exception as e2:
-                logger.error(f"Even minimal state save failed: {e2}")
-    
+            except Exception as e:
+                # CRITICAL: Log with stack trace for debugging!
+                err = ConversationError(
+                    ErrorCode.REDIS_UNAVAILABLE,
+                    f"CRITICAL: Failed to save state for {self.user_id[-4:]}: {e}",
+                    metadata={"user_id_suffix": self.user_id[-4:], "state": self.context.state},
+                    cause=e,
+                )
+                logger.error(str(err), exc_info=True)
+                # Try to save minimal state as fallback
+                try:
+                    minimal_state = {
+                        "state": self.context.state,
+                        "current_flow": self.context.current_flow,
+                        "current_tool": self.context.current_tool,
+                        "missing_params": self.context.missing_params,
+                        "last_updated": datetime.now(timezone.utc).isoformat()
+                    }
+                    await self.redis.setex(
+                        self._redis_key,
+                        self.REDIS_TTL,
+                        json.dumps(minimal_state)
+                    )
+                    logger.warning(f"Saved MINIMAL state for {self.user_id[-4:]} as fallback")
+                except Exception as e2:
+                    err2 = ConversationError(
+                        ErrorCode.REDIS_UNAVAILABLE,
+                        f"Even minimal state save failed: {e2}",
+                        metadata={"user_id_suffix": self.user_id[-4:]},
+                        cause=e2,
+                    )
+                    logger.error(str(err2))
+
     async def clear(self) -> None:
         """Clear state from Redis."""
         if self.redis:
             try:
                 await self.redis.delete(self._redis_key)
             except Exception as e:
-                logger.warning(f"Failed to clear state: {e}")
+                err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to clear state: {e}")
+                logger.warning(str(err))
         self.context.reset()
-    
+
     def get_state(self) -> ConversationState:
         """Get current state."""
         return ConversationState(self.context.state)
-    
+
     def is_in_flow(self) -> bool:
         """Check if in active flow."""
         return self.context.state != ConversationState.IDLE.value
-    
+
     def get_current_flow(self) -> Optional[str]:
         """Get current flow name."""
         return self.context.current_flow
-    
+
     def get_current_tool(self) -> Optional[str]:
         """Get current tool."""
         return self.context.current_tool
-    
+
     def get_parameters(self) -> Dict[str, Any]:
         """Get collected parameters."""
         return self.context.parameters.copy()
-    
+
     def get_missing_params(self) -> List[str]:
         """Get missing parameters."""
         return self.context.missing_params.copy()
-    
+
     def get_displayed_items(self) -> List[Dict]:
         """Get displayed items."""
         return self.context.displayed_items.copy()
-    
+
     def get_selected_item(self) -> Optional[Dict]:
         """Get selected item."""
         return self.context.selected_item
-    
+
     # === STATE TRANSITIONS ===
-    
+
     async def start_flow(
         self,
         flow_name: str,
         tool: Optional[str] = None,
         required_params: Optional[List[str]] = None
-    ):
+    ) -> None:
         """Start new flow."""
         logger.info(f"Starting flow: {flow_name}")
-        
+
         self.context.reset()
         self.context.state = ConversationState.GATHERING_PARAMS.value
         self.context.current_flow = flow_name
@@ -312,10 +339,10 @@ class ConversationManager:
         self.context.missing_params = required_params or []
         self.context.started_at = datetime.now(timezone.utc).isoformat()
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
-        
+
         await self.save()
-    
-    async def add_parameters(self, params: Dict[str, Any]):
+
+    async def add_parameters(self, params: Dict[str, Any]) -> None:
         """Add collected parameters with alias resolution."""
         for key, value in params.items():
             if value is not None:
@@ -332,32 +359,32 @@ class ConversationManager:
         await self.save()
 
         logger.debug(f"Parameters: {list(self.context.parameters.keys())}, Still missing: {self.context.missing_params}")
-    
-    async def set_displayed_items(self, items: List[Dict]):
+
+    async def set_displayed_items(self, items: List[Dict]) -> None:
         """Store displayed items and transition to selecting."""
         self.context.displayed_items = items
         self.context.state = ConversationState.SELECTING_ITEM.value
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
         await self.save()
-        
+
         logger.debug(f"Displayed {len(items)} items")
-    
-    async def select_item(self, item: Dict):
+
+    async def select_item(self, item: Dict) -> None:
         """Record selected item."""
         self.context.selected_item = item
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
         await self.save()
-        
+
         logger.info(f"Selected: {str(item.get('Id', 'unknown'))[:8]}")
-    
-    async def request_confirmation(self, message: str):
+
+    async def request_confirmation(self, message: str) -> None:
         """Request confirmation."""
         self.context.confirmation_message = message
         self.context.state = ConversationState.CONFIRMING.value
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
         await self.save()
 
-    async def request_selection(self, message: str):
+    async def request_selection(self, message: str) -> None:
         """Request item selection from displayed list."""
         self.context.confirmation_message = message
         self.context.state = ConversationState.SELECTING_ITEM.value
@@ -368,35 +395,35 @@ class ConversationManager:
         """User confirmed."""
         if self.context.state != ConversationState.CONFIRMING.value:
             return False
-        
+
         self.context.state = ConversationState.EXECUTING.value
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
         await self.save()
         return True
-    
-    async def complete(self):
+
+    async def complete(self) -> None:
         """Mark flow complete."""
         self.context.state = ConversationState.COMPLETED.value
         self.context.last_updated = datetime.now(timezone.utc).isoformat()
         await self.save()
-        
+
         logger.info(f"Flow completed: {self.context.current_flow}")
-    
-    async def cancel(self):
+
+    async def cancel(self) -> None:
         """Cancel flow."""
         logger.info(f"Flow cancelled: {self.context.current_flow}")
         await self.clear()
-    
-    async def reset(self):
+
+    async def reset(self) -> None:
         """Reset state."""
         await self.clear()
-    
+
     # === HELPERS ===
-    
+
     def has_all_required_params(self) -> bool:
         """Check if all required params collected."""
         return len(self.context.missing_params) == 0
-    
+
     def parse_item_selection(self, user_input: str) -> Optional[Dict]:
         """Parse item selection from input."""
         if not self.context.displayed_items:
@@ -429,7 +456,7 @@ class ConversationManager:
                         return item
 
         return None
-    
+
     def parse_confirmation(self, user_input: str) -> Optional[bool]:
         """Parse confirmation response."""
         user_input = user_input.strip().lower()
@@ -462,12 +489,12 @@ class ConversationManager:
             return True
 
         return None
-    
+
     def is_timed_out(self) -> bool:
         """Check if flow timed out."""
         if not self.context.started_at:
             return False
-        
+
         try:
             started = datetime.fromisoformat(self.context.started_at)
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
@@ -475,11 +502,11 @@ class ConversationManager:
         except (ValueError, TypeError) as e:
             logger.warning(f"Timeout check failed for {self.user_id[-4:]}: {e}")
             return False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict."""
         return asdict(self.context)
-    
+
     @classmethod
     async def load_for_user(cls, user_id: str, redis_client) -> "ConversationManager":
         """Factory method to load manager for user."""

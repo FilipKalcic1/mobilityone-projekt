@@ -97,8 +97,8 @@ def get_tracer(name: str):
     if _tracer_provider:
         return _tracer_provider.get_tracer(name)
 
-    # Return no-op tracer
-    return _NoOpTracer()
+    # Return no-op tracer singleton
+    return _NOOP_TRACER
 
 
 @contextmanager
@@ -114,18 +114,17 @@ def trace_span(tracer, name: str, attributes: Optional[Dict[str, Any]] = None):
         attributes: Optional span attributes
     """
     if isinstance(tracer, _NoOpTracer):
-        yield _NoOpSpan()
+        yield _NOOP_SPAN
         return
 
     try:
-        from opentelemetry import trace
         with tracer.start_as_current_span(name) as span:
             if attributes:
                 for key, value in attributes.items():
                     span.set_attribute(key, str(value) if not isinstance(value, (str, int, float, bool)) else value)
             yield span
     except Exception:
-        yield _NoOpSpan()
+        yield _NOOP_SPAN
 
 
 class _NoOpSpan:
@@ -144,6 +143,10 @@ class _NoOpSpan:
         pass
 
 
+# Singletons to avoid allocating new objects on every span
+_NOOP_SPAN = _NoOpSpan()
+
+
 class _NoOpTracer:
     """No-op tracer for when OpenTelemetry is not installed."""
 
@@ -151,17 +154,20 @@ class _NoOpTracer:
         return _NoOpSpanContext()
 
     def start_span(self, name: str, **kwargs):
-        return _NoOpSpan()
+        return _NOOP_SPAN
 
 
 class _NoOpSpanContext:
     """Context manager for no-op spans."""
 
     def __enter__(self):
-        return _NoOpSpan()
+        return _NOOP_SPAN
 
     def __exit__(self, *args):
         pass
+
+
+_NOOP_TRACER = _NoOpTracer()
 
 
 async def shutdown_tracing():

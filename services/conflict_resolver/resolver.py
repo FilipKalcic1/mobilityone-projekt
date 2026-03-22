@@ -40,8 +40,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict
-from enum import Enum
+from dataclasses import asdict
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -49,88 +48,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from models import HallucinationReport
+from services.errors import InfrastructureError, ErrorCode
+from services.tracing import get_tracer, trace_span
 
+from .models import (
+    ConflictType,
+    LockStatus,
+    EditLock,
+    FieldChange,
+    ConflictInfo,
+    SaveResult,
+    ChangeHistoryEntry,
+)
 logger = logging.getLogger(__name__)
-
-
-class ConflictType(str, Enum):
-    """Types of conflicts."""
-    VERSION_MISMATCH = "version_mismatch"
-    CONCURRENT_EDIT = "concurrent_edit"
-    ALREADY_REVIEWED = "already_reviewed"
-    DELETED = "deleted"
-
-
-class LockStatus(str, Enum):
-    """Edit lock status."""
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    RELEASED = "released"
-    STOLEN = "stolen"
-
-
-@dataclass
-class EditLock:
-    """Represents an edit lock on a record."""
-    record_id: str
-    admin_id: str
-    locked_at: str
-    expires_at: str
-    version: int
-    status: str = LockStatus.ACTIVE.value
-
-    def is_expired(self) -> bool:
-        # Use timezone-aware comparison
-        try:
-            expires = datetime.fromisoformat(self.expires_at.replace('Z', '+00:00'))
-            if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-            return datetime.now(timezone.utc) > expires
-        except (ValueError, TypeError):
-            return True  # Corrupted lock data → treat as expired for safety
-
-
-@dataclass
-class FieldChange:
-    """Represents a change to a single field."""
-    field_name: str
-    old_value: Any
-    new_value: Any
-    changed_by: str
-    changed_at: str
-
-
-@dataclass
-class ConflictInfo:
-    """Information about a detected conflict."""
-    conflict_type: str
-    your_changes: Dict[str, Any]
-    their_changes: Dict[str, Any]
-    their_admin_id: str
-    their_timestamp: str
-    suggested_resolution: Optional[str] = None
-    can_auto_merge: bool = False
-
-
-@dataclass
-class SaveResult:
-    """Result of a save operation."""
-    success: bool
-    record_id: str
-    new_version: int = 0
-    has_conflict: bool = False
-    conflict: Optional[ConflictInfo] = None
-    error: Optional[str] = None
-
-
-@dataclass
-class ChangeHistoryEntry:
-    """Entry in the change history."""
-    version: int
-    admin_id: str
-    timestamp: str
-    changes: Dict[str, Any]  # Dict of FieldChange as dicts
-    ip_address: Optional[str] = None
+_tracer = get_tracer("conflict_resolver")
 
 
 class ConflictResolver:
@@ -195,34 +126,40 @@ class ConflictResolver:
         Returns:
             Tuple of (new_lock, existing_lock_if_any)
         """
-        # Check existing lock
-        existing_lock = await self._get_lock(record_id)
+        with trace_span(_tracer, "conflict_resolver.acquire_edit_lock", {"record_id": record_id, "admin_id": admin_id, "force": force}) as span:
+            # Check existing lock
+            existing_lock = await self._get_lock(record_id)
 
-        if existing_lock and not existing_lock.is_expired():
-            if existing_lock.admin_id == admin_id:
-                # Refresh own lock
-                return await self._create_lock(record_id, admin_id), None
-            elif not force:
-                # Someone else has the lock
+            if existing_lock and not existing_lock.is_expired():
+                if existing_lock.admin_id == admin_id:
+                    # Refresh own lock
+                    span.set_attribute("result.action", "refreshed_own_lock")
+                    return await self._create_lock(record_id, admin_id), None
+                elif not force:
+                    # Someone else has the lock
+                    logger.warning(
+                        f"Lock conflict: {admin_id} tried to lock {record_id}, "
+                        f"held by {existing_lock.admin_id}"
+                    )
+                    span.set_attribute("result.action", "lock_conflict")
+                    return existing_lock, existing_lock
+
+            # Create new lock
+            new_lock = await self._create_lock(record_id, admin_id)
+
+            if existing_lock and force:
+                # Notify original holder about stolen lock
+                await self._notify_lock_stolen(record_id, existing_lock.admin_id, admin_id)
                 logger.warning(
-                    f"Lock conflict: {admin_id} tried to lock {record_id}, "
-                    f"held by {existing_lock.admin_id}"
+                    f"Lock stolen: {admin_id} force-acquired lock on {record_id} "
+                    f"from {existing_lock.admin_id}"
                 )
-                return existing_lock, existing_lock
+                existing_lock.status = LockStatus.STOLEN.value
+                span.set_attribute("result.action", "lock_stolen")
+            else:
+                span.set_attribute("result.action", "new_lock")
 
-        # Create new lock
-        new_lock = await self._create_lock(record_id, admin_id)
-
-        if existing_lock and force:
-            # Notify original holder about stolen lock
-            await self._notify_lock_stolen(record_id, existing_lock.admin_id, admin_id)
-            logger.warning(
-                f"Lock stolen: {admin_id} force-acquired lock on {record_id} "
-                f"from {existing_lock.admin_id}"
-            )
-            existing_lock.status = LockStatus.STOLEN.value
-
-        return new_lock, existing_lock
+            return new_lock, existing_lock
 
     async def _notify_lock_stolen(
         self,
@@ -425,77 +362,84 @@ class ConflictResolver:
         Returns:
             SaveResult with success/conflict info
         """
-        current_version = await self._get_version(record_id)
+        with trace_span(_tracer, "conflict_resolver.save_with_conflict_check", {"record_id": record_id, "admin_id": admin_id, "expected_version": expected_version}) as span:
+            current_version = await self._get_version(record_id)
 
-        # Check for version mismatch (someone else saved)
-        if current_version != expected_version:
-            conflict = await self._build_conflict_info(
-                record_id,
-                changes,
-                expected_version,
-                current_version,
-                admin_id
-            )
+            # Check for version mismatch (someone else saved)
+            if current_version != expected_version:
+                conflict = await self._build_conflict_info(
+                    record_id,
+                    changes,
+                    expected_version,
+                    current_version,
+                    admin_id
+                )
 
-            return SaveResult(
-                success=False,
-                record_id=record_id,
-                has_conflict=True,
-                conflict=conflict,
-                error="Record was modified by another admin"
-            )
+                span.set_attribute("result.has_conflict", True)
+                return SaveResult(
+                    success=False,
+                    record_id=record_id,
+                    has_conflict=True,
+                    conflict=conflict,
+                    error="Record was modified by another admin"
+                )
 
-        # No conflict - proceed with save
-        try:
-            # Fetch old values BEFORE applying changes (for audit trail)
-            old_values = await self._get_current_record_values(
-                record_id,
-                list(changes.keys())
-            )
+            # No conflict - proceed with save
+            try:
+                # Fetch old values BEFORE applying changes (for audit trail)
+                old_values = await self._get_current_record_values(
+                    record_id,
+                    list(changes.keys())
+                )
 
-            # Create snapshot of current state for rollback
-            full_snapshot = await self._get_current_record_values(
-                record_id,
-                ["correction", "category", "reviewed", "reviewed_by", "reviewed_at"]
-            )
-            await self._save_full_snapshot(record_id, current_version, full_snapshot)
+                # Create snapshot of current state for rollback
+                full_snapshot = await self._get_current_record_values(
+                    record_id,
+                    ["correction", "category", "reviewed", "reviewed_by", "reviewed_at"]
+                )
+                await self._save_full_snapshot(record_id, current_version, full_snapshot)
 
-            # Save to database
-            await self._apply_changes(record_id, changes, admin_id)
+                # Save to database
+                await self._apply_changes(record_id, changes, admin_id)
 
-            # Increment version
-            new_version = await self._increment_version(record_id)
+                # Increment version
+                new_version = await self._increment_version(record_id)
 
-            # Record history with old values
-            await self._record_change_history(
-                record_id,
-                new_version,
-                changes,
-                admin_id,
-                ip_address,
-                old_values  # Pass old values for complete audit trail
-            )
+                # Record history with old values
+                await self._record_change_history(
+                    record_id,
+                    new_version,
+                    changes,
+                    admin_id,
+                    ip_address,
+                    old_values  # Pass old values for complete audit trail
+                )
 
-            # Release lock
-            await self.release_lock(record_id, admin_id)
+                # Release lock
+                await self.release_lock(record_id, admin_id)
 
-            logger.info(
-                f"Save successful: {record_id} v{new_version} by {admin_id}"
-            )
+                logger.info(
+                    f"Save successful: {record_id} v{new_version} by {admin_id}"
+                )
 
-            return SaveResult(
-                success=True,
-                record_id=record_id,
-                new_version=new_version
-            )
+                span.set_attribute("result.success", True)
+                span.set_attribute("result.new_version", new_version)
+                return SaveResult(
+                    success=True,
+                    record_id=record_id,
+                    new_version=new_version
+                )
 
-        except Exception as e:
-            logger.error(f"Save failed: {record_id} - {e}")
-            return SaveResult(
-                success=False,
-                record_id=record_id,
-                error=str(e)
-            )
+            except Exception as e:
+                err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Save failed: {record_id} - {e}")
+                logger.error(str(err))
+                span.set_attribute("result.success", False)
+                span.set_attribute("result.error", str(e))
+                return SaveResult(
+                    success=False,
+                    record_id=record_id,
+                    error=str(e)
+                )
 
     async def _build_conflict_info(
         self,
@@ -830,7 +774,8 @@ class ConflictResolver:
             )
 
         except Exception as e:
-            logger.error(f"Rollback failed: {record_id} - {e}")
+            err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Rollback failed: {record_id} - {e}")
+            logger.error(str(err))
             return SaveResult(
                 success=False,
                 record_id=record_id,
@@ -976,7 +921,8 @@ class ConflictResolver:
             }))
             return result > 0  # Returns number of subscribers who received the message
         except Exception as e:
-            logger.error(f"Failed to notify editors: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to notify editors: {e}")
+            logger.error(str(err))
             return False
 
     async def get_version_history(

@@ -17,11 +17,9 @@ This module has been refactored into smaller components:
 """
 
 import asyncio
-import json
 import logging
-import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 from config import get_settings
 from services.conversation_manager import ConversationManager, ConversationState
@@ -32,7 +30,6 @@ from services.dependency_resolver import DependencyResolver
 from services.error_learning import ErrorLearningService
 from services.model_drift_detector import get_drift_detector
 from services.cost_tracker import CostTracker
-from services.chain_planner import get_chain_planner
 from services.response_extractor import get_response_extractor
 from services.query_router import get_query_router, RouteResult
 from services.unified_router import get_unified_router
@@ -53,9 +50,18 @@ from services.flow_phrases import (
     matches_confirm_yes,
     matches_confirm_no,
     matches_item_selection,
+    GDPR_CONSENT_MESSAGE,
+    GDPR_CONSENT_DECLINED,
+    GDPR_CONSENT_REPEAT,
+    CONSENT_ACCEPT_KEYWORDS,
+    CONSENT_DECLINE_KEYWORDS,
 )
+from services.user_service import UserService
+from services.errors import ConversationError, ErrorCode, InfrastructureError
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("message_engine")
 settings = get_settings()
 
 # Bounded pool for CPU-bound ML predictions (TF-IDF predict_proba).
@@ -78,8 +84,6 @@ class MessageEngine:
 
     This is a facade that coordinates the refactored components.
     """
-
-    MAX_ITERATIONS = 6
 
     def __init__(
         self,
@@ -118,12 +122,16 @@ class MessageEngine:
                 self.cost_tracker = CostTracker(redis_client=self.redis)
                 logger.info("CostTracker initialized")
             except Exception as e:
-                logger.warning(f"CostTracker init failed: {e}")
+                err = InfrastructureError(
+                    ErrorCode.REDIS_UNAVAILABLE,
+                    f"CostTracker init failed: {e}",
+                    cause=e,
+                )
+                logger.warning(f"{err}")
 
         self.ai = AIOrchestrator()
         self.formatter = ResponseFormatter()
-        # Advanced planning and response extraction
-        self.chain_planner = get_chain_planner()
+        # Response extraction for API results
         self.response_extractor = get_response_extractor()
 
         # Deterministic query router
@@ -172,75 +180,6 @@ class MessageEngine:
 
         logger.info("MessageEngine initialized (v20.0 modular)")
 
-    async def _instrumented_ai_call(
-        self,
-        messages: List[Dict],
-        tools: Optional[List[Dict]] = None,
-        system_prompt: Optional[str] = None,
-        tool_scores: Optional[List[Dict]] = None,
-        user_context: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """
-        Wrapper around AI analyze() that records metrics for drift detection and cost tracking.
-        """
-        start_time = time.perf_counter()
-        error_type = None
-        success = True
-        tools_called = []
-        usage_data = None
-
-        try:
-            result = await self.ai.analyze(
-                messages=messages,
-                tools=tools,
-                system_prompt=system_prompt,
-                tool_scores=tool_scores
-            )
-
-            if result.get("type") == "error":
-                success = False
-                error_type = "llm_error"
-            elif result.get("type") == "tool_call":
-                tools_called = [result.get("tool", "unknown")]
-
-            usage_data = result.get("usage")
-            return result
-
-        except Exception as e:
-            success = False
-            error_type = type(e).__name__
-            raise
-
-        finally:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            tenant_id = UserContextManager(user_context).tenant_id if user_context else "default"
-
-            # Record for drift detection
-            try:
-                await self.drift_detector.record_interaction(
-                    model_version=self.ai.model,
-                    latency_ms=latency_ms,
-                    success=success,
-                    error_type=error_type,
-                    confidence_score=None,
-                    tools_called=tools_called,
-                    hallucination_reported=False,
-                    tenant_id=tenant_id
-                )
-            except Exception as e:
-                logger.warning(f"Failed to record drift metrics: {e}")
-
-            # Record for cost tracking
-            if self.cost_tracker and usage_data:
-                try:
-                    await self.cost_tracker.record_usage(
-                        prompt_tokens=usage_data.get("prompt_tokens", 0),
-                        completion_tokens=usage_data.get("completion_tokens", 0),
-                        tenant_id=tenant_id
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to record cost metrics: {e}")
-
     async def process(
         self,
         sender: str,
@@ -260,6 +199,22 @@ class MessageEngine:
         Returns:
             Response text
         """
+        with trace_span(_tracer, "engine.process", {
+            "engine.sender_suffix": sender[-4:] if sender else "",
+            "engine.query_preview": (text or "")[:80],
+        }) as span:
+            result = await self._process_inner(sender, text, message_id, db_session)
+            span.set_attribute("engine.response_length", len(result))
+            return result
+
+    async def _process_inner(
+        self,
+        sender: str,
+        text: str,
+        message_id: Optional[str] = None,
+        db_session=None
+    ) -> str:
+        """Inner implementation of process(), wrapped by OTel span."""
         import time as _time
         _t0 = _time.perf_counter()
         logger.info(f"Processing: {sender[-4:]} - {text[:50]}")
@@ -273,7 +228,12 @@ class MessageEngine:
             # Always returns a context (guest context if not in MobilityOne)
             user_context = await self._user_handler.identify_user(sender, db_session=db_session)
             if not user_context:
-                logger.error(f"identify_user returned None for {sender[-4:]}")
+                err = ConversationError(
+                    ErrorCode.CONTEXT_MISSING,
+                    f"identify_user returned None for {sender[-4:]}",
+                    metadata={"sender_suffix": sender[-4:]},
+                )
+                logger.error(f"{err}")
                 user_context = {
                     "person_id": None, "phone": sender,
                     "tenant_id": settings.tenant_id,
@@ -283,11 +243,20 @@ class MessageEngine:
             _t1 = _time.perf_counter()
             logger.info(f"TIMING identify_user: {int((_t1-_t0)*1000)}ms")
 
+            # 1.5 GDPR Consent Gate — ALL users must accept before any processing
+            consent_result = await self._check_gdpr_consent(
+                sender, text, user_context, db_session
+            )
+            if consent_result is not None:
+                return consent_result
+
             # 2. Load conversation state
             conv_manager = await ConversationManager.load_for_user(sender, self.redis)
 
             # 3. Check timeout
             if conv_manager.is_timed_out():
+                err = ConversationError(ErrorCode.FLOW_TIMEOUT, f"Flow timed out for {sender[-4:]} after {conv_manager.FLOW_TIMEOUT_SECONDS}s")
+                logger.warning(str(err))
                 await conv_manager.reset()
 
             # 4. Add to history
@@ -352,8 +321,129 @@ class MessageEngine:
             return prompt
 
         except Exception as e:
-            logger.error(f"Processing error: {e}", exc_info=True)
-            return "Doslo je do greske. Molimo pokusajte ponovno."
+            err = ConversationError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Processing error for {sender[-4:]}: {e}",
+                cause=e,
+            )
+            logger.error(f"{err}", exc_info=True)
+            return "Došlo je do greške. Molimo pokušajte ponovno."
+
+    async def _check_gdpr_consent(
+        self,
+        sender: str,
+        text: str,
+        user_context: Dict[str, Any],
+        db_session
+    ) -> Optional[str]:
+        """Check GDPR consent status and handle consent flow.
+
+        Uses user_context (already resolved by identify_user) to determine
+        if user is a valid MobilityOne user. Does NOT re-query the API.
+        Only queries DB for consent flag status.
+
+        Returns None if consent is already given (continue processing).
+        Returns a response string if consent is pending (block processing).
+        """
+        # Guest = not found in MobilityOne API → block immediately
+        if user_context.get("is_guest"):
+            consent_key = f"gdpr_consent:{sender}"
+            try:
+                await self.redis.set(consent_key, "unknown", ex=300)
+            except Exception:
+                pass
+            err = ConversationError(
+                ErrorCode.CONSENT_REQUIRED,
+                f"Unregistered user blocked at consent gate: ***{sender[-4:]}",
+                metadata={"sender_suffix": sender[-4:]},
+            )
+            logger.info(f"{err}")
+            return (
+                "Pozdrav! Ja sam MobilityOne AI asistent — automatizirani sustav, ne čovjek.\n\n"
+                "Vaš broj nije registriran u MobilityOne sustavu.\n"
+                "Za korištenje ovog bota morate biti registrirani korisnik.\n\n"
+                "Kontaktirajte vašeg administratora za registraciju."
+            )
+
+        # User IS in MobilityOne. Check consent status via Redis cache first.
+        consent_key = f"gdpr_consent:{sender}"
+        try:
+            cached = await self.redis.get(consent_key)
+        except Exception as e:
+            err = InfrastructureError(
+                ErrorCode.REDIS_UNAVAILABLE,
+                f"Redis error during consent check: {e}",
+                cause=e,
+            )
+            logger.warning(f"{err}")
+            cached = None
+        if cached == b"1" or cached == "1":
+            return None  # Consent already given, continue
+
+        # Check DB for consent flag
+        db = db_session or self._user_handler.db
+        user_service = UserService(db, self._user_handler.gateway, self._user_handler.cache)
+        user = await user_service.get_active_identity(sender)
+
+        if user and user.gdpr_consent_given:
+            # Cache consent in Redis (24h TTL) to avoid future DB lookups
+            try:
+                await self.redis.set(consent_key, "1", ex=86400)
+            except Exception:
+                pass
+            return None  # Already consented
+
+        if not user:
+            # DB lookup failed but user IS in MobilityOne (not guest).
+            # This can happen if DB was down during auto-onboard.
+            # Let them through — consent will be checked again next message.
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"Consent DB lookup failed but user is valid MobilityOne user ***{sender[-4:]}",
+            )
+            logger.warning(f"{err}")
+            return None
+
+        # User exists in DB but hasn't consented — check if this message IS a consent response
+        normalized = text.strip().lower().rstrip(".!?")
+
+        if normalized in CONSENT_ACCEPT_KEYWORDS:
+            await user_service.record_consent(sender, given=True)
+            try:
+                await self.redis.set(consent_key, "1", ex=86400)
+                await self.redis.delete(f"gdpr_consent_pending:{sender}")
+            except Exception:
+                pass
+            logger.info(f"GDPR consent accepted by ***{sender[-4:]}")
+            greeting = self._user_handler.build_greeting(user_context)
+            return f"Hvala na pristanku!\n\n{greeting}"
+
+        if normalized in CONSENT_DECLINE_KEYWORDS:
+            logger.info(f"GDPR consent declined by ***{sender[-4:]}")
+            return GDPR_CONSENT_DECLINED
+
+        # Check if we already sent the consent message (via Redis flag)
+        pending_key = f"gdpr_consent_pending:{sender}"
+        try:
+            already_asked = await self.redis.get(pending_key)
+        except Exception:
+            already_asked = None
+
+        if already_asked:
+            return GDPR_CONSENT_REPEAT
+
+        # First interaction — send consent message
+        err = ConversationError(
+            ErrorCode.CONSENT_EXPIRED,
+            f"Consent not yet given, prompting user ***{sender[-4:]}",
+            metadata={"sender_suffix": sender[-4:]},
+        )
+        logger.info(f"{err}")
+        try:
+            await self.redis.set(pending_key, "1", ex=86400)
+        except Exception:
+            pass
+        return GDPR_CONSENT_MESSAGE
 
     async def _process_with_state(
         self,
@@ -422,7 +512,13 @@ class MessageEngine:
         try:
             decision = await self.unified_router.route(text, user_context, conv_state)
         except Exception as e:
-            logger.error(f"UNIFIED ROUTER FAILED: {e}", exc_info=True)
+            err = ConversationError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Unified router failed: {e}",
+                metadata={"sender_suffix": sender[-4:], "text_preview": text[:50]},
+                cause=e,
+            )
+            logger.error(f"{err}", exc_info=True)
             # Fall through to _handle_new_request which has its own routing
             return await self._handle_new_request(sender, text, user_context, conv_manager)
         _rt1 = _time.perf_counter()
@@ -435,11 +531,11 @@ class MessageEngine:
 
         # Handle routing decisions
         if decision.action == "direct_response":
-            return decision.response or "Kako vam mogu pomoci?"
+            return decision.response or "Kako vam mogu pomoći?"
 
         if decision.action == "clarify":
             logger.info(f"UNIFIED ROUTER: Clarification needed - '{decision.clarification}'")
-            return decision.clarification or "Mozete li mi reci vise detalja o tome sto trazite?"
+            return decision.clarification or "Možete li mi reći više detalja o tome što tražite?"
 
         if decision.action == "exit_flow":
             if conv_manager.is_in_flow():
@@ -448,7 +544,7 @@ class MessageEngine:
                 new_decision = await self.unified_router.route(text, user_context, None)
 
                 if new_decision.action == "direct_response":
-                    return new_decision.response or "Kako vam mogu pomoci?"
+                    return new_decision.response or "Kako vam mogu pomoći?"
                 if new_decision.action == "start_flow":
                     return await self._handle_flow_start(new_decision, text, user_context, conv_manager)
                 if new_decision.action == "simple_api" and new_decision.tool:
@@ -463,10 +559,10 @@ class MessageEngine:
                     )
                     if result:
                         return result
-                return "Nisam siguran sto trazite. Mozete pitati za:\n* Rezervaciju vozila\n* Kilometrazu\n* Prijavu stete\n* Informacije o vozilu"
+                return "Nisam siguran što tražite. Možete pitati za:\n* Rezervaciju vozila\n* Kilometražu\n* Prijavu štete\n* Informacije o vozilu"
             else:
                 logger.warning("UNIFIED ROUTER: exit_flow received but not in flow - ignoring")
-                return "Kako vam mogu pomoci?"
+                return "Kako vam mogu pomoći?"
 
         if decision.action == "continue_flow":
             if state == ConversationState.SELECTING_ITEM:
@@ -490,7 +586,7 @@ class MessageEngine:
                             answer = await self._handle_new_request(sender, question, user_context, conv_manager)
                         finally:
                             conv_manager.context.tool_outputs.pop(mid_flow_key, None)
-                        return f"{answer}\n\n---\n_Ceka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
+                        return f"{answer}\n\n---\n_Čeka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
                     else:
                         logger.warning("P1: Skipping nested mid-flow question to prevent recursion")
                         return "Potvrdite prethodnu operaciju s **Da** ili **Ne**."
@@ -500,7 +596,13 @@ class MessageEngine:
                     sender, text, user_context, conv_manager, self._handle_new_request
                 )
             if state == ConversationState.IDLE and conv_manager.get_current_flow():
-                logger.warning("STATE MISMATCH: is_in_flow but state=IDLE, treating as new request")
+                err = ConversationError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    "is_in_flow but state=IDLE",
+                    metadata={"flow": conv_manager.get_current_flow()},
+                )
+                logger.warning(f"STATE MISMATCH: {err}")
+                conv_manager.reset_flow()
 
         if decision.action == "start_flow":
             # Guest users cannot use flows (booking, mileage, case) - require registration
@@ -537,9 +639,19 @@ class MessageEngine:
             )
             if result:
                 return result
+            # Tool execution failed — inform user directly instead of expensive fallback chain
+            logger.warning(f"Simple API execution failed for {decision.tool}")
+            return "Došlo je do greške pri dohvatu podataka. Pokušajte ponovo."
 
-        # Fallback to original new request handling
-        return await self._handle_new_request(sender, text, user_context, conv_manager)
+        # UnifiedRouter returned an action we couldn't handle — should not happen
+        logger.warning(f"UNHANDLED action={decision.action} tool={decision.tool}")
+        return (
+            "Nisam siguran što tražite. Možete pitati za:\n"
+            "* Rezervaciju vozila\n"
+            "* Kilometražu\n"
+            "* Prijavu štete\n"
+            "* Informacije o vozilu"
+        )
 
     async def _handle_flow_start(self, decision, text: str, user_context: Dict, conv_manager) -> str:
         """Handle flow start from router decision."""
@@ -559,7 +671,72 @@ class MessageEngine:
             return await self._flow_executors.handle_delete_flow(
                 decision.flow_type, text, user_context, conv_manager
             )
-        return "Neispravan flow tip."
+        # ── GENERIC: Any flow_type not handled above (covers all 950 tools) ──
+        logger.info(f"GENERIC FLOW START: type={decision.flow_type}, tool={decision.tool}")
+
+        tool_name = decision.tool
+        if not tool_name:
+            return "Nisam mogao odrediti operaciju. Možete li preformulirati?"
+
+        tool = self.registry.get_tool(tool_name) if self.registry else None
+        if not tool:
+            err = ConversationError(
+                ErrorCode.FLOW_NOT_FOUND,
+                f"Tool '{tool_name}' not found in registry",
+                metadata={"tool_name": tool_name, "flow_type": decision.flow_type},
+            )
+            logger.warning(f"{err}")
+            return f"Alat '{tool_name}' nije pronađen u sustavu."
+
+        # Determine which params are missing (exclude context-injectable ones)
+        ctx = UserContextManager(user_context)
+        injected = set()
+        for p_name in tool.get_context_params():
+            injected.add(p_name)
+        if ctx.person_id:
+            for p_name, p_def in tool.parameters.items():
+                if getattr(p_def, 'context_key', None) == 'person_id':
+                    injected.add(p_name)
+        if ctx.vehicle_id:
+            injected.add("VehicleId")
+
+        provided = set(decision.params.keys()) if decision.params else set()
+        missing = [p for p in tool.required_params if p not in injected and p not in provided]
+
+        is_mutation = tool.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        flow_name = f"generic_{'mutation' if is_mutation else 'query'}"
+
+        await conv_manager.start_flow(flow_name=flow_name, tool=tool_name, required_params=missing)
+
+        # Store context-injected + LLM-extracted params
+        initial_params = dict(decision.params or {})
+        if ctx.person_id:
+            for p_name, p_def in tool.parameters.items():
+                if getattr(p_def, 'context_key', None) == 'person_id':
+                    initial_params[p_name] = ctx.person_id
+        if ctx.vehicle_id and "VehicleId" in tool.parameters:
+            initial_params["VehicleId"] = ctx.vehicle_id
+        if initial_params:
+            await conv_manager.add_parameters(initial_params)
+        await conv_manager.save()
+
+        if not missing:
+            # All params already available — execute or confirm
+            if is_mutation:
+                result = await self._flow_handler.request_confirmation(
+                    tool_name=tool_name,
+                    parameters=conv_manager.get_parameters(),
+                    user_context=user_context,
+                    conv_manager=conv_manager
+                )
+                return result.get("prompt", "Potvrdite operaciju s 'Da' ili 'Ne'.")
+            else:
+                return await self._flow_handler._execute_generic_tool(
+                    tool_name, conv_manager.get_parameters(), user_context, conv_manager
+                )
+
+        from services.context import get_multiple_missing_prompts
+        return get_multiple_missing_prompts(missing)
 
     async def _handle_new_request(
         self,
@@ -568,7 +745,7 @@ class MessageEngine:
         user_context: Dict[str, Any],
         conv_manager: ConversationManager
     ) -> str:
-        """Handle new request with Chain Planning and Fallback Execution."""
+        """Handle new request via QueryRouter deterministic routing (exception recovery / mid-flow callback)."""
 
         # DETERMINISTIC ROUTING - Try rules FIRST
         # predict_proba() is CPU-bound (matrix mul). On 0.5 CPU it blocks the
@@ -585,11 +762,11 @@ class MessageEngine:
                 if route.response_template:
                     ctx = UserContextManager(user_context)
                     if 'person_id' in route.response_template:
-                        return f"*Person ID:** {ctx.person_id or 'N/A'}"
+                        return f"**Person ID:** {ctx.person_id or 'N/A'}"
                     elif 'phone' in route.response_template:
-                        return f"*Telefon:** {ctx.phone or 'N/A'}"
+                        return f"**Telefon:** {ctx.phone or 'N/A'}"
                     elif 'tenant_id' in route.response_template:
-                        return f"*Tenant ID:** {ctx.tenant_id or 'N/A'}"
+                        return f"**Tenant ID:** {ctx.tenant_id or 'N/A'}"
 
                     simple_context = {
                         k: v for k, v in user_context.items()
@@ -616,384 +793,14 @@ class MessageEngine:
                 )
                 if result:
                     return result
-                logger.warning("Deterministic execution failed, falling back to LLM")
+                logger.warning(f"Deterministic execution failed for {route.tool_name}")
 
-        # Pre-resolve entity references
-        pre_resolved = await self._deterministic_executor.pre_resolve_entity_references(
-            text, user_context, conv_manager, self.executor
+        # No deterministic match — return helpful message
+        logger.info(f"_handle_new_request: No deterministic match for '{text[:50]}'")
+        return (
+            "Nisam siguran što tražite. Možete pitati za:\n"
+            "* Rezervaciju vozila\n"
+            "* Kilometražu\n"
+            "* Prijavu štete\n"
+            "* Informacije o vozilu"
         )
-        if pre_resolved:
-            logger.info(f"Pre-resolved entities: {list(pre_resolved.keys())}")
-
-        # Get history
-        history = await self.context.get_recent_messages(sender)
-        messages = history.copy()
-        messages.append({"role": "user", "content": text})
-
-        # Get relevant tools with scores
-        tools_with_scores = await self.registry.find_relevant_tools_with_scores(text, top_k=10)
-        tools_with_scores = sorted(tools_with_scores, key=lambda t: t["score"], reverse=True)
-        tools = [t["schema"] for t in tools_with_scores]
-
-        # Use ChainPlanner for multi-step plans
-        plan = await self.chain_planner.create_plan(
-            query=text,
-            user_context=user_context,
-            available_tools=tools,
-            tool_scores=tools_with_scores
-        )
-
-        logger.info(f"ChainPlan: {plan.understanding} (simple={plan.is_simple})")
-
-        if plan.direct_response:
-            return plan.direct_response
-
-        if plan.missing_data and not plan.has_all_data:
-            missing_prompt = DeterministicExecutor.build_missing_data_prompt(plan.missing_data)
-            logger.info(f"Missing data: {plan.missing_data}")
-
-            first_step = plan.primary_path[0] if plan.primary_path else None
-            await conv_manager.start_flow(
-                flow_name="gathering",
-                tool=first_step.tool_name if first_step else None,
-                required_params=plan.missing_data
-            )
-            await conv_manager.save()
-            return missing_prompt
-
-        extraction_hint = getattr(plan, 'extraction_hint', None)
-
-        # FAST PATH: If ChainPlanner identified a simple single-tool plan,
-        # execute it directly instead of making another LLM call via AIOrchestrator.
-        # This saves 1-2 LLM calls per message for most queries.
-        if (plan.is_simple and plan.has_all_data and plan.primary_path
-                and len(plan.primary_path) == 1
-                and plan.primary_path[0].tool_name):
-            fast_tool = plan.primary_path[0].tool_name
-            logger.info(f"FAST PATH: ChainPlanner simple plan -> executing {fast_tool} directly (skipping AI loop)")
-            route = RouteResult(
-                matched=True,
-                tool_name=fast_tool,
-                confidence=0.9,
-                flow_type="simple"
-            )
-            result = await self._deterministic_executor.execute(
-                route, user_context, conv_manager, sender, text
-            )
-            if result:
-                return result
-            logger.warning(f"FAST PATH: {fast_tool} execution failed, falling through to AI loop")
-
-        # MULTI-TOOL FAST PATH: Execute parallel tools from deterministic pattern match
-        if (not plan.is_simple and plan.has_all_data and plan.primary_path
-                and len(plan.primary_path) > 1
-                and all(s.tool_name for s in plan.primary_path)):
-            tool_names = [s.tool_name for s in plan.primary_path]
-            logger.info(f"MULTI-TOOL FAST PATH: executing {tool_names} in parallel")
-
-            async def _exec_one(tool_name: str) -> Dict[str, Any]:
-                call = {
-                    "tool": tool_name,
-                    "parameters": {},
-                    "tool_call_id": f"multi_{tool_name}",
-                }
-                return await self._tool_handler.execute_tool_call(
-                    call, user_context, conv_manager, sender, user_query=text
-                )
-
-            results_list = await asyncio.gather(
-                *[_exec_one(t) for t in tool_names],
-                return_exceptions=True
-            )
-
-            # Combine successful results
-            combined_parts = []
-            for tool_name, res in zip(tool_names, results_list):
-                if isinstance(res, Exception):
-                    logger.warning(f"Multi-tool {tool_name} failed: {res}")
-                    continue
-                if res.get("final_response"):
-                    combined_parts.append(res["final_response"])
-                elif res.get("data"):
-                    combined_parts.append(json.dumps(res["data"], ensure_ascii=False))
-
-            if combined_parts:
-                return "\n\n".join(combined_parts)
-            logger.warning("MULTI-TOOL FAST PATH: all tools failed, falling through to AI loop")
-
-        # Get fallback tools from plan
-        fallback_tools = []
-        if hasattr(plan, 'fallback_paths') and plan.fallback_paths:
-            for step_fallbacks in plan.fallback_paths.values():
-                for fb in step_fallbacks:
-                    for fb_step in fb.steps:
-                        if fb_step.tool_name:
-                            fallback_tools.append(fb_step.tool_name)
-
-        if tools_with_scores:
-            best_match = max(tools_with_scores, key=lambda t: t["score"])
-            logger.info(
-                f"Tool recommendation: {best_match['name']} (score={best_match['score']:.3f}) "
-                f"- LLM will decide from {len(tools_with_scores)} options"
-            )
-
-        # Build system prompt
-        system_prompt = self.ai.build_system_prompt(
-            user_context,
-            conv_manager.to_dict() if conv_manager.is_in_flow() else None
-        )
-
-        # AI iteration loop
-        current_messages = messages.copy()
-
-        for iteration in range(self.MAX_ITERATIONS):
-            logger.debug(f"AI iteration {iteration + 1}/{self.MAX_ITERATIONS}")
-
-            result = await self._instrumented_ai_call(
-                messages=current_messages,
-                tools=tools,
-                system_prompt=system_prompt,
-                tool_scores=tools_with_scores,
-                user_context=user_context
-            )
-
-            if result.get("type") == "error":
-                return result.get("content", "Greska u AI obradi.")
-
-            if result.get("type") == "text":
-                return result.get("content", "")
-
-            if result.get("type") == "tool_call":
-                tool_name = result["tool"]
-                tool = self.registry.get_tool(tool_name)
-                method = tool.method if tool else "GET"
-
-                # Special handling for availability/calendar
-                # Config-driven: check tool tags/method instead of name substrings
-                tool_tags = getattr(tool, 'tags', []) or []
-                is_availability_tool = (
-                    method == "GET" and
-                    any(tag in (t.lower() for t in tool_tags) for tag in ["availability", "calendar"]) or
-                    (method == "GET" and tool_name in self._get_availability_tools())
-                )
-                if is_availability_tool:
-                    return await self._flow_executors.handle_availability_flow(
-                        result, user_context, conv_manager
-                    )
-
-                # Block direct booking creation without validation
-                is_booking_create = (
-                    method == "POST" and
-                    tool_name in self._get_booking_tools()
-                )
-                if is_booking_create:
-                    params = result.get("parameters", {})
-                    vehicle_id = params.get("VehicleId") or params.get("vehicleId")
-
-                    validated_vehicle_id = None
-                    if hasattr(conv_manager.context, 'tool_outputs'):
-                        validated_vehicle_id = conv_manager.context.tool_outputs.get("VehicleId")
-                        all_vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
-                        if vehicle_id and all_vehicles:
-                            for v in all_vehicles:
-                                if v.get("Id") == vehicle_id:
-                                    validated_vehicle_id = vehicle_id
-                                    break
-
-                    if not validated_vehicle_id or vehicle_id != validated_vehicle_id:
-                        logger.warning(
-                            f"BLOCKED direct post_VehicleCalendar: VehicleId={vehicle_id} is NOT validated"
-                        )
-                        return await self._flow_executors.handle_booking_flow(text, user_context, conv_manager, {})
-
-                    state = conv_manager.get_state()
-                    if state != ConversationState.EXECUTING:
-                        confirmation_result = await self._flow_handler.request_confirmation(
-                            tool_name, params, user_context, conv_manager
-                        )
-                        return confirmation_result.get("prompt", "Molim potvrdite rezervaciju s 'Da' ili 'Ne'.")
-
-                # Mutation tools require confirmation
-                if method in ("POST", "PUT", "PATCH"):
-                    if self._tool_handler.requires_confirmation(tool_name):
-                        flow_result = await self._flow_handler.request_confirmation(
-                            tool_name, result["parameters"], user_context, conv_manager
-                        )
-                        if flow_result.get("needs_input"):
-                            return flow_result["prompt"]
-
-                # Execute tool
-                tool_response = await self._tool_handler.execute_tool_call(
-                    result, user_context, conv_manager, sender, user_query=text
-                )
-
-                # Use LLM extraction for successful responses
-                if tool_response.get("success") and tool_response.get("data"):
-                    # If there are NO additional calls, try to return extracted response directly
-                    if not result.get("additional_calls"):
-                        try:
-                            extracted_response = await self.response_extractor.extract(
-                                user_query=text,
-                                api_response=tool_response["data"],
-                                tool_name=tool_name,
-                                extraction_hint=extraction_hint
-                            )
-                            if extracted_response:
-                                return extracted_response
-                        except Exception as e:
-                            logger.warning(f"LLM extraction failed: {e}")
-
-                if not result.get("additional_calls"):
-                    if tool_response.get("final_response"):
-                        return tool_response["final_response"]
-
-                    if tool_response.get("needs_input"):
-                        return tool_response.get("prompt", "")
-
-                # Try fallback tools on failure
-                if not tool_response.get("success", True) and fallback_tools:
-                    logger.info(f"Primary tool {tool_name} failed, trying fallbacks...")
-                    for fb_tool_name in fallback_tools:
-                        if fb_tool_name == tool_name:
-                            continue
-
-                        fb_tool = self.registry.get_tool(fb_tool_name)
-                        if not fb_tool:
-                            continue
-
-                        fb_result = {
-                            "tool": fb_tool_name,
-                            "parameters": result["parameters"].copy(),
-                            "tool_call_id": "fallback"
-                        }
-
-                        fb_response = await self._tool_handler.execute_tool_call(
-                            fb_result, user_context, conv_manager, sender, user_query=text
-                        )
-
-                        if fb_response.get("success"):
-                            logger.info(f"Fallback {fb_tool_name} succeeded!")
-                            if fb_response.get("data"):
-                                try:
-                                    extracted = await self.response_extractor.extract(
-                                        user_query=text,
-                                        api_response=fb_response["data"],
-                                        tool_name=fb_tool_name,
-                                        extraction_hint=extraction_hint
-                                    )
-                                    if extracted:
-                                        return extracted
-                                except (KeyError, TypeError, ValueError) as e:
-                                    logger.warning(f"Fallback extraction failed for {fb_tool_name}: {type(e).__name__}: {e}")
-                            if fb_response.get("final_response"):
-                                return fb_response["final_response"]
-                            break
-
-                # Build tool_calls list for conversation (include all calls from LLM)
-                all_assistant_tool_calls = [{
-                    "id": result["tool_call_id"],
-                    "type": "function",
-                    "function": {
-                        "name": result["tool"],
-                        "arguments": json.dumps(result["parameters"])
-                    }
-                }]
-
-                # First tool result
-                tool_result_content = tool_response.get("data", {})
-                if not tool_response.get("success", True):
-                    tool_result_content = {
-                        "error": True,
-                        "message": tool_response.get("error", "Unknown error"),
-                        "ai_feedback": tool_response.get("ai_feedback", "")
-                    }
-
-                all_tool_results = [{
-                    "role": "tool",
-                    "tool_call_id": result["tool_call_id"],
-                    "content": json.dumps(tool_result_content)
-                }]
-
-                # Process additional parallel tool calls from LLM
-                additional_calls = result.get("additional_calls", [])
-                if additional_calls:
-                    logger.info(f"Processing {len(additional_calls)} additional parallel tool calls")
-
-                for extra_call in additional_calls:
-                    extra_tool_name = extra_call["tool"]
-                    logger.info(f"Executing additional tool call: {extra_tool_name}")
-
-                    all_assistant_tool_calls.append({
-                        "id": extra_call["tool_call_id"],
-                        "type": "function",
-                        "function": {
-                            "name": extra_call["tool"],
-                            "arguments": json.dumps(extra_call["parameters"])
-                        }
-                    })
-
-                    extra_response = await self._tool_handler.execute_tool_call(
-                        extra_call, user_context, conv_manager, sender, user_query=text
-                    )
-
-                    extra_content = extra_response.get("data", {})
-                    if not extra_response.get("success", True):
-                        extra_content = {
-                            "error": True,
-                            "message": extra_response.get("error", "Unknown error")
-                        }
-
-                    all_tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": extra_call["tool_call_id"],
-                        "content": json.dumps(extra_content)
-                    })
-
-                # Add assistant message with ALL tool calls
-                current_messages.append({
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": all_assistant_tool_calls
-                })
-
-                # Add ALL tool results
-                current_messages.extend(all_tool_results)
-
-        return "Nisam uspio obraditi zahtjev. Pokusajte drugacije formulirati."
-
-    # ---
-    # CONFIG-DRIVEN TOOL IDENTIFICATION (replaces hardcoded tool name checks)
-    # ---
-
-    def _get_availability_tools(self) -> set:
-        """Get tool names that handle vehicle availability (config-driven)."""
-        if not self.registry:
-            return set()
-        # Dynamically discover from registry instead of hardcoding names
-        tools = set()
-        for tool_name in self.registry.tools:
-            tool = self.registry.get_tool(tool_name)
-            if not tool or tool.method != "GET":
-                continue
-            name_lower = tool_name.lower()
-            desc_lower = (getattr(tool, 'description', '') or '').lower()
-            if ('available' in name_lower and 'vehicle' in name_lower) or \
-               ('slobodn' in desc_lower and 'vozil' in desc_lower):
-                tools.add(tool_name)
-        return tools
-
-    def _get_booking_tools(self) -> set:
-        """Get tool names that create bookings (config-driven)."""
-        if not self.registry:
-            return set()
-        tools = set()
-        for tool_name in self.registry.tools:
-            tool = self.registry.get_tool(tool_name)
-            if not tool or tool.method != "POST":
-                continue
-            name_lower = tool_name.lower()
-            desc_lower = (getattr(tool, 'description', '') or '').lower()
-            if ('calendar' in name_lower and 'vehicle' in name_lower) or \
-               ('rezervacij' in desc_lower and 'kreir' in desc_lower):
-                tools.add(tool_name)
-        return tools

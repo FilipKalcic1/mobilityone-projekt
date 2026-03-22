@@ -20,16 +20,16 @@ QUEUE_DLQ = "dlq:inbound"
 
 class QueueService:
     """Redis queue management."""
-    
+
     def __init__(self, redis_client):
         """
         Initialize queue service.
-        
+
         Args:
             redis_client: Redis async client
         """
         self.redis = redis_client
-    
+
     async def enqueue_inbound(
         self,
         sender: str,
@@ -38,12 +38,12 @@ class QueueService:
     ) -> str:
         """
         Add inbound message to stream.
-        
+
         Args:
             sender: Sender phone number
             text: Message text
             message_id: Message ID
-            
+
         Returns:
             Stream entry ID
         """
@@ -60,7 +60,7 @@ class QueueService:
         except Exception as e:
             logger.error(f"Enqueue inbound failed: {e}")
             raise
-    
+
     async def enqueue_outbound(
         self,
         to: str,
@@ -70,7 +70,7 @@ class QueueService:
     ) -> None:
         """
         Add outbound message to queue.
-        
+
         Args:
             to: Recipient phone number
             text: Message text
@@ -89,19 +89,19 @@ class QueueService:
         except Exception as e:
             logger.error(f"Enqueue outbound failed: {e}")
             raise
-    
+
     # Alias for compatibility
     async def enqueue(self, to: str, text: str, **kwargs) -> None:
         """Alias for enqueue_outbound."""
         await self.enqueue_outbound(to, text, **kwargs)
-    
+
     async def dequeue_outbound(self, timeout: int = 1) -> Optional[Dict[str, Any]]:
         """
         Get next outbound message.
-        
+
         Args:
             timeout: Blocking timeout in seconds
-            
+
         Returns:
             Message payload or None
         """
@@ -114,11 +114,11 @@ class QueueService:
         except Exception as e:
             logger.error(f"Dequeue outbound failed: {e}")
             return None
-    
+
     async def store_dlq(self, payload: Dict, error: str) -> None:
         """
         Store failed message in dead letter queue.
-        
+
         Args:
             payload: Original message payload
             error: Error description
@@ -132,7 +132,7 @@ class QueueService:
             logger.warning(f"Message stored in DLQ: {error[:100]}")
         except Exception as e:
             logger.error(f"DLQ store failed: {e}")
-    
+
     async def create_consumer_group(
         self,
         stream: str = STREAM_INBOUND,
@@ -140,11 +140,11 @@ class QueueService:
     ) -> bool:
         """
         Create consumer group for stream.
-        
+
         Args:
             stream: Stream name
             group: Group name
-            
+
         Returns:
             True if created or already exists
         """
@@ -157,7 +157,7 @@ class QueueService:
                 return True
             logger.error(f"Create consumer group failed: {e}")
             return False
-    
+
     async def read_stream(
         self,
         group: str,
@@ -167,13 +167,13 @@ class QueueService:
     ) -> List[Tuple[str, Dict]]:
         """
         Read from stream as consumer.
-        
+
         Args:
             group: Consumer group name
             consumer: Consumer name
             count: Max messages to read
             block: Block timeout in ms
-            
+
         Returns:
             List of (message_id, data) tuples
         """
@@ -185,27 +185,27 @@ class QueueService:
                 count=count,
                 block=block
             )
-            
+
             if not streams:
                 return []
-            
+
             results = []
             for stream_name, messages in streams:
                 for msg_id, data in messages:
                     results.append((msg_id, data))
-            
+
             return results
         except Exception as e:
             logger.error(f"Read stream failed: {e}")
             return []
-    
+
     async def ack_message(self, message_id: str) -> bool:
         """
         Acknowledge processed message.
-        
+
         Args:
             message_id: Message ID to ack
-            
+
         Returns:
             True if successful
         """

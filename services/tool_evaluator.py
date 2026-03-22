@@ -102,7 +102,7 @@ class ToolMetrics:
         # Recency bonus/penalty (10%)
         if self.last_error_time:
             try:
-                last_error = datetime.fromisoformat(self.last_error_time)
+                last_error = datetime.fromisoformat(self.last_error_time.replace('Z', '+00:00'))
                 hours_since_error = (datetime.now(timezone.utc) - last_error).total_seconds() / 3600
 
                 if hours_since_error < 1:

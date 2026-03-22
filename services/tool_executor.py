@@ -37,6 +37,7 @@ from services.patterns import should_skip_person_id_injection
 from services.context import UserContextManager
 from services.filter_builder import FilterBuilder
 from services.api_capabilities import get_capability_registry, ParameterSupport
+from services.errors import BotError, ErrorCode
 
 if TYPE_CHECKING:
     from services.tool_registry import ToolRegistry
@@ -121,12 +122,14 @@ class ToolExecutor:
             # PATH params like personIdOrEmail need to be in resolved_params for path substitution
             # Use UserContextManager for validated access
             ctx_manager = UserContextManager(execution_context.user_context)
+            person_id_already_injected = False
             person_id = ctx_manager.person_id  # Returns None if missing or invalid UUID
             if person_id:
                 for param_name, param_def in tool.parameters.items():
                     if param_def.location == "path" and param_def.context_key == "person_id":
                         if param_name not in resolved_params or not resolved_params.get(param_name):
                             resolved_params[param_name] = person_id
+                            person_id_already_injected = True
                             logger.info(f"PATH INJECT: {param_name}={person_id[:8]}... for {operation_id}")
 
             # Prepare request components
@@ -148,7 +151,7 @@ class ToolExecutor:
             # personId because it's not in Swagger definition for most GET tools.
             # The injection happens HERE, not in message_engine, so it goes
             # directly to the API call without being filtered.
-            if tool.method == "GET":
+            if tool.method == "GET" and not person_id_already_injected:
                 # Reuse ctx_manager from above (validated access)
                 person_id = ctx_manager.person_id
                 if person_id:
@@ -314,7 +317,8 @@ class ToolExecutor:
             )
 
         except Exception as e:
-            logger.error(f"Execution error: {e}", exc_info=True)
+            err = BotError(ErrorCode.TOOL_EXECUTION_FAILED, f"Tool '{operation_id}' execution failed: {e}", cause=e)
+            logger.error(str(err), exc_info=True)
 
             ai_feedback = (
                 f"Neočekivana greška pri izvršavanju '{operation_id}': {str(e)}. "

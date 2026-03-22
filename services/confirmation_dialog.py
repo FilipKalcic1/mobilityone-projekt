@@ -131,7 +131,7 @@ class ConfirmationDialog:
         (r'^prioritet:\s*(.+)$', 'Priority'),
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the dialog handler."""
         self._vehicle_cache: Dict[str, Dict] = {}  # VehicleId -> vehicle info
 
@@ -344,7 +344,7 @@ class ConfirmationDialog:
         optional = [p for p in parameters if not p.is_required]
 
         for param in required:
-            check = "✓" if param.value else "⚠️"
+            check = "✓" if param.value is not None else "⚠️"
             lines.append(f"• {param.display_name}: **{param.display_value}** {check}")
 
         if optional:

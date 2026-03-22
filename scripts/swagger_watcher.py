@@ -110,7 +110,8 @@ class SwaggerWatcher:
     async def fetch_swagger(self, url: str) -> Optional[Dict]:
         """Fetch Swagger spec from URL."""
         try:
-            async with httpx.AsyncClient(verify=False, timeout=30) as client:
+            verify_tls = os.environ.get("SWAGGER_VERIFY_TLS", "true").lower() != "false"
+            async with httpx.AsyncClient(verify=verify_tls, timeout=30) as client:
                 response = await client.get(url)
                 if response.status_code == 200:
                     return response.json()

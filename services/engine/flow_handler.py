@@ -11,6 +11,7 @@ v2.0 Changes:
 
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
 from services.booking_contracts import AssigneeType, EntryType
@@ -18,8 +19,19 @@ from services.error_translator import get_error_translator
 from services.confirmation_dialog import get_confirmation_dialog
 from services.context import get_multiple_missing_prompts
 from services.context.user_context_manager import UserContextManager
+from services.errors import ConversationError, ErrorCode, InfrastructureError
+from services.tracing import get_tracer, trace_span
+from services.engine.confirmation_handler import (
+    request_confirmation_flow,
+    handle_selection_flow,
+    handle_confirmation_flow,
+    show_mileage_confirmation,
+    show_case_confirmation,
+    show_delete_confirmation,
+)
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("flow_handler")
 
 class FlowHandler:
     """
@@ -32,7 +44,7 @@ class FlowHandler:
     - Handle availability checks
     """
 
-    def __init__(self, registry, executor, ai, formatter):
+    def __init__(self, registry, executor, ai, formatter) -> None:
         """Initialize flow handler."""
         self.registry = registry
         self.executor = executor
@@ -81,10 +93,16 @@ class FlowHandler:
 
         tool = self.registry.get_tool(tool_name)
         if not tool:
+            err = ConversationError(
+                ErrorCode.FLOW_NOT_FOUND,
+                f"Tool {tool_name} not found for availability check",
+                metadata={"tool_name": tool_name},
+            )
+            logger.warning(f"{err}")
             return {
                 "success": False,
                 "error": f"Tool {tool_name} not found",
-                "final_response": f"Tehnicki problem - alat '{tool_name}' nije pronaden."
+                "final_response": f"Tehnički problem - alat '{tool_name}' nije pronađen."
             }
 
         from services.tool_contracts import ToolExecutionContext
@@ -101,7 +119,7 @@ class FlowHandler:
                 "success": False,
                 "data": {"error": result.error_message},
                 "ai_feedback": result.ai_feedback or "Availability check failed",
-                "final_response": f"Greska: {result.error_message}"
+                "final_response": f"Greška: {result.error_message}"
             }
 
         # Extract items
@@ -112,10 +130,10 @@ class FlowHandler:
                 "success": True,
                 "data": result.data,
                 "final_response": (
-                    "Nazalost, nema slobodnih vozila za odabrani period.\n\n"
-                    "Mozete li odabrati drugi termin? Na primjer:\n"
+                    "Nažalost, nema slobodnih vozila za odabrani period.\n\n"
+                    "Možete li odabrati drugi termin? Na primjer:\n"
                     "* 'Sutra od 8 do 17'\n"
-                    "* 'Sljedeci tjedan od ponedjeljka do srijede'"
+                    "* 'Sljedeći tjedan od ponedjeljka do srijede'"
                 )
             }
 
@@ -160,7 +178,7 @@ class FlowHandler:
         from_time = parameters.get("from") or parameters.get("FromTime")
         to_time = parameters.get("to") or parameters.get("ToTime")
 
-        message = f"**Pronasao sam slobodno vozilo:**\n\n**{vehicle_name}** ({plate})\n\n"
+        message = f"**Pronašao sam slobodno vozilo:**\n\n**{vehicle_name}** ({plate})\n\n"
 
         if from_time and to_time:
             message += f"Period: {from_time} -> {to_time}\n\n"
@@ -169,7 +187,7 @@ class FlowHandler:
             message += f"_(Ima jos {len(items) - 1} slobodnih vozila. Recite 'pokaži ostala' za listu)_\n\n"
 
         if from_time and to_time:
-            message += "**Zelite li potvrditi rezervaciju?** (Da/Ne)"
+            message += "**Želite li potvrditi rezervaciju?** (Da/Ne)"
         else:
             message += "**Za nastavak trebam period rezervacije.** (npr. 'od sutra 9h do 17h')"
 
@@ -190,55 +208,11 @@ class FlowHandler:
         user_context: Dict[str, Any],
         conv_manager
     ) -> Dict[str, Any]:
-        """
-        Request confirmation for critical operation.
-
-        Uses ConfirmationDialog for human-readable parameter display.
-        - Vehicle IDs shown as names with plates
-        - Dates shown in Croatian format
-        - Users can modify params with "Bilješka: tekst" syntax
-        """
-        await conv_manager.add_parameters(parameters)
-
-        tool = self.registry.get_tool(tool_name)
-
-        # Build context data for better formatting
-        context_data = {}
-        if hasattr(conv_manager.context, 'tool_outputs'):
-            # Get selected vehicle for display
-            selected = conv_manager.get_selected_item()
-            if selected:
-                context_data['selected_vehicle'] = selected
-            # Also check tool_outputs for vehicle info
-            vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
-            if vehicles:
-                context_data['vehicle'] = vehicles[0]
-
-        # Format parameters using ConfirmationDialog
-        param_displays = self.confirmation_dialog.format_parameters(
-            tool_name=tool_name,
-            parameters=parameters,
-            tool_definition=tool,
-            context_data=context_data
+        """Request confirmation for critical operation. Delegates to confirmation_handler."""
+        return await request_confirmation_flow(
+            self.registry, self.confirmation_dialog,
+            tool_name, parameters, user_context, conv_manager
         )
-
-        # Generate the confirmation message
-        message = self.confirmation_dialog.generate_confirmation_message(
-            tool_name=tool_name,
-            parameters=param_displays,
-            operation_description=tool.description[:100] if tool and tool.description else ""
-        )
-
-        await conv_manager.request_confirmation(message)
-        conv_manager.context.current_tool = tool_name
-        await conv_manager.save()
-
-        return {
-            "success": True,
-            "data": {},
-            "needs_input": True,
-            "prompt": message
-        }
 
     async def handle_selection(
         self,
@@ -248,45 +222,11 @@ class FlowHandler:
         conv_manager,
         handle_new_request_fn
     ) -> str:
-        """Handle item selection."""
-        selected = conv_manager.parse_item_selection(text)
-
-        if not selected:
-            return "Nisam razumio odabir.\nMolimo navedite broj (npr. '1') ili naziv."
-
-        await conv_manager.select_item(selected)
-
-        # Delete flows: show delete confirmation
-        current_flow = conv_manager.get_current_flow()
-        if current_flow and current_flow.startswith("delete_"):
-            return await self._show_delete_confirmation(selected, conv_manager)
-
-        params = conv_manager.get_parameters()
-
-        vehicle_name = (
-            selected.get("FullVehicleName") or
-            selected.get("DisplayName") or
-            selected.get("Name") or
-            "Vozilo"
+        """Handle item selection. Delegates to confirmation_handler."""
+        return await handle_selection_flow(
+            self.registry, self.formatter,
+            sender, text, user_context, conv_manager, handle_new_request_fn
         )
-        plate = selected.get("LicencePlate") or selected.get("Plate", "N/A")
-
-        from_time = params.get("from") or params.get("FromTime", "N/A")
-        to_time = params.get("to") or params.get("ToTime", "N/A")
-
-        message = (
-            f"**Potvrdite rezervaciju:**\n\n"
-            f"Vozilo: {vehicle_name} ({plate})\n"
-            f"Od: {from_time}\n"
-            f"Do: {to_time}\n\n"
-            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
-        )
-
-        await conv_manager.request_confirmation(message)
-        conv_manager.context.current_tool = "post_VehicleCalendar"
-        await conv_manager.save()
-
-        return message
 
     async def handle_confirmation(
         self,
@@ -295,237 +235,15 @@ class FlowHandler:
         user_context: Dict[str, Any],
         conv_manager
     ) -> str:
-        """Handle confirmation response."""
-        text_lower = text.lower()
-
-        # NEW: Detect filter commands like "pokaži Passat" or "pokaži ZG"
-        filter_text = self._extract_filter_text(text)
-        if filter_text and hasattr(conv_manager.context, 'tool_outputs'):
-            all_vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
-            if all_vehicles:
-                message = self.formatter.format_vehicle_list(all_vehicles, filter_text=filter_text)
-                # Stay in SELECTING_ITEM state to allow selection
-                await conv_manager.request_selection(message)
-                await conv_manager.save()
-                return message
-
-        if any(keyword in text_lower for keyword in ["pokaz", "ostala", "druga", "jos vozila", "vise", "sva"]):
-            # User wants to see all available vehicles
-            if hasattr(conv_manager.context, 'tool_outputs'):
-                all_vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
-
-                if len(all_vehicles) > 1:
-                    # Use formatter with filter instructions
-                    message = self.formatter.format_vehicle_list(all_vehicles)
-
-                    # Switch to SELECTING_ITEM state
-                    await conv_manager.request_selection(message)
-                    await conv_manager.save()
-
-                    return message
-
-            return "Trenutno nema drugih dostupnih vozila."
-
-        # Check for parameter modifications
-        # Examples: "Bilješka: službeni put", "Od: 10:00", "Note: xyz"
-        modification = self.confirmation_dialog.parse_modification(text)
-        if modification:
-            param_name, new_value = modification
-            params = conv_manager.get_parameters()
-            old_value = params.get(param_name)
-
-            # Update the parameter
-            params[param_name] = new_value
-            await conv_manager.add_parameters({param_name: new_value})
-            await conv_manager.save()
-
-            # Generate update message
-            display_name = self.confirmation_dialog.DISPLAY_NAMES.get(param_name, param_name)
-            message = (
-                f"✏️ **Ažurirano!**\n"
-                f"{display_name}: {new_value}\n\n"
-                f"Potvrdite s **Da** ili nastavite s izmjenama."
+        """Handle confirmation response. Delegates to confirmation_handler."""
+        with trace_span(_tracer, "flow_handler.handle_confirmation", {"sender_suffix": sender[-4:] if sender else "", "text_length": len(text)}) as span:
+            result = await handle_confirmation_flow(
+                self.registry, self.executor, self.formatter, self.confirmation_dialog,
+                self._is_question, self._extract_filter_text,
+                sender, text, user_context, conv_manager
             )
-            return message
-
-        confirmation = conv_manager.parse_confirmation(text)
-
-        if confirmation is None:
-            # P1 FIX: Detect if user is asking a question mid-flow
-            # Allow them to get information without losing confirmation state
-            if self._is_question(text):
-                logger.info(f"Mid-flow question detected: '{text[:50]}'")
-                # Return special marker to let message_engine handle the question
-                # The flow state is preserved so user can still confirm after
-                return {"mid_flow_question": True, "question": text}
-
-            return "Molim potvrdite s 'Da' ili odustanite s 'Ne'.\n_Ili dodajte parametar, npr: 'Bilješka: tekst'_"
-
-        if not confirmation:
-            await conv_manager.cancel()
-            return "Operacija otkazana. Kako vam još mogu pomoći?"
-
-        await conv_manager.confirm()
-
-        tool_name = conv_manager.get_current_tool()
-        if not tool_name:
-            logger.warning("CONFIRMATION: tool_name is None after confirm (state expired?)")
-            await conv_manager.reset()
-            return "Vaša sesija je istekla. Molimo pokrenite operaciju ponovno."
-        params = conv_manager.get_parameters()
-        selected = conv_manager.get_selected_item()
-
-        # Build booking payload
-        if tool_name == "post_VehicleCalendar":
-            vehicle_id = None
-            if selected:
-                vehicle_id = selected.get("Id") or selected.get("VehicleId")
-            if not vehicle_id and hasattr(conv_manager.context, 'tool_outputs'):
-                vehicle_id = conv_manager.context.tool_outputs.get("VehicleId")
-
-            if not vehicle_id:
-                await conv_manager.reset()
-                return "Greska: Nije odabrano vozilo. Pokusajte ponovno."
-
-            from_time = params.get("from") or params.get("FromTime")
-            to_time = params.get("to") or params.get("ToTime")
-
-            if not from_time or not to_time:
-                await conv_manager.reset()
-                return "Greska: Nedostaje vrijeme rezervacije. Pokusajte ponovno."
-
-            # Use UserContextManager for validated access
-            ctx = UserContextManager(user_context)
-            params = {
-                "AssignedToId": ctx.person_id,
-                "VehicleId": vehicle_id,
-                "FromTime": from_time,
-                "ToTime": to_time,
-                "AssigneeType": int(AssigneeType.PERSON),  # Explicit int conversion
-                "EntryType": int(EntryType.BOOKING),  # Explicit int conversion
-                **({"Description": desc} if (desc := params.get("Description") or params.get("description")) else {})
-            }
-        else:
-            if selected:
-                item_id = selected.get("Id") or selected.get("VehicleId")
-                if item_id:
-                    if tool_name and "delete_" in tool_name:
-                        params["id"] = item_id
-                    else:
-                        params["VehicleId"] = item_id
-
-            if "from" in params and "FromTime" not in params:
-                params["FromTime"] = params.pop("from")
-            if "to" in params and "ToTime" not in params:
-                params["ToTime"] = params.pop("to")
-
-        # Execute
-        tool = self.registry.get_tool(tool_name)
-        if not tool:
-            await conv_manager.reset()
-            return f"Tehnicki problem - alat '{tool_name}' nije pronaden."
-
-        # FIX: Inject EntryType and AssigneeType into user_context for booking
-        # These are required context params that need default values
-        booking_context = user_context.copy()
-        if tool_name == "post_VehicleCalendar":
-            booking_context["entrytype"] = int(EntryType.BOOKING)  # 0
-            booking_context["assigneetype"] = int(AssigneeType.PERSON)  # 1
-
-        from services.tool_contracts import ToolExecutionContext
-        execution_context = ToolExecutionContext(
-            user_context=booking_context,
-            tool_outputs=(
-                conv_manager.context.tool_outputs
-                if hasattr(conv_manager.context, 'tool_outputs')
-                else {}
-            ),
-            conversation_state={}
-        )
-
-        result = await self.executor.execute(tool, params, execution_context)
-
-        # Always clean up state - even if save fails, don't leave stale flow
-        try:
-            await conv_manager.complete()
-            await conv_manager.reset()
-        except Exception as e:
-            logger.error(f"State cleanup failed after execution: {e}")
-            # Force reset context in memory even if Redis save failed
-            conv_manager.context.reset()
-
-        if result.success:
-            if tool_name == "post_VehicleCalendar":
-                vehicle_name = ""
-                if selected:
-                    vehicle_name = (
-                        selected.get("FullVehicleName") or
-                        selected.get("DisplayName") or
-                        selected.get("Name") or
-                        ""
-                    )
-                    plate = selected.get("LicencePlate") or selected.get("Plate") or ""
-                    if plate:
-                        vehicle_name = f"{vehicle_name} ({plate})"
-
-                return (
-                    f"**Rezervacija uspjesna!**\n\n"
-                    f"Vozilo: {vehicle_name}\n"
-                    f"Period: {params.get('FromTime')} -> {params.get('ToTime')}\n\n"
-                    f"Sretno na putu!"
-                )
-
-            # Case creation success message
-            if tool_name == "post_AddCase":
-                case_id = ""
-                if isinstance(result.data, dict):
-                    case_id = result.data.get("Id", "") or result.data.get("CaseId", "")
-
-                subject = params.get("Subject", "Slučaj")
-                return (
-                    f"**Prijava uspješno kreirana!**\n\n"
-                    f"Naslov: {subject}\n"
-                    f"{'Broj slučaja: ' + str(case_id) if case_id else ''}\n\n"
-                    f"Naš tim će pregledati vašu prijavu i javiti vam se.\n"
-                    f"Kako vam još mogu pomoći?"
-                )
-
-            # Mileage update success message
-            if tool_name == "post_AddMileage":
-                value = params.get("Value", "")
-                return (
-                    f"**Kilometraža uspješno unesena!**\n\n"
-                    f"Nova kilometraža: {value} km\n\n"
-                    f"Kako vam još mogu pomoći?"
-                )
-
-            # Delete operation success message
-            if tool_name and "delete_" in tool_name:
-                item_name = ""
-                if selected:
-                    item_name = (
-                        selected.get("Subject") or selected.get("VehicleName") or
-                        selected.get("DisplayName") or selected.get("Name") or ""
-                    )
-                return (
-                    f"**Uspješno obrisano!**\n\n"
-                    f"{item_name}\n\n"
-                    f"Kako vam još mogu pomoći?"
-                )
-
-            created_id = ""
-            if isinstance(result.data, dict):
-                created_id = result.data.get("created_id", "") or result.data.get("Id", "")
-
-            return (
-                f"**Operacija uspjesna!**\n\n"
-                f"{'ID: ' + str(created_id) if created_id else ''}\n\n"
-                f"Kako vam jos mogu pomoci?"
-            )
-        else:
-            error = result.error_message or "Nepoznata greska"
-            translator = get_error_translator()
-            return translator.get_user_message(error, tool_name)
+            span.set_attribute("result.response_length", len(result) if result else 0)
+            return result
 
     # Semantic parameter descriptions for AI extraction
     PARAM_DESCRIPTIONS = {
@@ -558,159 +276,197 @@ class FlowHandler:
         handle_new_request_fn
     ) -> str:
         """Handle parameter gathering with smart extraction."""
-        missing = conv_manager.get_missing_params()
+        with trace_span(_tracer, "flow_handler.handle_gathering", {"sender_suffix": sender[-4:] if sender else "", "text_length": len(text)}) as span:
+            # Detect mid-flow questions before trying to extract parameters
+            # Prevents "koliko je sati?" from being stored as a ToTime value
+            if self._is_question(text):
+                logger.info(f"GATHERING: Mid-flow question detected: '{text[:50]}'")
+                span.set_attribute("result.type", "mid_flow_question")
+                result = await handle_new_request_fn(sender, text, user_context, conv_manager)
+                still_missing = conv_manager.get_missing_params()
+                prompt = self._build_param_prompt(still_missing)
+                return f"{result}\n\n---\n_{prompt}_"
 
-        logger.info(f"GATHERING: missing={missing}, user_input='{text[:50]}'")
+            missing = conv_manager.get_missing_params()
 
-        # Build context for better extraction
-        context = None
-        if len(missing) == 1:
-            param = missing[0]
-            context = f"Bot je pitao korisnika za '{param}'. Korisnikov odgovor je vjerojatno vrijednost za taj parametar."
+            logger.info(f"GATHERING: missing={missing}, user_input='{text[:50]}'")
+            span.set_attribute("missing_params_count", len(missing))
 
-        # Add semantic context for each parameter
-        extracted = await self.ai.extract_parameters(
-            text,
-            [{"name": p, "type": "string", "description": self.PARAM_DESCRIPTIONS.get(p, p)} for p in missing],
-            context=context
-        )
+            # Build context for better extraction
+            context = None
+            if len(missing) == 1:
+                param = missing[0]
+                context = f"Bot je pitao korisnika za '{param}'. Korisnikov odgovor je vjerojatno vrijednost za taj parametar."
 
-        logger.info(f"GATHERING: extracted={extracted}")
+            # Add semantic context for each parameter
+            # Use PARAM_DESCRIPTIONS if available, fall back to Swagger description
+            param_specs = []
+            for p in missing:
+                desc = self.PARAM_DESCRIPTIONS.get(p)
+                if not desc:
+                    tool = self.registry.get_tool(conv_manager.get_current_tool())
+                    if tool and p in tool.parameters:
+                        desc = tool.parameters[p].description  # ParameterDefinition.description from Swagger
+                param_specs.append({"name": p, "type": "string", "description": desc or p})
 
-        # FALLBACK: If extraction failed and we need only one parameter,
-        # use entire text as value (smart assumption)
-        if len(missing) == 1 and not extracted.get(missing[0]):
-            param = missing[0]
-            # For time parameters, try to parse the text
-            if param.lower() in ['totime', 'fromtime', 'to', 'from']:
-                # User likely provided a time/date value
-                if text.strip() and len(text.strip()) < 50:
-                    extracted[param] = text.strip()
-                    logger.info(f"GATHERING FALLBACK: Using raw text '{text.strip()}' as {param}")
-            # For Value (mileage), try to parse the number
-            elif param.lower() in ['value', 'mileage']:
-                # Strip European thousands separators (45.000 or 45,000 → 45000)
-                cleaned = re.sub(r'(\d)[.,](\d{3})\b', r'\1\2', text)
-                numbers = re.findall(r'\d+', cleaned)
-                if numbers:
-                    extracted[param] = int(numbers[0])
-                    logger.info(f"GATHERING FALLBACK: Extracted number '{numbers[0]}' as {param}")
+            extracted = await self.ai.extract_parameters(text, param_specs, context=context)
 
-        await conv_manager.add_parameters(extracted)
+            logger.info(f"GATHERING: extracted={extracted}")
 
-        if conv_manager.has_all_required_params():
-            logger.info("GATHERING: All params collected, continuing flow")
+            # FALLBACK: If extraction failed and we need only one parameter,
+            # use entire text as value (smart assumption)
+            if len(missing) == 1 and not extracted.get(missing[0]):
+                param = missing[0]
+                # For time parameters, try basic Croatian date parsing before raw text
+                if param.lower() in ['totime', 'fromtime', 'to', 'from']:
+                    parsed = self._parse_croatian_date(text.strip())
+                    if parsed:
+                        extracted[param] = parsed
+                        logger.info(f"GATHERING FALLBACK: Parsed Croatian date '{text.strip()}' → {parsed}")
+                    elif text.strip() and len(text.strip()) < 50:
+                        extracted[param] = text.strip()
+                        logger.info(f"GATHERING FALLBACK: Using raw text '{text.strip()}' as {param}")
+                # For Value (mileage), try to parse the number
+                elif param.lower() in ['value', 'mileage']:
+                    # Strip European thousands separators (45.000 or 1.234.567 → 45000 / 1234567)
+                    cleaned = text
+                    while True:
+                        new = re.sub(r'(\d)[.,](\d{3})\b', r'\1\2', cleaned)
+                        if new == cleaned:
+                            break
+                        cleaned = new
+                    numbers = re.findall(r'\d+', cleaned)
+                    if numbers:
+                        extracted[param] = int(numbers[0])
+                        logger.info(f"GATHERING FALLBACK: Extracted number '{numbers[0]}' as {param}")
 
-            # CRITICAL: Handle flow completion based on flow type
-            current_flow = conv_manager.get_current_flow()
-            tool_name = conv_manager.get_current_tool()
-            params = conv_manager.get_parameters()
+            await conv_manager.add_parameters(extracted)
 
-            # MILEAGE INPUT: Show confirmation
-            if current_flow == "mileage_input" and tool_name == "post_AddMileage":
-                return await self._show_mileage_confirmation(params, conv_manager)
+            if conv_manager.has_all_required_params():
+                logger.info("GATHERING: All params collected, continuing flow")
+                span.set_attribute("result.type", "all_params_collected")
 
-            # CASE CREATION: Show confirmation
-            if current_flow == "case_creation" and tool_name == "post_AddCase":
-                return await self._show_case_confirmation(params, user_context, conv_manager)
+                # CRITICAL: Handle flow completion based on flow type
+                current_flow = conv_manager.get_current_flow()
+                tool_name = conv_manager.get_current_tool()
+                params = conv_manager.get_parameters()
 
-            # BOOKING FLOW: Execute availability check with collected params
-            if current_flow == "booking" and tool_name == "get_AvailableVehicles":
-                logger.info("GATHERING: Booking flow - executing availability check")
-                result = await self.handle_availability(
-                    tool_name=tool_name,
-                    parameters=params,
-                    user_context=user_context,
-                    conv_manager=conv_manager
-                )
-                if result.get("needs_input"):
-                    return result["prompt"]
-                if result.get("final_response"):
-                    return result["final_response"]
-                return result.get("error", "Greška pri provjeri dostupnosti.")
+                span.set_attribute("current_flow", current_flow or "")
+                span.set_attribute("tool_name", tool_name or "")
 
-            # Default: let new request handler continue
-            return await handle_new_request_fn(sender, text, user_context, conv_manager)
+                # MILEAGE INPUT: Show confirmation
+                if current_flow == "mileage_input" and tool_name == "post_AddMileage":
+                    return await self._show_mileage_confirmation(params, conv_manager)
 
-        still_missing = conv_manager.get_missing_params()
-        logger.info(f"GATHERING: Still missing {still_missing}")
-        return self._build_param_prompt(still_missing)
+                # CASE CREATION: Show confirmation
+                if current_flow == "case_creation" and tool_name == "post_AddCase":
+                    return await self._show_case_confirmation(params, user_context, conv_manager)
+
+                # BOOKING FLOW: Execute availability check with collected params
+                if current_flow == "booking" and tool_name == "get_AvailableVehicles":
+                    logger.info("GATHERING: Booking flow - executing availability check")
+                    result = await self.handle_availability(
+                        tool_name=tool_name,
+                        parameters=params,
+                        user_context=user_context,
+                        conv_manager=conv_manager
+                    )
+                    if result.get("needs_input"):
+                        return result["prompt"]
+                    if result.get("final_response"):
+                        return result["final_response"]
+                    return result.get("error", "Greška pri provjeri dostupnosti.")
+
+                # ── GENERIC FLOW: Any tool not handled by specialized flows above ──
+                if current_flow and current_flow.startswith("generic_"):
+                    logger.info(f"GATHERING: Generic flow completion for {tool_name}")
+                    is_mutation = current_flow == "generic_mutation"
+
+                    if is_mutation:
+                        # POST/PUT/PATCH/DELETE → show confirmation before executing
+                        result = await self.request_confirmation(
+                            tool_name=tool_name,
+                            parameters=params,
+                            user_context=user_context,
+                            conv_manager=conv_manager
+                        )
+                        return result.get("prompt", "Potvrdite operaciju s 'Da' ili 'Ne'.")
+                    else:
+                        # GET with params → execute immediately, no confirmation needed
+                        return await self._execute_generic_tool(
+                            tool_name, params, user_context, conv_manager
+                        )
+
+                # Default: let new request handler continue
+                return await handle_new_request_fn(sender, text, user_context, conv_manager)
+
+            still_missing = conv_manager.get_missing_params()
+            logger.info(f"GATHERING: Still missing {still_missing}")
+            span.set_attribute("result.type", "still_missing")
+            span.set_attribute("result.still_missing_count", len(still_missing))
+            return self._build_param_prompt(still_missing)
 
     async def _show_mileage_confirmation(self, params: Dict[str, Any], conv_manager) -> str:
-        """Show mileage input confirmation."""
-        vehicle_name = params.get("_vehicle_name", "Vozilo")
-        plate = params.get("_vehicle_plate", "")
-        value = params.get("Value") or params.get("mileage") or params.get("Mileage")
-
-        message = (
-            f"**Potvrda unosa kilometraže:**\n\n"
-            f"Vozilo: {vehicle_name} ({plate})\n"
-            f"Kilometraža: {value} km\n\n"
-            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
-        )
-
-        await conv_manager.request_confirmation(message)
-        await conv_manager.save()
-
-        return message
+        """Show mileage input confirmation. Delegates to confirmation_handler."""
+        return await show_mileage_confirmation(params, conv_manager)
 
     async def _show_case_confirmation(
         self, params: Dict[str, Any], user_context: Dict[str, Any], conv_manager
     ) -> str:
-        """Show case creation confirmation."""
-        subject = params.get("Subject", "Prijava slučaja")
-        description = params.get("Description") or params.get("Message", "")
-
-        # Use UserContextManager for validated access
-        ctx = UserContextManager(user_context)
-        vehicle = ctx.vehicle
-        vehicle_name = vehicle.name if vehicle else ""
-        plate = vehicle.plate if vehicle else ""
-        vehicle_line = f"Vozilo: {vehicle_name} ({plate})\n" if vehicle_name else ""
-
-        message = (
-            f"**Potvrda prijave slučaja:**\n\n"
-            f"Naslov: {subject}\n"
-            f"{vehicle_line}"
-            f"Opis: {description}\n\n"
-            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
-        )
-
-        await conv_manager.request_confirmation(message)
-        await conv_manager.save()
-
-        return message
+        """Show case creation confirmation. Delegates to confirmation_handler."""
+        return await show_case_confirmation(params, user_context, conv_manager)
 
     async def _show_delete_confirmation(self, selected: Dict, conv_manager) -> str:
-        """Show confirmation for delete operation."""
-        name = (
-            selected.get("Subject") or selected.get("VehicleName") or
-            selected.get("FullVehicleName") or selected.get("DisplayName") or
-            selected.get("Name") or selected.get("Description") or "Stavka"
+        """Show confirmation for delete operation. Delegates to confirmation_handler."""
+        return await show_delete_confirmation(selected, conv_manager)
+
+    async def _execute_generic_tool(self, tool_name: str, params: Dict[str, Any],
+                                     user_context: Dict[str, Any], conv_manager) -> str:
+        """Execute any tool generically and format the response.
+
+        Used for generic_query flows (GET with user-provided params).
+        Mutations go through request_confirmation → handle_confirmation instead.
+        """
+        tool = self.registry.get_tool(tool_name)
+        if not tool:
+            err = ConversationError(
+                ErrorCode.FLOW_NOT_FOUND,
+                f"Tool '{tool_name}' not found for generic execution",
+                metadata={"tool_name": tool_name},
+            )
+            logger.warning(f"{err}")
+            await conv_manager.reset()
+            return f"Alat '{tool_name}' nije pronađen."
+
+        from services.tool_contracts import ToolExecutionContext
+        execution_context = ToolExecutionContext(
+            user_context=user_context,
+            tool_outputs=getattr(conv_manager.context, 'tool_outputs', {}),
+            conversation_state={}
         )
 
-        details = []
-        for field, label in [("FromTime", "Od"), ("ToTime", "Do"),
-                             ("CreatedDate", "Datum"), ("Status", "Status"),
-                             ("StartDate", "Početak"), ("EndDate", "Kraj")]:
-            val = selected.get(field)
-            if val:
-                details.append(f"{label}: {val}")
+        result = await self.executor.execute(tool, params, execution_context)
 
-        detail_text = "\n".join(details)
-        if detail_text:
-            detail_text = f"\n{detail_text}\n"
+        # Clean up flow state (same pattern as handle_confirmation lines 448-455)
+        try:
+            await conv_manager.complete()
+            await conv_manager.reset()
+        except Exception as e:
+            err = InfrastructureError(
+                ErrorCode.REDIS_UNAVAILABLE,
+                f"State cleanup failed after generic execution: {e}",
+                cause=e,
+            )
+            logger.error(f"{err}")
+            conv_manager.context.reset()
 
-        message = (
-            f"**Jeste li sigurni da želite obrisati:**\n\n"
-            f"**{name}**{detail_text}\n"
-            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
-        )
+        if result.success:
+            result_dict = {"success": True, "data": result.data, "operation": tool_name}
+            return self.formatter.format_result(result_dict, tool)
 
-        await conv_manager.request_confirmation(message)
-        await conv_manager.save()
-
-        return message
+        error = result.error_message or "Nepoznata greška"
+        translator = get_error_translator()
+        return translator.get_user_message(error, tool_name)
 
     def _extract_items(self, data: Any) -> List[Dict]:
         """Extract items from API response."""
@@ -735,6 +491,57 @@ class FlowHandler:
         Supports 30+ parameter types with Croatian user-friendly messages.
         """
         return get_multiple_missing_prompts(missing)
+
+    @staticmethod
+    def _parse_croatian_date(text: str) -> Optional[str]:
+        """Parse Croatian date keywords into ISO datetime strings.
+
+        Handles: danas, sutra, prekosutra, with optional time (od X do Y).
+        Returns ISO format string or None if unparseable.
+        """
+        text_lower = text.lower().strip()
+        now = datetime.now()
+
+        # Map Croatian day keywords to date offsets
+        day_map = {
+            "danas": 0, "today": 0,
+            "sutra": 1, "tomorrow": 1,
+            "prekosutra": 2,
+        }
+
+        target_date = None
+        for keyword, offset in day_map.items():
+            if keyword in text_lower:
+                target_date = now.date() + timedelta(days=offset)
+                break
+
+        if not target_date:
+            # Try DD.MM.YYYY or DD.MM. format
+            date_match = re.search(r'(\d{1,2})\.(\d{1,2})\.(\d{4})?', text_lower)
+            if date_match:
+                day = int(date_match.group(1))
+                month = int(date_match.group(2))
+                year = int(date_match.group(3)) if date_match.group(3) else now.year
+                try:
+                    target_date = datetime(year, month, day).date()
+                except ValueError:
+                    return None
+
+        if not target_date:
+            return None
+
+        # Extract time (e.g., "od 8", "u 14:30") — require keyword prefix
+        # to avoid matching day numbers from dates like "20.03.2026"
+        time_match = re.search(r'(?:od|u|at)\s+(\d{1,2})(?::(\d{2}))?', text_lower)
+        hour = 8  # default if no time specified
+        minute = 0
+        if time_match:
+            h = int(time_match.group(1))
+            if 0 <= h <= 23:
+                hour = h
+                minute = int(time_match.group(2) or 0)
+
+        return f"{target_date.isoformat()}T{hour:02d}:{minute:02d}:00"
 
     def _is_question(self, text: str) -> bool:
         """
@@ -800,8 +607,6 @@ class FlowHandler:
 
         Returns filter text or None if no filter detected.
         """
-        import re
-
         text_lower = text.lower().strip()
 
         # Filter patterns (Croatian)

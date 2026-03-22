@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from services.tool_contracts import UnifiedToolDefinition, ParameterDefinition, DependencySource
+    from services.tool_contracts import UnifiedToolDefinition, ParameterDefinition
 
 logger = logging.getLogger(__name__)
 

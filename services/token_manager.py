@@ -31,7 +31,7 @@ class TokenManager:
 
     FAILURE_COOLDOWN_SECONDS = 30  # Don't retry for 30s after a failure
 
-    def __init__(self, redis_client=None):
+    def __init__(self, redis_client=None) -> None:
         """
         Initialize token manager.
 
@@ -54,7 +54,7 @@ class TokenManager:
         self._http_client: Optional[httpx.AsyncClient] = None
 
         logger.info(f"TokenManager initialized: {self.auth_url}")
-    
+
     async def get_token(self) -> str:
         """
         Get valid access token.
@@ -96,7 +96,7 @@ class TokenManager:
                 return self._token
 
             return await self._fetch_new_token()
-    
+
     async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create cached HTTP client for token requests."""
         if self._http_client is None or self._http_client.is_closed:
@@ -156,7 +156,7 @@ class TokenManager:
                     logger.warning(f"Redis cache write failed: {e}")
 
             return self._token
-                
+
         except httpx.TimeoutException:
             self._last_failure = datetime.now(timezone.utc)
             logger.error("Token fetch timeout")
@@ -165,7 +165,7 @@ class TokenManager:
             self._last_failure = datetime.now(timezone.utc)
             logger.error(f"Token fetch network error: {e}")
             raise Exception(f"Authentication network error: {e}")
-    
+
     async def invalidate(self) -> None:
         """Invalidate current token (call on 401)."""
         logger.info("Token invalidated")
@@ -175,14 +175,14 @@ class TokenManager:
         # Clear Redis cache synchronously to avoid race with get_token()
         if self._redis:
             await self._clear_redis_cache()
-    
+
     async def _clear_redis_cache(self) -> None:
         """Clear Redis cache."""
         try:
             await self._redis.delete(self._cache_key)
         except Exception as e:
             logger.debug(f"Failed to clear Redis token cache: {e}")
-    
+
     async def close(self) -> None:
         """Close HTTP client."""
         if self._http_client and not self._http_client.is_closed:

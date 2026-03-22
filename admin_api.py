@@ -51,7 +51,7 @@ if env_path.exists():
 
 # CRITICAL SECURITY: Set admin service type BEFORE importing database
 # This ensures database.py uses admin connection string with full privileges
-os.environ["SERVICE_TYPE"] = "admin"
+os.environ["SERVICE_ROLE"] = "admin"
 
 from config import get_settings
 from database import AsyncSessionLocal, engine
@@ -463,7 +463,8 @@ async def readiness_check(request: Request):
         async with AsyncSessionLocal() as session:
 
             await session.execute(text("SELECT 1"))
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Readiness check failed - database: {type(e).__name__}: {e}")
         return JSONResponse(status_code=503, content={"ready": False, "reason": "database unavailable"})
 
     return {"ready": True}

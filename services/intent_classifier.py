@@ -12,130 +12,36 @@ Accuracy updated after each retrain — see training output for current metrics.
 import json
 import logging
 import pickle
-from enum import Enum
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple, Set
+from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 import numpy as np
 
+from services.dynamic_threshold import ClassificationSignal, NO_SIGNAL, PredictionSet
+from services.errors import ClassificationError, ErrorCode
+from services.tracing import get_tracer, trace_span
+
+# Text normalization — canonical source is text_normalizer.py.
+# Re-exported here for backward compatibility (dozens of importers).
+from services.text_normalizer import (  # noqa: F401 — re-export
+    DIACRITIC_MAP,
+    SYNONYM_MAP,
+    normalize_diacritics,
+    normalize_query,
+    normalize_synonyms,
+)
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("intent_classifier")
 
 
-# ---
-# TEXT NORMALIZATION - Handles Croatian diacritics and synonyms
-# ---
-
-# Croatian diacritic mapping
-DIACRITIC_MAP = {
-    'č': 'c', 'ć': 'c', 'đ': 'd', 'š': 's', 'ž': 'z',
-    'Č': 'C', 'Ć': 'C', 'Đ': 'D', 'Š': 'S', 'Ž': 'Z',
-}
-
-# Common Croatian synonyms (normalize to canonical form)
-SYNONYM_MAP = {
-    # Vehicle synonyms → vozilo
-    'auto': 'vozilo',
-    'auta': 'vozila',
-    'automobil': 'vozilo',
-    'automobili': 'vozila',
-    'automobila': 'vozila',
-    'kola': 'vozilo',
-    'kolima': 'vozilima',
-    # Phone synonyms
-    'mobitel': 'telefon',
-    'mobitela': 'telefona',
-    'gsm': 'telefon',
-    'tel': 'telefon',
-    # Mileage synonyms
-    'kilometraza': 'kilometara',
-    'km': 'kilometara',
-    # Common typos
-    'telfon': 'telefon',
-    'telef': 'telefon',
-    'rezevacija': 'rezervacija',
-    'rezevirati': 'rezervirati',
-    'osteio': 'ostetio',
-    'ostetiti': 'ostetio',
-}
-
-
-def normalize_diacritics(text: str) -> str:
-    """Remove Croatian diacritics from text."""
-    result = []
-    for char in text:
-        if char in DIACRITIC_MAP:
-            result.append(DIACRITIC_MAP[char])
-        else:
-            result.append(char)
-    return ''.join(result)
-
-
-def normalize_synonyms(text: str) -> str:
-    """Replace common synonyms with canonical forms."""
-    words = text.split()
-    normalized = []
-    for word in words:
-        # Check if word or lowercase version is in synonym map
-        lower_word = word.lower()
-        if lower_word in SYNONYM_MAP:
-            normalized.append(SYNONYM_MAP[lower_word])
-        else:
-            normalized.append(word)
-    return ' '.join(normalized)
-
-
-def normalize_query(text: str) -> str:
-    """
-    Normalize query text for better ML classification.
-
-    1. Lowercase
-    2. Remove diacritics (ž→z, č→c, etc.)
-    3. Replace synonyms (auto→vozilo, etc.)
-    4. Strip whitespace
-    """
-    text = text.lower().strip()
-    text = normalize_diacritics(text)
-    text = normalize_synonyms(text)
-    return text
-
-
-# ---
-# ActionIntent enum - replaces action_intent_detector.py
-# ---
-
-class ActionIntent(str, Enum):
-    """HTTP action intent detected from user query."""
-    READ = "GET"
-    CREATE = "POST"
-    UPDATE = "PUT"
-    PATCH = "PATCH"
-    DELETE = "DELETE"
-    UNKNOWN = "UNKNOWN"
-    NONE = "NONE"  # For greetings, help, etc.
-
-
-@dataclass
-class IntentDetectionResult:
-    """Result of intent detection - compatible with old interface."""
-    intent: ActionIntent
-    confidence: float
-    matched_pattern: Optional[str] = None
-    reason: str = ""
-
-
-def get_allowed_methods(intent: ActionIntent) -> Set[str]:
-    """Get allowed HTTP methods for an action intent."""
-    if intent == ActionIntent.READ:
-        return {"GET"}
-    elif intent == ActionIntent.CREATE:
-        return {"POST"}
-    elif intent == ActionIntent.UPDATE:
-        return {"PUT", "PATCH"}
-    elif intent == ActionIntent.PATCH:
-        return {"PATCH"}
-    elif intent == ActionIntent.DELETE:
-        return {"DELETE"}
-    return {"GET", "POST", "PUT", "PATCH", "DELETE"}  # UNKNOWN = allow all
+# Action intent detection — canonical source is action_intent_detector.py.
+# Re-exported here for backward compatibility.
+from services.action_intent_detector import (  # noqa: F401 — re-export
+    ActionIntent,
+    IntentDetectionResult,
+    get_allowed_methods,
+)
 
 # Default paths
 MODEL_DIR = Path(__file__).parent.parent / "models" / "intent"
@@ -144,16 +50,28 @@ TRAINING_DATA_PATH = Path(__file__).parent.parent / "data" / "training" / "inten
 
 @dataclass
 class IntentPrediction:
-    """Result of intent prediction."""
+    """Result of intent prediction.
+
+    signal: ClassificationSignal computed from the full probability vector.
+    When constructed from predict methods, this is exact (from_probabilities).
+    When constructed without probs (e.g. fallback), estimated from alternatives.
+    """
     intent: str
     action: str
     tool: Optional[str]
     confidence: float
     alternatives: List[Tuple[str, float]] = None
+    signal: ClassificationSignal = None
+    prediction_set: Optional[PredictionSet] = None
 
     def __post_init__(self):
         if self.alternatives is None:
             self.alternatives = []
+        if self.signal is None:
+            # Fallback: estimate signal from sparse alternatives
+            self.signal = ClassificationSignal.from_alternatives(
+                self.confidence, self.alternatives, n_classes=29,
+            )
 
 
 class IntentClassifier:
@@ -171,7 +89,7 @@ class IntentClassifier:
     to queries never seen in training.
     """
 
-    def __init__(self, algorithm: str = "tfidf_lr", model_path: Optional[Path] = None):
+    def __init__(self, algorithm: str = "tfidf_lr", model_path: Optional[Path] = None) -> None:
         """
         Initialize classifier.
 
@@ -186,6 +104,8 @@ class IntentClassifier:
         self.label_encoder = None
         self.intent_to_metadata = {}  # Maps intent -> (action, tool)
         self._loaded = False
+        self._q_hat = None
+        self._cp_coverage = None
 
     def load(self) -> bool:
         """Load trained model from disk."""
@@ -207,44 +127,57 @@ class IntentClassifier:
                 with open(meta_file, "r", encoding="utf-8") as f:
                     self.intent_to_metadata = json.load(f)
 
+            # Load conformal prediction calibration if available
+            cp_file = self.model_path / "cp_calibration.json"
+            if cp_file.exists():
+                with open(cp_file, "r", encoding="utf-8") as f:
+                    cp_data = json.load(f)
+                self._q_hat = cp_data["q_hat"]
+                self._cp_coverage = cp_data.get("coverage_target", 0.70)
+                logger.info(
+                    f"Loaded CP calibration: q_hat={self._q_hat:.4f}, "
+                    f"coverage={self._cp_coverage}"
+                )
+            else:
+                self._q_hat = None
+                self._cp_coverage = None
+
             self._loaded = True
             logger.info(f"Loaded {self.algorithm} model from {model_file}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            err = ClassificationError(
+                ErrorCode.MODEL_LOAD_FAILED,
+                f"Failed to load {self.algorithm} model: {e}",
+                metadata={"model_path": str(model_file)},
+                cause=e,
+            )
+            logger.error(str(err))
             return False
 
     def train(self, training_data_path: Optional[Path] = None) -> Dict[str, float]:
-        """
-        Train the classifier on training data.
-
-        Args:
-            training_data_path: Path to JSONL training data
-
-        Returns:
-            Dict with training metrics (accuracy, f1, etc.)
-        """
+        """Train the classifier. Delegates to services.intent_training."""
+        from services.intent_training import (
+            load_training_data, train_tfidf_lr, train_sbert_lr,
+            train_fasttext, train_azure_embedding, save_metadata,
+        )
         data_path = training_data_path or TRAINING_DATA_PATH
+        texts, labels, metadata = load_training_data(data_path)
 
-        # Load training data
-        texts, labels, metadata = self._load_training_data(data_path)
-
-        if self.algorithm == "tfidf_lr":
-            metrics = self._train_tfidf_lr(texts, labels)
-        elif self.algorithm == "sbert_lr":
-            metrics = self._train_sbert_lr(texts, labels)
-        elif self.algorithm == "fasttext":
-            metrics = self._train_fasttext(texts, labels)
-        elif self.algorithm == "azure_embedding":
-            metrics = self._train_azure_embedding(texts, labels)
-        else:
+        dispatch = {
+            "tfidf_lr": train_tfidf_lr,
+            "sbert_lr": train_sbert_lr,
+            "fasttext": train_fasttext,
+            "azure_embedding": train_azure_embedding,
+        }
+        train_fn = dispatch.get(self.algorithm)
+        if train_fn is None:
             raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
-        # Save metadata
+        metrics = train_fn(self, texts, labels)
         self.intent_to_metadata = metadata
-        self._save_metadata()
-
+        save_metadata(self)
         self._loaded = True
         return metrics
 
@@ -258,228 +191,84 @@ class IntentClassifier:
         Returns:
             IntentPrediction with intent, action, tool, and confidence
         """
-        if not self._loaded:
-            if not self.load():
-                return IntentPrediction(
+        with trace_span(_tracer, "classifier.predict", {"algorithm": self.algorithm, "query.length": len(text)}) as span:
+            if not self._loaded:
+                if not self.load():
+                    return IntentPrediction(
+                        intent="UNKNOWN",
+                        action="NONE",
+                        tool=None,
+                        confidence=0.0
+                    )
+
+            # Apply normalization: lowercase, diacritics, synonyms
+            text_clean = normalize_query(text)
+
+            if self.algorithm == "tfidf_lr":
+                result = self._predict_tfidf_lr(text_clean)
+            elif self.algorithm == "sbert_lr":
+                result = self._predict_sbert_lr(text_clean)
+            elif self.algorithm == "fasttext":
+                result = self._predict_fasttext(text_clean)
+            elif self.algorithm == "azure_embedding":
+                result = self._predict_azure_embedding(text_clean)
+            else:
+                result = IntentPrediction(
                     intent="UNKNOWN",
                     action="NONE",
                     tool=None,
                     confidence=0.0
                 )
 
-        # Apply normalization: lowercase, diacritics, synonyms
-        text_clean = normalize_query(text)
-
-        if self.algorithm == "tfidf_lr":
-            return self._predict_tfidf_lr(text_clean)
-        elif self.algorithm == "sbert_lr":
-            return self._predict_sbert_lr(text_clean)
-        elif self.algorithm == "fasttext":
-            return self._predict_fasttext(text_clean)
-        elif self.algorithm == "azure_embedding":
-            return self._predict_azure_embedding(text_clean)
-
-        return IntentPrediction(
-            intent="UNKNOWN",
-            action="NONE",
-            tool=None,
-            confidence=0.0
-        )
-
-    def _load_training_data(self, path: Path) -> Tuple[List[str], List[str], Dict]:
-        """Load training data from JSONL file."""
-        texts = []
-        labels = []
-        metadata = {}
-
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                item = json.loads(line)
-                # Normalize training text same as prediction text
-                normalized_text = normalize_query(item["text"])
-                texts.append(normalized_text)
-                labels.append(item["intent"])
-
-                # Store metadata mapping
-                intent = item["intent"]
-                if intent not in metadata:
-                    metadata[intent] = {
-                        "action": item["action"],
-                        "tool": item["tool"]
-                    }
-
-        return texts, labels, metadata
-
-    def _train_tfidf_lr(self, texts: List[str], labels: List[str]) -> Dict[str, float]:
-        """Train TF-IDF + Logistic Regression model.
-
-        Uses FeatureUnion of word n-grams + char_wb n-grams:
-        - Word n-grams: exact word matching for standard queries
-        - Char_wb n-grams: character-level matching for typo resilience
-          e.g. "priajvi" and "prijavi" share 80% of char 3-grams
-        """
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.pipeline import FeatureUnion
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import LabelEncoder
-        from sklearn.model_selection import cross_val_score
-
-        # FeatureUnion: word n-grams + char_wb n-grams
-        self.vectorizer = FeatureUnion([
-            ("word", TfidfVectorizer(
-                analyzer="word",
-                ngram_range=(1, 3),
-                max_features=5000,
-                min_df=2,
-            )),
-            ("char", TfidfVectorizer(
-                analyzer="char_wb",
-                ngram_range=(3, 5),
-                max_features=10000,
-                min_df=2,
-            )),
-        ])
-        X = self.vectorizer.fit_transform(texts)
-
-        # Encode labels
-        self.label_encoder = LabelEncoder()
-        y = self.label_encoder.fit_transform(labels)
-
-        # Train
-        self.model = LogisticRegression(
-            max_iter=1000,
-            solver="lbfgs",
-            C=10.0
-        )
-        self.model.fit(X, y)
-
-        # Evaluate
-        cv_scores = cross_val_score(self.model, X, y, cv=5, scoring="accuracy")
-
-        # Save
-        self._save_model()
-
-        return {
-            "accuracy": float(cv_scores.mean()),
-            "accuracy_std": float(cv_scores.std()),
-            "cv_scores": cv_scores.tolist()
-        }
-
-    def _train_sbert_lr(self, texts: List[str], labels: List[str]) -> Dict[str, float]:
-        """Train Sentence-BERT + Logistic Regression model."""
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            logger.error("sentence-transformers not installed. Install with: pip install sentence-transformers")
-            return {"error": "sentence-transformers not installed"}
-
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import LabelEncoder
-        from sklearn.model_selection import cross_val_score
-
-        # Load multilingual SBERT model
-        sbert_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-
-        # Encode texts
-        logger.info("Encoding texts with SBERT...")
-        X = sbert_model.encode(texts, show_progress_bar=True)
-
-        # Store the SBERT model reference
-        self.vectorizer = sbert_model
-
-        # Encode labels
-        self.label_encoder = LabelEncoder()
-        y = self.label_encoder.fit_transform(labels)
-
-        # Train
-        self.model = LogisticRegression(
-            max_iter=1000,
-            solver="lbfgs",
-            C=10.0
-        )
-        self.model.fit(X, y)
-
-        # Evaluate
-        cv_scores = cross_val_score(self.model, X, y, cv=5, scoring="accuracy")
-
-        # Save (without SBERT model - it's loaded from hub)
-        self._save_model(include_vectorizer=False)
-
-        return {
-            "accuracy": float(cv_scores.mean()),
-            "accuracy_std": float(cv_scores.std()),
-            "cv_scores": cv_scores.tolist()
-        }
-
-    def _train_fasttext(self, texts: List[str], labels: List[str]) -> Dict[str, float]:
-        """Train FastText model."""
-        try:
-            import fasttext
-        except ImportError:
-            logger.error("fasttext not installed. Install with: pip install fasttext")
-            return {"error": "fasttext not installed"}
-
-        from sklearn.preprocessing import LabelEncoder
-
-        # Encode labels
-        self.label_encoder = LabelEncoder()
-        y = self.label_encoder.fit_transform(labels)
-
-        # Create training file in FastText format
-        train_file = self.model_path / "fasttext_train.txt"
-        self.model_path.mkdir(parents=True, exist_ok=True)
-
-        with open(train_file, "w", encoding="utf-8") as f:
-            for text, label in zip(texts, labels):
-                f.write(f"__label__{label} {text}\n")
-
-        # Train
-        self.model = fasttext.train_supervised(
-            str(train_file),
-            epoch=50,
-            lr=0.5,
-            wordNgrams=2,
-            dim=100,
-            loss="softmax"
-        )
-
-        # Evaluate
-        test_result = self.model.test(str(train_file))
-
-        # Save
-        model_file = self.model_path / "fasttext_model.bin"
-        self.model.save_model(str(model_file))
-
-        return {
-            "accuracy": test_result[1],
-            "precision": test_result[1],
-            "recall": test_result[2]
-        }
+            span.set_attribute("classifier.intent", result.intent)
+            span.set_attribute("classifier.confidence", result.confidence)
+            return result
 
     def _predict_tfidf_lr(self, text: str) -> IntentPrediction:
         """Predict using TF-IDF + LR model."""
-        X = self.vectorizer.transform([text])
-        probs = self.model.predict_proba(X)[0]
-        pred_idx = np.argmax(probs)
-        confidence = float(probs[pred_idx])
+        with trace_span(_tracer, "classifier.predict_tfidf", {"query.length": len(text)}) as span:
+            X = self.vectorizer.transform([text])
+            probs = self.model.predict_proba(X)[0]
+            pred_idx = np.argmax(probs)
+            confidence = float(probs[pred_idx])
 
-        intent = self.label_encoder.inverse_transform([pred_idx])[0]
-        meta = self.intent_to_metadata.get(intent, {})
+            # Cache label names once (avoids repeated inverse_transform calls)
+            label_names = self.label_encoder.inverse_transform(
+                range(len(probs))
+            ).tolist()
 
-        # Get top 3 alternatives
-        top_indices = np.argsort(probs)[-3:][::-1]
-        alternatives = [
-            (self.label_encoder.inverse_transform([idx])[0], float(probs[idx]))
-            for idx in top_indices[1:]
-        ]
+            intent = label_names[pred_idx]
+            meta = self.intent_to_metadata.get(intent, {})
 
-        return IntentPrediction(
-            intent=intent,
-            action=meta.get("action", "NONE"),
-            tool=meta.get("tool"),
-            confidence=confidence,
-            alternatives=alternatives
-        )
+            # Get top 3 alternatives
+            top_indices = np.argsort(probs)[-3:][::-1]
+            alternatives = [
+                (label_names[idx], float(probs[idx]))
+                for idx in top_indices[1:]
+            ]
+
+            # Full signal from complete probability vector (exact, not estimated)
+            signal = ClassificationSignal.from_probabilities(probs.tolist())
+
+            # Conformal prediction set (if calibrated)
+            prediction_set = None
+            if self._q_hat is not None:
+                prediction_set = PredictionSet.from_probabilities(
+                    probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                )
+
+            result = IntentPrediction(
+                intent=intent,
+                action=meta.get("action", "NONE"),
+                tool=meta.get("tool"),
+                confidence=confidence,
+                alternatives=alternatives,
+                signal=signal,
+                prediction_set=prediction_set,
+            )
+            span.set_attribute("classifier.intent", result.intent)
+            span.set_attribute("classifier.confidence", result.confidence)
+            return result
 
     def _predict_sbert_lr(self, text: str) -> IntentPrediction:
         """Predict using SBERT + LR model."""
@@ -502,22 +291,39 @@ class IntentClassifier:
         pred_idx = np.argmax(probs)
         confidence = float(probs[pred_idx])
 
-        intent = self.label_encoder.inverse_transform([pred_idx])[0]
+        # Cache label names once (avoids repeated inverse_transform calls)
+        label_names = self.label_encoder.inverse_transform(
+            range(len(probs))
+        ).tolist()
+
+        intent = label_names[pred_idx]
         meta = self.intent_to_metadata.get(intent, {})
 
         # Get top 3 alternatives
         top_indices = np.argsort(probs)[-3:][::-1]
         alternatives = [
-            (self.label_encoder.inverse_transform([idx])[0], float(probs[idx]))
+            (label_names[idx], float(probs[idx]))
             for idx in top_indices[1:]
         ]
+
+        # Full signal from complete probability vector (exact, not estimated)
+        signal = ClassificationSignal.from_probabilities(probs.tolist())
+
+        # Conformal prediction set (if calibrated)
+        prediction_set = None
+        if self._q_hat is not None:
+            prediction_set = PredictionSet.from_probabilities(
+                probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+            )
 
         return IntentPrediction(
             intent=intent,
             action=meta.get("action", "NONE"),
             tool=meta.get("tool"),
             confidence=confidence,
-            alternatives=alternatives
+            alternatives=alternatives,
+            signal=signal,
+            prediction_set=prediction_set,
         )
 
     def _predict_fasttext(self, text: str) -> IntentPrediction:
@@ -541,83 +347,6 @@ class IntentClassifier:
             confidence=confidence,
             alternatives=alternatives
         )
-
-    def _train_azure_embedding(self, texts: List[str], labels: List[str]) -> Dict[str, float]:
-        """
-        Train using Azure OpenAI embeddings - SEMANTIC understanding.
-
-        Pre-computes intent centroids (average embedding per intent).
-        At runtime, finds closest centroid using cosine similarity.
-
-        This understands MEANING, not just words:
-        - "daj mi km" and "koliko imam kilometara" → same intent
-        - Handles typos, variations, novel phrasings
-        """
-        import asyncio
-        from config import get_settings
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import LabelEncoder
-        from sklearn.model_selection import cross_val_score
-        from services.openai_client import get_embedding_client
-
-        settings = get_settings()
-        client = get_embedding_client()  # Shared async embedding client
-
-        async def get_embeddings(batch: List[str]) -> List[List[float]]:
-            """Get embeddings for a batch of texts."""
-            response = await client.embeddings.create(
-                input=batch,
-                model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
-            )
-            return [item.embedding for item in response.data]
-
-        async def embed_all():
-            """Embed all training texts in batches."""
-            embeddings = []
-            batch_size = 100
-
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-                batch_embeddings = await get_embeddings(batch)
-                embeddings.extend(batch_embeddings)
-                logger.info(f"Embedded {min(i + batch_size, len(texts))}/{len(texts)} texts")
-
-            return np.array(embeddings)
-
-        # Get all embeddings
-        logger.info("Generating Azure OpenAI embeddings for training data...")
-        X = asyncio.run(embed_all())
-
-        # Encode labels
-        self.label_encoder = LabelEncoder()
-        y = self.label_encoder.fit_transform(labels)
-
-        # Train logistic regression on embeddings
-        self.model = LogisticRegression(
-            max_iter=1000,
-            solver="lbfgs",
-            C=10.0
-        )
-        self.model.fit(X, y)
-
-        # Evaluate
-        cv_scores = cross_val_score(self.model, X, y, cv=5, scoring="accuracy")
-
-        # Store embedding model info (not the model itself - use API at runtime)
-        self.vectorizer = {
-            "type": "azure_embedding",
-            "deployment": settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
-        }
-
-        # Save
-        self._save_model()
-
-        return {
-            "accuracy": float(cv_scores.mean()),
-            "accuracy_std": float(cv_scores.std()),
-            "cv_scores": cv_scores.tolist(),
-            "embedding_dim": X.shape[1]
-        }
 
     def _predict_azure_embedding(self, text: str) -> IntentPrediction:
         """Predict using Azure OpenAI embeddings - SEMANTIC matching."""
@@ -646,48 +375,41 @@ class IntentClassifier:
         pred_idx = np.argmax(probs)
         confidence = float(probs[pred_idx])
 
-        intent = self.label_encoder.inverse_transform([pred_idx])[0]
+        # Cache label names once (avoids repeated inverse_transform calls)
+        label_names = self.label_encoder.inverse_transform(
+            range(len(probs))
+        ).tolist()
+
+        intent = label_names[pred_idx]
         meta = self.intent_to_metadata.get(intent, {})
 
         # Get top 3 alternatives
         top_indices = np.argsort(probs)[-3:][::-1]
         alternatives = [
-            (self.label_encoder.inverse_transform([idx])[0], float(probs[idx]))
+            (label_names[idx], float(probs[idx]))
             for idx in top_indices[1:]
         ]
+
+        # Full signal from complete probability vector (exact, not estimated)
+        signal = ClassificationSignal.from_probabilities(probs.tolist())
+
+        # Conformal prediction set (if calibrated)
+        prediction_set = None
+        if self._q_hat is not None:
+            prediction_set = PredictionSet.from_probabilities(
+                probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+            )
 
         return IntentPrediction(
             intent=intent,
             action=meta.get("action", "NONE"),
             tool=meta.get("tool"),
             confidence=confidence,
-            alternatives=alternatives
+            alternatives=alternatives,
+            signal=signal,
+            prediction_set=prediction_set,
         )
 
-    def _save_model(self, include_vectorizer: bool = True):
-        """Save model to disk."""
-        self.model_path.mkdir(parents=True, exist_ok=True)
-        model_file = self.model_path / f"{self.algorithm}_model.pkl"
-
-        save_data = {
-            "model": self.model,
-            "label_encoder": self.label_encoder
-        }
-        if include_vectorizer and self.vectorizer is not None:
-            save_data["vectorizer"] = self.vectorizer
-
-        with open(model_file, "wb") as f:
-            pickle.dump(save_data, f)
-
-        logger.info(f"Saved model to {model_file}")
-
-    def _save_metadata(self):
-        """Save metadata to disk."""
-        self.model_path.mkdir(parents=True, exist_ok=True)
-        meta_file = self.model_path / "metadata.json"
-
-        with open(meta_file, "w", encoding="utf-8") as f:
-            json.dump(self.intent_to_metadata, f, indent=2, ensure_ascii=False)
 
 
 # Singleton instance
@@ -711,7 +433,10 @@ def get_intent_classifier(algorithm: str = "tfidf_lr") -> IntentClassifier:
 _semantic_classifier: Optional[IntentClassifier] = None
 _semantic_model_unavailable: bool = False  # Prevents repeated warnings
 
-ENSEMBLE_FALLBACK_THRESHOLD = 0.85  # Use semantic if TF-IDF < 85% (matches ML_CONFIDENCE_THRESHOLD)
+# Ensemble fallback: use semantic if TF-IDF isn't confident enough.
+# Delegates to DecisionEngine.ML_FAST_PATH boundary (0.85 at α=0.0).
+ENSEMBLE_FALLBACK_THRESHOLD = 0.75  # backward-compat re-export for tests
+from services.dynamic_threshold import get_engine as _get_engine, DecisionEngine
 
 
 def _get_semantic_classifier() -> IntentClassifier:
@@ -748,16 +473,31 @@ def predict_with_ensemble(query: str) -> IntentPrediction:
 
     This gives speed + generalization.
     """
+    with trace_span(_tracer, "predict_with_ensemble", {
+        "query_length": len(query),
+    }) as span:
+        return _predict_with_ensemble_inner(query, span)
+
+
+def _predict_with_ensemble_inner(query: str, span) -> IntentPrediction:
+    """Inner ensemble logic wrapped by trace span."""
     # Try TF-IDF first (fast)
     tfidf = get_intent_classifier("tfidf_lr")
     tfidf_pred = tfidf.predict(query)
 
-    # If confident, return immediately
-    if tfidf_pred.confidence >= ENSEMBLE_FALLBACK_THRESHOLD:
+    # If confident (via DecisionEngine), return immediately
+    _engine = _get_engine()
+    if _engine.decide(tfidf_pred.signal, DecisionEngine.ML_FAST_PATH).is_accept:
+        span.set_attribute("ml.intent", tfidf_pred.intent)
+        span.set_attribute("ml.confidence", tfidf_pred.confidence)
+        span.set_attribute("ml.source", "tfidf_fast_path")
         return tfidf_pred
 
     # Skip semantic fallback if we already know it's unavailable (prevents log spam)
     if _semantic_model_unavailable:
+        span.set_attribute("ml.intent", tfidf_pred.intent)
+        span.set_attribute("ml.confidence", tfidf_pred.confidence)
+        span.set_attribute("ml.source", "tfidf_no_semantic")
         return tfidf_pred
 
     # Low confidence - use semantic for better understanding
@@ -771,85 +511,31 @@ def predict_with_ensemble(query: str) -> IntentPrediction:
                 f"Ensemble: TF-IDF {tfidf_pred.confidence:.1%} < threshold, "
                 f"using semantic {sem_pred.confidence:.1%}"
             )
+            span.set_attribute("ml.intent", sem_pred.intent)
+            span.set_attribute("ml.confidence", sem_pred.confidence)
+            span.set_attribute("ml.source", "semantic")
             return sem_pred
     except Exception as e:
-        # Only log once - _semantic_model_unavailable will be set by _get_semantic_classifier
         if not _semantic_model_unavailable:
-            logger.warning(f"Semantic fallback failed: {e}")
+            err = ClassificationError(
+                ErrorCode.ENSEMBLE_ALL_FAILED,
+                f"Semantic fallback failed: {e}",
+                cause=e,
+            )
+            logger.warning(str(err))
 
+    span.set_attribute("ml.intent", tfidf_pred.intent)
+    span.set_attribute("ml.confidence", tfidf_pred.confidence)
+    span.set_attribute("ml.source", "tfidf_fallback")
     return tfidf_pred
 
 
-# ---
-# BACKWARDS COMPATIBLE INTERFACE
-# Replaces action_intent_detector.detect_action_intent()
-# ---
-
-def detect_action_intent(query: str, use_ensemble: bool = True) -> IntentDetectionResult:
-    """
-    Detect action intent using ML model.
-
-    REPLACES: action_intent_detector.py (414 lines of regex)
-
-    Args:
-        query: User query text
-        use_ensemble: If True, use smart ensemble (TF-IDF + semantic fallback)
-
-    Returns:
-        IntentDetectionResult with intent, confidence, and reason
-    """
-    if use_ensemble:
-        prediction = predict_with_ensemble(query)
-    else:
-        classifier = get_intent_classifier()
-        prediction = classifier.predict(query)
-
-    # Map action string to ActionIntent enum
-    action_map = {
-        "GET": ActionIntent.READ,
-        "POST": ActionIntent.CREATE,
-        "PUT": ActionIntent.UPDATE,
-        "PATCH": ActionIntent.PATCH,
-        "DELETE": ActionIntent.DELETE,
-        "NONE": ActionIntent.NONE,
-    }
-
-    action_intent = action_map.get(prediction.action, ActionIntent.UNKNOWN)
-
-    return IntentDetectionResult(
-        intent=action_intent,
-        confidence=prediction.confidence,
-        matched_pattern=f"ML:{prediction.intent}",
-        reason=f"ML classifier predicted {prediction.intent} with {prediction.confidence:.2%} confidence"
-    )
-
-
-def filter_tools_by_intent(
-    tools: List[Dict[str, Any]],
-    intent: ActionIntent
-) -> List[Dict[str, Any]]:
-    """
-    Filter tools to only include those matching the detected intent.
-
-    REPLACES: action_intent_detector.filter_tools_by_intent()
-    """
-    if intent == ActionIntent.UNKNOWN or intent == ActionIntent.NONE:
-        return tools
-
-    allowed_methods = get_allowed_methods(intent)
-
-    filtered = []
-    for tool in tools:
-        method = tool.get("method", "GET").upper()
-        if method in allowed_methods:
-            filtered.append(tool)
-        # Special case: Allow POST tools for READ intent if they're data retrieval
-        elif intent == ActionIntent.READ and method == "POST":
-            tool_name = tool.get("name", "").lower()
-            if "search" in tool_name or "query" in tool_name or "filter" in tool_name:
-                filtered.append(tool)
-
-    return filtered if filtered else tools  # Fallback to all if none match
+# Action intent detection and tool filtering — canonical source is
+# action_intent_detector.py. Re-exported here for backward compatibility.
+from services.action_intent_detector import (  # noqa: F401 — re-export
+    detect_action_intent,
+    filter_tools_by_intent,
+)
 
 
 # ---
@@ -868,6 +554,17 @@ class QueryTypePrediction:
     confidence: float
     preferred_suffixes: List[str]
     excluded_suffixes: List[str]
+    alternatives: List[Tuple[str, float]] = None
+    signal: ClassificationSignal = None
+    prediction_set: Optional[PredictionSet] = None
+
+    def __post_init__(self):
+        if self.alternatives is None:
+            self.alternatives = []
+        if self.signal is None:
+            self.signal = ClassificationSignal.from_alternatives(
+                self.confidence, self.alternatives, n_classes=12,
+            )
 
 
 # Suffix rules for each query type
@@ -930,10 +627,12 @@ class QueryTypeClassifierML:
     Uses same TF-IDF + LogisticRegression approach as IntentClassifier.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.vectorizer = None
         self.model = None
         self._loaded = False
+        self._q_hat = None
+        self._cp_coverage = None
 
     def load(self) -> bool:
         """Load trained model from disk."""
@@ -948,62 +647,33 @@ class QueryTypeClassifierML:
                 self.vectorizer = data['vectorizer']
                 self.model = data['model']
             self._loaded = True
+
+            # Load CP calibration if available
+            cp_file = QUERY_TYPE_MODEL_DIR / "cp_calibration.json"
+            if cp_file.exists():
+                with open(cp_file, "r", encoding="utf-8") as f:
+                    cp_data = json.load(f)
+                self._q_hat = cp_data["q_hat"]
+                self._cp_coverage = cp_data.get("coverage_target", 0.70)
+                logger.info(f"QueryType CP calibration loaded: q_hat={self._q_hat:.4f}")
+            else:
+                self._q_hat = None
+                self._cp_coverage = None
+
             return True
         except Exception as e:
-            logger.error(f"Failed to load QueryType model: {e}")
+            err = ClassificationError(
+                ErrorCode.MODEL_LOAD_FAILED,
+                f"Failed to load QueryType model: {e}",
+                cause=e,
+            )
+            logger.error(str(err))
             return False
 
     def train(self) -> bool:
-        """Train the model from JSONL training data."""
-        try:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.model_selection import cross_val_score
-
-            # Load training data
-            texts, labels = [], []
-            with open(QUERY_TYPE_TRAINING_PATH, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.strip():
-                        item = json.loads(line)
-                        texts.append(item['text'])
-                        labels.append(item['query_type'])
-
-            if not texts:
-                logger.error("No training data found")
-                return False
-
-            # Train TF-IDF + LogisticRegression
-            self.vectorizer = TfidfVectorizer(
-                ngram_range=(1, 3),
-                max_features=5000,
-                min_df=1
-            )
-            X = self.vectorizer.fit_transform(texts)
-
-            self.model = LogisticRegression(
-                max_iter=1000,
-                C=10.0,
-                class_weight='balanced'
-            )
-            self.model.fit(X, labels)
-
-            # Cross-validation
-            scores = cross_val_score(self.model, X, labels, cv=min(5, len(set(labels))))
-            accuracy = np.mean(scores)
-            logger.info(f"QueryType classifier trained: {accuracy:.1%} accuracy, {len(texts)} examples")
-
-            # Save model
-            QUERY_TYPE_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-            with open(QUERY_TYPE_MODEL_DIR / "tfidf_model.pkl", 'wb') as f:
-                pickle.dump({'vectorizer': self.vectorizer, 'model': self.model}, f)
-
-            self._loaded = True
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to train QueryType model: {e}")
-            return False
+        """Train the model. Delegates to services.intent_training."""
+        from services.intent_training import train_query_type
+        return train_query_type(self, QUERY_TYPE_TRAINING_PATH, QUERY_TYPE_MODEL_DIR)
 
     def predict(self, text: str) -> QueryTypePrediction:
         """Predict query type for text."""
@@ -1027,6 +697,24 @@ class QueryTypeClassifierML:
             predicted_type = self.model.classes_[predicted_idx]
             confidence = probs[predicted_idx]
 
+            # Extract top-3 alternatives (preserves probability info for margin decisions)
+            top_indices = np.argsort(probs)[-3:][::-1]
+            alternatives = [
+                (str(self.model.classes_[idx]), float(probs[idx]))
+                for idx in top_indices[1:]
+            ]
+
+            # Full signal from complete probability vector (exact, not estimated)
+            signal = ClassificationSignal.from_probabilities(probs.tolist())
+
+            # Conformal prediction set (if calibrated)
+            prediction_set = None
+            if self._q_hat is not None:
+                label_names = self.model.classes_.tolist()
+                prediction_set = PredictionSet.from_probabilities(
+                    probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                )
+
             # Get suffix rules
             rules = QUERY_TYPE_SUFFIX_RULES.get(predicted_type, {"preferred": [], "excluded": []})
 
@@ -1034,11 +722,19 @@ class QueryTypeClassifierML:
                 query_type=predicted_type,
                 confidence=float(confidence),
                 preferred_suffixes=rules["preferred"],
-                excluded_suffixes=rules["excluded"]
+                excluded_suffixes=rules["excluded"],
+                alternatives=alternatives,
+                signal=signal,
+                prediction_set=prediction_set,
             )
 
         except Exception as e:
-            logger.error(f"QueryType prediction failed: {e}")
+            err = ClassificationError(
+                ErrorCode.PREDICTION_FAILED,
+                f"QueryType prediction failed: {e}",
+                cause=e,
+            )
+            logger.error(str(err))
             return QueryTypePrediction(
                 query_type="UNKNOWN",
                 confidence=0.0,
@@ -1079,7 +775,7 @@ if __name__ == "__main__":
     classifier = IntentClassifier(algorithm=algorithm)
     metrics = classifier.train()
 
-    print(f"\n=== Training Results ===")
+    print("\n=== Training Results ===")
     for key, value in metrics.items():
         print(f"  {key}: {value}")
 
@@ -1094,7 +790,7 @@ if __name__ == "__main__":
         "hvala",
     ]
 
-    print(f"\n=== Test Predictions ===")
+    print("\n=== Test Predictions ===")
     for query in test_queries:
         pred = classifier.predict(query)
         print(f"  '{query}'")

@@ -22,8 +22,9 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-
+from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("response_formatter")
 
 class ResponseFormatter:
     """
@@ -104,7 +105,7 @@ class ResponseFormatter:
         r'(?i)(manufacturer|proizvođač)': '🏭',
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._current_query: Optional[str] = None
 
     def format_result(
@@ -124,40 +125,48 @@ class ResponseFormatter:
         Returns:
             Formatted string for WhatsApp
         """
-        self._current_query = user_query
+        with trace_span(_tracer, "response_formatter.format_result", {"has_tool": tool is not None, "success": result.get("success", False)}) as span:
+            self._current_query = user_query
 
-        # Handle errors
-        if not result.get("success"):
-            error = result.get("error", "Nepoznata greška")
-            return f"❌ Greška: {error}"
+            # Handle errors
+            if not result.get("success"):
+                error = result.get("error", "Nepoznata greška")
+                span.set_attribute("result.type", "error")
+                return f"❌ Greška: {error}"
 
-        # Get HTTP method for context
-        method = "GET"
-        if tool:
-            method = tool.method if hasattr(tool, 'method') else tool.get("method", "GET")
+            # Get HTTP method for context
+            method = "GET"
+            if tool:
+                method = tool.method if hasattr(tool, 'method') else tool.get("method", "GET")
 
-        # Extract operation name for success messages
-        operation = result.get("operation", "")
+            span.set_attribute("http.method", method)
 
-        # Handle mutations (POST/PUT/PATCH/DELETE)
-        if method == "DELETE":
-            return self._format_success("Uspješno obrisano", operation)
+            # Extract operation name for success messages
+            operation = result.get("operation", "")
 
-        if method in ("POST", "PUT", "PATCH"):
-            created_id = result.get("created_id")
-            msg = self._format_success("Uspješno spremljeno", operation)
-            if created_id:
-                msg += f"\n📝 ID: {created_id}"
-            return msg
+            # Handle mutations (POST/PUT/PATCH/DELETE)
+            if method == "DELETE":
+                span.set_attribute("result.type", "delete")
+                return self._format_success("Uspješno obrisano", operation)
 
-        # Handle GET responses - extract data
-        data = self._extract_data(result)
+            if method in ("POST", "PUT", "PATCH"):
+                created_id = result.get("created_id")
+                msg = self._format_success("Uspješno spremljeno", operation)
+                if created_id:
+                    msg += f"\n📝 ID: {created_id}"
+                span.set_attribute("result.type", "mutation")
+                return msg
 
-        if data is None:
-            return self._format_success("Operacija uspješna", operation)
+            # Handle GET responses - extract data
+            data = self._extract_data(result)
 
-        # Format based on data type
-        return self._format_any(data)
+            if data is None:
+                span.set_attribute("result.type", "empty")
+                return self._format_success("Operacija uspješna", operation)
+
+            # Format based on data type
+            span.set_attribute("result.type", "data")
+            return self._format_any(data)
 
     def _extract_data(self, result: Dict) -> Any:
         """Extract actual data from various API response formats."""

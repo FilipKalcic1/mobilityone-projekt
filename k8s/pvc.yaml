@@ -10,10 +10,11 @@
 #
 # IMPORTANT:
 # - Use ReadWriteMany (RWX) access mode so all pods can share the cache
-# - Requires a storage class that supports RWX (e.g., Azure Files, NFS, EFS)
-# - For Azure: Use azurefile storage class
-# - For AWS: Use EFS CSI driver
-# - For GCP: Use Filestore CSI driver
+# - Requires a storage class that supports RWX:
+#     Azure AKS: azurefile (default) or azurefile-premium
+#     AWS EKS:   efs-sc (requires EFS CSI driver)
+#     GCP GKE:   standard-rwx (requires Filestore CSI driver)
+#     On-prem:   nfs-client
 # =============================================================================
 
 apiVersion: v1
@@ -28,49 +29,12 @@ spec:
     - ReadWriteMany  # All pods can read/write (required for shared cache)
   resources:
     requests:
-      storage: 500Mi  # 500MB should be enough for embeddings + models
-  # Use appropriate storage class for your cluster:
-  # - Azure AKS: azurefile, azurefile-premium
-  # - AWS EKS: efs-sc (requires EFS CSI driver)
-  # - GCP GKE: standard-rwx (requires Filestore CSI driver)
-  # - On-prem: nfs-client
-  # Uncomment and modify as needed:
-  # storageClassName: azurefile
-
----
-# =============================================================================
-# OPTIONAL: PVC for Redis data (if running Redis in-cluster)
-# =============================================================================
-# Only needed if you deploy Redis as StatefulSet instead of managed service
-# For production, use managed Redis (Azure Cache, ElastiCache, etc.)
-#
-# apiVersion: v1
-# kind: PersistentVolumeClaim
-# metadata:
-#   name: mobility-redis-pvc
-# spec:
-#   accessModes:
-#     - ReadWriteOnce
-#   resources:
-#     requests:
-#       storage: 1Gi
-#   storageClassName: standard
-
----
-# =============================================================================
-# OPTIONAL: PVC for PostgreSQL data (if running PostgreSQL in-cluster)
-# =============================================================================
-# Only needed if you deploy PostgreSQL as StatefulSet instead of managed service
-# For production, use managed PostgreSQL (Azure Database, RDS, Cloud SQL, etc.)
-#
-# apiVersion: v1
-# kind: PersistentVolumeClaim
-# metadata:
-#   name: mobility-postgres-pvc
-# spec:
-#   accessModes:
-#     - ReadWriteOnce
-#   resources:
-#     requests:
-#       storage: 10Gi
-#   storageClassName: standard
+      storage: 500Mi  # Embeddings (~40MB) + ML models (~100MB) + headroom
+  # -------------------------------------------------------------------------
+  # REQUIRED: Set storage class for your cloud provider.
+  # Azure AKS (default target):
+  storageClassName: azurefile
+  # AWS EKS:   storageClassName: efs-sc
+  # GCP GKE:   storageClassName: standard-rwx
+  # On-prem:   storageClassName: nfs-client
+  # -------------------------------------------------------------------------

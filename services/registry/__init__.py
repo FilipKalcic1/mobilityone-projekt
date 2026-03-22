@@ -15,6 +15,7 @@ import os
 from typing import Dict, List, Any, Optional, Set
 
 from services.tool_contracts import UnifiedToolDefinition, DependencyGraph
+from services.tracing import get_tracer, trace_span
 
 from .tool_store import ToolStore
 from .cache_manager import CacheManager
@@ -23,6 +24,7 @@ from .embedding_engine import EmbeddingEngine
 from .search_engine import SearchEngine
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("tool_registry")
 
 # Documentation cache - loaded once at startup
 _documentation_cache: Optional[Dict[str, Any]] = None
@@ -46,7 +48,7 @@ class ToolRegistry:
 
     MAX_TOOLS_PER_RESPONSE = 12
 
-    def __init__(self, redis_client=None):
+    def __init__(self, redis_client=None) -> None:
         """Initialize tool registry with all components."""
         self.redis = redis_client
 
@@ -156,17 +158,17 @@ class ToolRegistry:
                     logger.info(f"Pre-processed registry found - loading from {registry_path}")
                     with open(registry_path, 'r', encoding='utf-8') as f:
                         registry_data = json.load(f)
-                    
+
                     for tool_data in registry_data.get("tools", []):
                         tool = UnifiedToolDefinition(**tool_data)
                         self._store.add_tool(tool)
-                    
+
                     for dep_data in registry_data.get("dependency_graph", []):
                         dep = DependencyGraph(**dep_data)
                         self._store.add_dependency(dep)
-                    
+
                     logger.info(f"Loaded {self._store.count()} tools and {len(self._store.dependency_graph)} dependencies from file.")
-                    
+
                     # Try to load embeddings from cache to avoid re-generating
                     embeddings_cache_path = os.path.join(base_path, ".cache", "tool_embeddings.json")
                     if os.path.exists(embeddings_cache_path):
@@ -185,7 +187,7 @@ class ToolRegistry:
 
                 else:
                     logger.warning(f"Pre-processed registry not found at {registry_path}. Falling back to dynamic loading from Swagger URLs.")
-                    
+
                     # Fallback to old logic
                     if await self._cache.is_cache_valid(swagger_sources):
                         logger.info("Cache valid - loading from disk")
@@ -197,7 +199,7 @@ class ToolRegistry:
                             self._store.add_dependency(dep)
                         for op_id, embedding in cached_data["embeddings"].items():
                             self._store.add_embedding(op_id, embedding)
-                        
+
                         logger.info(f"Loaded {self._store.count()} tools from cache.")
 
                     else:
@@ -210,18 +212,18 @@ class ToolRegistry:
                         if self._store.count() == 0:
                             logger.error("No tools loaded from Swagger sources")
                             return False
-                        
+
                         logger.info(f"Loaded {self._store.count()} tools from Swagger")
 
                         # Build dependency graph
                         dep_graph = self._embedding.build_dependency_graph(self._store.tools)
                         for dep in dep_graph.values():
                             self._store.add_dependency(dep)
-                
+
                 # v20.1 FIX: Only generate embeddings if not all cached
                 cached_count = len(self._store.embeddings)
                 total_tools = self._store.count()
-                
+
                 if cached_count >= total_tools:
                     logger.info(f"All embeddings cached ({cached_count}/{total_tools}) - skipping generation")
                 else:
@@ -267,7 +269,7 @@ class ToolRegistry:
         Does NOT use training_queries.json (unreliable).
         """
         try:
-            from services.faiss_vector_store import get_faiss_store, initialize_faiss_store
+            from services.faiss_vector_store import initialize_faiss_store
             import json
             import os
 
@@ -358,6 +360,31 @@ class ToolRegistry:
 
         Returns list of dicts with name, score, and schema.
         """
+        with trace_span(_tracer, "registry.find_tools", {
+            "query.preview": query[:50],
+            "top_k": top_k,
+            "threshold": threshold,
+            "use_faiss": use_faiss,
+            "use_llm_rerank": use_llm_rerank,
+        }) as span:
+            return await self._find_relevant_tools_inner(
+                query, top_k, threshold, prefer_retrieval,
+                prefer_mutation, use_filtered_search, use_faiss, use_llm_rerank, span
+            )
+
+    async def _find_relevant_tools_inner(
+        self,
+        query: str,
+        top_k: int,
+        threshold: float,
+        prefer_retrieval: bool,
+        prefer_mutation: bool,
+        use_filtered_search: bool,
+        use_faiss: bool,
+        use_llm_rerank: bool,
+        span=None
+    ) -> List[Dict[str, Any]]:
+        """Inner implementation of find_relevant_tools_with_scores."""
         if not self.is_ready:
             logger.warning("Registry not ready")
             return []

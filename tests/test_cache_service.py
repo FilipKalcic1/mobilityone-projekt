@@ -44,6 +44,8 @@ def cache(mock_redis):
 
 
 class TestGet:
+    pytestmark = pytest.mark.asyncio
+
     async def test_get_value(self, cache, mock_redis):
         mock_redis.get.return_value = "cached_value"
         result = await cache.get("key")
@@ -61,6 +63,8 @@ class TestGet:
 
 
 class TestGetJson:
+    pytestmark = pytest.mark.asyncio
+
     async def test_get_json(self, cache, mock_redis):
         mock_redis.get.return_value = '{"a": 1}'
         result = await cache.get_json("key")
@@ -73,6 +77,8 @@ class TestGetJson:
 
 
 class TestSet:
+    pytestmark = pytest.mark.asyncio
+
     async def test_set_string(self, cache, mock_redis):
         result = await cache.set("key", "value", 300)
         assert result is True
@@ -89,6 +95,8 @@ class TestSet:
 
 
 class TestSetJson:
+    pytestmark = pytest.mark.asyncio
+
     async def test_set_json(self, cache, mock_redis):
         result = await cache.set_json("key", {"dt": "value"}, 300)
         assert result is True
@@ -100,6 +108,8 @@ class TestSetJson:
 
 
 class TestDelete:
+    pytestmark = pytest.mark.asyncio
+
     async def test_delete(self, cache, mock_redis):
         result = await cache.delete("key")
         assert result is True
@@ -111,6 +121,8 @@ class TestDelete:
 
 
 class TestInvalidate:
+    pytestmark = pytest.mark.asyncio
+
     async def test_invalidate_calls_delete(self, cache, mock_redis):
         result = await cache.invalidate("key")
         assert result is True
@@ -118,6 +130,8 @@ class TestInvalidate:
 
 
 class TestInvalidatePattern:
+    pytestmark = pytest.mark.asyncio
+
     async def test_invalidate_pattern(self, cache, mock_redis):
         async def mock_scan_iter(match=None, count=None):
             for k in ["key1", "key2"]:
@@ -133,6 +147,8 @@ class TestInvalidatePattern:
 
 
 class TestExists:
+    pytestmark = pytest.mark.asyncio
+
     async def test_exists_true(self, cache, mock_redis):
         mock_redis.exists.return_value = 1
         assert await cache.exists("key") is True
@@ -147,6 +163,8 @@ class TestExists:
 
 
 class TestGetOrCompute:
+    pytestmark = pytest.mark.asyncio
+
     async def test_returns_cached(self, cache, mock_redis):
         mock_redis.get.return_value = '{"data": "cached"}'
         compute_fn = AsyncMock(return_value={"data": "computed"})
@@ -163,6 +181,8 @@ class TestGetOrCompute:
 
 
 class TestIncrement:
+    pytestmark = pytest.mark.asyncio
+
     async def test_increment(self, cache, mock_redis):
         mock_redis.incr.return_value = 1
         result = await cache.increment("counter")

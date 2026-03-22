@@ -51,8 +51,15 @@ def _task_error_logger(task: asyncio.Task) -> None:
         pass
 
 
-# Thread-safe singleton lock
-_singleton_lock = asyncio.Lock()
+# Thread-safe singleton lock (lazy to avoid event loop issues at import time)
+_singleton_lock: Optional[asyncio.Lock] = None
+
+
+def _get_singleton_lock() -> asyncio.Lock:
+    global _singleton_lock
+    if _singleton_lock is None:
+        _singleton_lock = asyncio.Lock()
+    return _singleton_lock
 
 
 class RefreshStatus(str, Enum):
@@ -156,17 +163,6 @@ class RAGScheduler:
 
         logger.info("RAGScheduler started")
 
-    def _task_done_callback(self, task: asyncio.Task) -> None:
-        """Handle task completion/failure."""
-        try:
-            exc = task.exception()
-            if exc and not isinstance(exc, asyncio.CancelledError):
-                logger.error(f"RAGScheduler task failed: {exc}")
-        except asyncio.CancelledError:
-            pass
-        except asyncio.InvalidStateError:
-            pass
-
     async def stop(self) -> None:
         """Stop the scheduler gracefully with state preservation."""
         logger.info("RAGScheduler stopping...")
@@ -211,7 +207,17 @@ class RAGScheduler:
         logger.info("RAGScheduler stopped")
 
     async def _refresh_loop(self) -> None:
-        """Main refresh loop with exponential backoff on failures."""
+        """Main refresh loop with exponential backoff on failures.
+
+        In addition to periodic scheduled refreshes, performs lightweight
+        Swagger version checks every 5 minutes. If the Swagger spec hash
+        changes (new API endpoints deployed), triggers an immediate refresh
+        without waiting for the full interval.
+        """
+        # Lightweight Swagger change detection interval (5 min)
+        SWAGGER_CHECK_INTERVAL = 300
+        last_swagger_check = 0.0
+
         while self._running:
             try:
                 # Calculate time until next refresh
@@ -227,16 +233,30 @@ class RAGScheduler:
                     logger.info(
                         f"RAG refresh scheduled in {wait_seconds / 3600:.1f} hours"
                     )
-                    try:
-                        await asyncio.wait_for(
-                            self._shutdown_event.wait(),
-                            timeout=wait_seconds
-                        )
-                        # Shutdown requested
+
+                    # Instead of sleeping until next full refresh, wake every
+                    # SWAGGER_CHECK_INTERVAL to check for Swagger changes
+                    while wait_seconds > 0 and self._running:
+                        sleep_chunk = min(wait_seconds, SWAGGER_CHECK_INTERVAL)
+                        try:
+                            await asyncio.wait_for(
+                                self._shutdown_event.wait(),
+                                timeout=sleep_chunk
+                            )
+                            # Shutdown requested
+                            break
+                        except asyncio.TimeoutError:
+                            wait_seconds -= sleep_chunk
+
+                        # Swagger change detection (lightweight HTTP HEAD / hash)
+                        if time.time() - last_swagger_check >= SWAGGER_CHECK_INTERVAL:
+                            last_swagger_check = time.time()
+                            if await self._detect_swagger_change():
+                                logger.info("Swagger spec changed — triggering immediate refresh")
+                                break  # Exit inner loop to trigger refresh now
+
+                    if self._shutdown_event.is_set():
                         break
-                    except asyncio.TimeoutError:
-                        # Normal timeout, time to refresh
-                        pass
 
                 if self._running:
                     success = await self._do_refresh(trigger="scheduled")
@@ -254,6 +274,48 @@ class RAGScheduler:
             except Exception as e:
                 logger.error(f"RAG refresh loop error: {e}")
                 await asyncio.sleep(self.MIN_RETRY_DELAY_SECONDS)
+
+    async def _detect_swagger_change(self) -> bool:
+        """
+        Lightweight check: fetch Swagger spec and compare hash to last known version.
+
+        Returns True if the spec has changed (new endpoints deployed),
+        triggering an immediate FAISS re-index instead of waiting for the
+        next scheduled refresh.
+        """
+        try:
+            from config import get_settings
+            _settings = get_settings()
+            sources = getattr(_settings, 'swagger_sources', [])
+            if not sources:
+                return False
+
+            import httpx
+            # Fetch first Swagger source (lightweight — just the spec JSON)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(sources[0])
+                if resp.status_code != 200:
+                    return False
+                content_hash = hashlib.sha256(resp.content).hexdigest()[:16]
+
+            # Compare to stored hash
+            stored_hash = await self.redis.get("rag:swagger_hash")
+            if stored_hash:
+                if isinstance(stored_hash, bytes):
+                    stored_hash = stored_hash.decode('utf-8')
+                if stored_hash == content_hash:
+                    return False  # No change
+
+            # Store new hash
+            await self.redis.set("rag:swagger_hash", content_hash, ex=86400)
+            if stored_hash is not None:
+                logger.info(f"Swagger spec changed: {stored_hash} -> {content_hash}")
+                return True  # Changed!
+            return False  # First check, no baseline yet
+
+        except Exception as e:
+            logger.debug(f"Swagger change detection failed (non-critical): {e}")
+            return False
 
     def _calculate_backoff(self) -> int:
         """Calculate exponential backoff based on consecutive failures."""
@@ -650,7 +712,7 @@ async def get_rag_scheduler(
     if _scheduler is not None:
         return _scheduler
 
-    async with _singleton_lock:
+    async with _get_singleton_lock():
         # Double-check after acquiring lock
         if _scheduler is None:
             _scheduler = RAGScheduler(

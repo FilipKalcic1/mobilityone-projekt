@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from sqlalchemy import update
 from config import get_settings
 from models import UserMapping
+from services.errors import ConversationError, ErrorCode
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -64,7 +65,7 @@ class TenantService:
     - Tenant validation
     """
 
-    def __init__(self, db_session=None, redis_client=None):
+    def __init__(self, db_session=None, redis_client=None) -> None:
         """
         Initialize TenantService.
 
@@ -216,6 +217,8 @@ class TenantService:
 
         # Basic validation - alphanumeric with hyphens, 3-50 chars
         if not re.match(r'^[a-zA-Z0-9\-]{3,50}$', tenant_id):
+            err = ConversationError(ErrorCode.TENANT_MISMATCH, f"Invalid tenant ID format: {tenant_id}")
+            logger.warning(str(err))
             return False
 
         return True

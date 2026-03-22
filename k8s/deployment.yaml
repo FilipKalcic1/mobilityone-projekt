@@ -1,16 +1,22 @@
 # =============================================================================
 # MobilityOne WhatsApp Bot - Kubernetes Deployment
-# Version: 1.0
+# Version: 2.0 — Resource-Optimized
 #
-# COMPONENTS:
-# - API (FastAPI webhook receiver)
-# - Worker (message processor)
-# - Admin API (separate internal service)
+# RESOURCE STRATEGY:
+# - Burstable QoS (requests < limits) to minimize reserved resources
+# - CPU requests minimal: bot is I/O-bound (waits for Azure OpenAI API)
+# - Memory requests based on ACTUAL docker stats measurements (2026-03-18):
+#     API:    323.5 MB steady state (0.10% CPU)
+#     Worker: 345.1 MB steady state (0.07% CPU)
+#     Admin:   65.7 MB steady state (0.10% CPU)
+#     Redis:   10.3 MB steady state (0.34% CPU)
+# - Limits set higher to allow startup spikes (FAISS/ML model loading)
 #
-# RESOURCE LIMITS:
-# - Prevents noisy neighbor issues in shared cluster
-# - CPU/Memory requests guarantee minimum resources
-# - Limits prevent runaway pods from affecting others
+# TOTAL RESERVED: 200m CPU + 1440Mi RAM (API×2 + Worker + Admin + Redis)
+#
+# DB CONNECTION WARNING: See configmap.yaml for connection pool math.
+# With maxReplicaCount=5 workers, burst peak = 240 DB connections.
+# Ensure PostgreSQL max_connections >= 300 or use PgBouncer.
 # =============================================================================
 
 ---
@@ -25,7 +31,11 @@ metadata:
     app: mobility-bot
     component: api
 spec:
-  replicas: 2  # Minimum for HA
+  replicas: 2  # HA: 2 replicas for zero-downtime deploys and node failure tolerance
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Zero downtime: new pod must be ready before old is killed
   selector:
     matchLabels:
       app: mobility-bot
@@ -43,6 +53,18 @@ spec:
       # NOTE: DB migrations are handled by a separate Job (see below).
       # Do NOT use init containers for migrations - with multiple replicas,
       # concurrent alembic runs cause lock conflicts.
+
+      # Spread API pods across nodes to survive single-node failure
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: mobility-bot
+                    component: api
+                topologyKey: kubernetes.io/hostname
 
       # Pod-level security: enforce non-root, read-only filesystem
       securityContext:
@@ -72,15 +94,15 @@ spec:
             - configMapRef:
                 name: mobility-config
 
-          # Resource limits - Guaranteed QoS (requests == limits)
-          # Prevents eviction under node pressure; essential for webhook availability
+          # Burstable QoS — measured: 0.10% CPU, 323.5MB RSS (docker stats 2026-03-18)
+          # Bot is I/O-bound (waits for Azure API), CPU barely used
           resources:
             requests:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "50m"        # 0.05 CPU reserved (measured: 0.10%)
+              memory: "400Mi"   # 323MB baseline + 77MB scheduling headroom
             limits:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "500m"       # Burst for startup (FAISS/ML model loading)
+              memory: "512Mi"   # 323MB + 189MB headroom for spikes
 
           # Volume mounts for shared cache + writable tmpfs
           volumeMounts:
@@ -91,12 +113,12 @@ spec:
             - name: tmp
               mountPath: /tmp
 
-          # Startup probe: 30 failures × 10s = 5 min window for slow starts at 0.5 CPU
+          # Startup probe: 60 × 10s = 10 min window (longer for low-CPU startup)
           startupProbe:
             httpGet:
               path: /health
               port: 8000
-            failureThreshold: 30
+            failureThreshold: 60
             periodSeconds: 10
 
           # Liveness: only checked AFTER startup probe succeeds
@@ -121,18 +143,6 @@ spec:
             preStop:
               exec:
                 command: ["/bin/sh", "-c", "sleep 10"]
-
-      # Pod anti-affinity - spread across nodes
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app: mobility-bot
-                    component: api
-                topologyKey: kubernetes.io/hostname
 
       # Volumes for shared cache (speeds up pod startup from 120s to <5s)
       volumes:
@@ -161,7 +171,7 @@ metadata:
     app: mobility-bot
     component: worker
 spec:
-  replicas: 2  # Scaled by KEDA based on queue depth
+  replicas: 1  # KEDA scales based on queue depth
   selector:
     matchLabels:
       app: mobility-bot
@@ -197,16 +207,16 @@ spec:
             - configMapRef:
                 name: mobility-config
 
-          # Workers: Guaranteed QoS (requests == limits)
-          # 1Gi fits: base ~85MB + FAISS ~15MB + 20 concurrent I/O-bound tasks
-          # AI work is I/O-bound (waiting for Azure API), not CPU-bound
+          # Burstable QoS — measured: 0.07% CPU, 345.1MB RSS (docker stats 2026-03-18)
+          # Worker is purely I/O-bound (waiting for Azure OpenAI API)
+          # Peak under 10 concurrent: ~405MB, async I/O adds negligible memory
           resources:
             requests:
-              cpu: "500m"
-              memory: "1Gi"
+              cpu: "50m"        # 0.05 CPU reserved (measured: 0.07%)
+              memory: "416Mi"   # 345MB baseline + 71MB scheduling headroom
             limits:
-              cpu: "500m"
-              memory: "1Gi"
+              cpu: "500m"       # Burst for FAISS/ML model loading at startup
+              memory: "512Mi"   # 345MB + 167MB headroom for concurrent spikes
 
           # Volume mounts for shared cache + writable tmpfs for DLQ fallback
           volumeMounts:
@@ -217,14 +227,14 @@ spec:
             - name: tmp
               mountPath: /tmp
 
-          # Startup probe: 30 failures × 10s = 5 min window for FAISS/ML model loading at 0.5 CPU
+          # Startup probe: 60 × 10s = 10 min window (FAISS/ML loading at low CPU)
           startupProbe:
             exec:
               command:
                 - /bin/sh
                 - -c
                 - 'python -c "import os,redis; r=redis.from_url(os.environ[\"REDIS_URL\"]); r.ping()"'
-            failureThreshold: 30
+            failureThreshold: 60
             periodSeconds: 10
 
           # Liveness: only checked AFTER startup probe succeeds
@@ -318,20 +328,20 @@ spec:
             - name: tmp
               mountPath: /tmp
 
-          # Admin: Guaranteed QoS
+          # Burstable QoS — measured: 0.10% CPU, 65.7MB RSS (docker stats 2026-03-18)
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "25m"        # 0.025 CPU (admin barely used)
+              memory: "96Mi"    # 65.7MB baseline + 30MB headroom
             limits:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: "200m"       # Burst for occasional admin requests
+              memory: "192Mi"
 
           startupProbe:
             httpGet:
               path: /health
               port: 8080
-            failureThreshold: 18
+            failureThreshold: 30
             periodSeconds: 10
 
           livenessProbe:
@@ -398,11 +408,11 @@ spec:
               mountPath: /tmp
           resources:
             requests:
-              cpu: "250m"
-              memory: "256Mi"
+              cpu: "50m"
+              memory: "96Mi"
             limits:
               cpu: "250m"
-              memory: "256Mi"
+              memory: "192Mi"
       volumes:
         - name: tmp
           emptyDir:
@@ -418,20 +428,8 @@ kind: PodDisruptionBudget
 metadata:
   name: mobility-api-pdb
 spec:
-  minAvailable: 1
+  minAvailable: 1  # At least 1 API pod must stay up during drain/upgrades (requires replicas≥2)
   selector:
     matchLabels:
       app: mobility-bot
       component: api
-
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: mobility-worker-pdb
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels:
-      app: mobility-bot
-      component: worker

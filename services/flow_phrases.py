@@ -75,6 +75,32 @@ ORDINAL_PHRASES: List[str] = [
     "peti", "peta",
 ]
 
+# GDPR Consent message — shown ONCE before first interaction.
+# User must reply "da", "prihvaćam", or "slažem se" to proceed.
+GDPR_CONSENT_MESSAGE = (
+    "Pozdrav! Ja sam MobilityOne AI asistent — automatizirani sustav, ne čovjek.\n\n"
+    "Prije nego počnemo, trebam vaš pristanak:\n\n"
+    "• Obrađujem vaše poruke kako bih vam pomogao s vozilima, "
+    "rezervacijama i prijavom kvarova\n"
+    "• Vaši podaci se čuvaju 365 dana i možete zatražiti brisanje u bilo kojem trenutku\n"
+    "• Više informacija: kontaktirajte vašeg administratora\n\n"
+    "Prihvaćate li uvjete korištenja? Odgovorite sa **Da** ili **Ne**."
+)
+
+GDPR_CONSENT_DECLINED = (
+    "Razumijem. Bez pristanka ne mogu obrađivati vaše poruke.\n\n"
+    "Ako se predomislite, jednostavno pošaljite novu poruku."
+)
+
+GDPR_CONSENT_REPEAT = (
+    "Molim vas odgovorite sa **Da** ili **Ne** na uvjete korištenja "
+    "kako bih mogao nastaviti."
+)
+
+# Keywords that count as consent acceptance
+CONSENT_ACCEPT_KEYWORDS = {"da", "prihvaćam", "prihvacam", "slažem se", "slazem se", "accept", "yes", "pristajem"}
+CONSENT_DECLINE_KEYWORDS = {"ne", "no", "odbijam", "ne prihvaćam", "ne prihvacam"}
+
 # Greeting phrases
 # EU AI Act: Bot MUST self-identify as AI on every greeting interaction.
 _AI_DISCLOSURE = "Ja sam MobilityOne AI asistent."

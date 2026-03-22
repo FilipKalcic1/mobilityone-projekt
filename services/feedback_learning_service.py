@@ -58,8 +58,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport
 from config import get_settings
-
+from services.errors import InfrastructureError, GatewayError, ErrorCode
+from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("feedback_learning_service")
 settings = get_settings()
 
 # Cache file for learned boosts
@@ -183,7 +185,8 @@ class FeedbackLearningService:
                     self._pattern_embeddings = data.get("pattern_embeddings", {})
                 logger.info(f"Loaded {len(self._learned_boosts)} learned boosts")
         except Exception as e:
-            logger.warning(f"Could not load learned boosts: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Could not load learned boosts: {e}")
+            logger.warning(str(err))
 
     def _save_learned_boosts(self) -> None:
         """Save learned boosts to cache."""
@@ -199,7 +202,8 @@ class FeedbackLearningService:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             logger.info(f"Saved {len(self._learned_boosts)} learned boosts")
         except Exception as e:
-            logger.error(f"Failed to save learned boosts: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to save learned boosts: {e}")
+            logger.error(str(err))
 
     async def _get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding for text using OpenAI."""
@@ -222,7 +226,8 @@ class FeedbackLearningService:
             )
             return response.data[0].embedding
         except Exception as e:
-            logger.warning(f"Embedding error for '{text[:50]}...': {e}")
+            err = GatewayError(ErrorCode.TIMEOUT, f"Embedding error for '{text[:50]}...': {e}")
+            logger.warning(str(err))
             return None
 
     def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
@@ -263,140 +268,150 @@ class FeedbackLearningService:
         Returns:
             LearningResult with statistics
         """
-        result = LearningResult(
-            timestamp=datetime.now(timezone.utc).isoformat()
-        )
-
-        # Step 1: Fetch reports with corrections
-        try:
-            query = (
-                select(HallucinationReport)
-                .where(HallucinationReport.correction.isnot(None))
-                .order_by(HallucinationReport.created_at.desc())
-                .limit(limit)
+        with trace_span(_tracer, "feedback_learning.learn_and_apply", {"min_occurrences": min_occurrences, "confidence_threshold": confidence_threshold, "limit": limit}) as span:
+            result = LearningResult(
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
-            db_result = await self.db.execute(query)
-            reports = list(db_result.scalars().all())
-        except Exception as e:
-            logger.error(f"Failed to fetch reports: {e}")
-            result.recommendations.append(f"Database error: {e}")
-            return result
 
-        if not reports:
-            result.quality_status = "no_data"
-            result.recommendations.append("No corrected reports found for learning")
-            return result
-
-        # Step 2: Extract patterns from corrections
-        pattern_tool_map: Dict[str, Dict[str, Any]] = defaultdict(
-            lambda: {"tool": None, "count": 0, "queries": [], "wrong_tools": set()}
-        )
-
-        for report in reports:
-            correct_tool = self._extract_tool_from_correction(report.correction)
-            if not correct_tool:
-                continue
-
-            # Extract patterns from query
-            patterns = self._extract_patterns(report.user_query)
-            wrong_tool = self._extract_tool_from_response(report.bot_response, report.retrieved_chunks)
-
-            for pattern in patterns:
-                data = pattern_tool_map[pattern]
-                data["tool"] = correct_tool
-                data["count"] += 1
-                if len(data["queries"]) < 5:
-                    data["queries"].append(report.user_query[:100])
-                if wrong_tool:
-                    data["wrong_tools"].add(wrong_tool)
-
-        # Step 3: Build learned boosts
-        tool_patterns: Dict[str, LearnedBoost] = defaultdict(
-            lambda: LearnedBoost(tool_id="", patterns=[], boost_value=0.0)
-        )
-
-        for pattern, data in pattern_tool_map.items():
-            if data["count"] < min_occurrences:
-                continue
-
-            tool_id = data["tool"]
-            if not tool_id:
-                continue
-
-            # Calculate confidence
-            confidence = min(0.5 + (data["count"] * 0.1), 0.95)
-
-            # Get or create boost
-            if tool_id not in tool_patterns:
-                tool_patterns[tool_id] = LearnedBoost(
-                    tool_id=tool_id,
-                    patterns=[],
-                    boost_value=0.0,
-                    confidence=0.0,
-                    occurrence_count=0,
+            # Step 1: Fetch reports with corrections
+            try:
+                query = (
+                    select(HallucinationReport)
+                    .where(HallucinationReport.correction.isnot(None))
+                    .order_by(HallucinationReport.created_at.desc())
+                    .limit(limit)
                 )
+                db_result = await self.db.execute(query)
+                reports = list(db_result.scalars().all())
+            except Exception as e:
+                err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to fetch reports: {e}")
+                logger.error(str(err))
+                result.recommendations.append(f"Database error: {e}")
+                span.set_attribute("result.error", str(e))
+                return result
 
-            boost = tool_patterns[tool_id]
+            if not reports:
+                result.quality_status = "no_data"
+                result.recommendations.append("No corrected reports found for learning")
+                span.set_attribute("result.status", "no_data")
+                return result
 
-            # Add pattern if not too many
-            if len(boost.patterns) < MAX_BOOSTS_PER_TOOL and pattern not in boost.patterns:
-                boost.patterns.append(pattern)
-                boost.occurrence_count += data["count"]
-                boost.confidence = max(boost.confidence, confidence)
+            span.set_attribute("reports_count", len(reports))
 
-            # Add wrong tools as negative patterns
-            for wrong_tool in data["wrong_tools"]:
-                if wrong_tool not in boost.negative_patterns:
-                    boost.negative_patterns.append(wrong_tool)
+            # Step 2: Extract patterns from corrections
+            pattern_tool_map: Dict[str, Dict[str, Any]] = defaultdict(
+                lambda: {"tool": None, "count": 0, "queries": [], "wrong_tools": set()}
+            )
 
-            result.patterns_learned += 1
+            for report in reports:
+                correct_tool = self._extract_tool_from_correction(report.correction)
+                if not correct_tool:
+                    continue
 
-        # Step 4: Apply high-confidence boosts
-        now = datetime.now(timezone.utc).isoformat()
+                # Extract patterns from query
+                patterns = self._extract_patterns(report.user_query)
+                wrong_tool = self._extract_tool_from_response(report.bot_response, report.retrieved_chunks)
 
-        for tool_id, boost in tool_patterns.items():
-            if boost.confidence < confidence_threshold:
-                continue
+                for pattern in patterns:
+                    data = pattern_tool_map[pattern]
+                    data["tool"] = correct_tool
+                    data["count"] += 1
+                    if len(data["queries"]) < 5:
+                        data["queries"].append(report.user_query[:100])
+                    if wrong_tool:
+                        data["wrong_tools"].add(wrong_tool)
 
-            # Calculate boost value based on confidence
-            boost.boost_value = 0.10 + (boost.confidence - 0.5) * 0.4  # 0.10 to 0.28
-            boost.penalty_value = 0.15  # Penalty for wrong tool
-            boost.last_updated = now
-            boost.source = "feedback"
+            # Step 3: Build learned boosts
+            tool_patterns: Dict[str, LearnedBoost] = defaultdict(
+                lambda: LearnedBoost(tool_id="", patterns=[], boost_value=0.0)
+            )
 
-            # Merge with existing boost
-            if tool_id in self._learned_boosts:
-                existing = self._learned_boosts[tool_id]
-                # Merge patterns
-                for p in boost.patterns:
-                    if p not in existing.patterns and len(existing.patterns) < MAX_BOOSTS_PER_TOOL:
-                        existing.patterns.append(p)
-                # Update confidence (weighted average)
-                existing.confidence = (existing.confidence + boost.confidence) / 2
-                existing.occurrence_count += boost.occurrence_count
-                existing.boost_value = max(existing.boost_value, boost.boost_value)
-                existing.last_updated = now
-                result.boosts_applied += 1
-            else:
-                self._learned_boosts[tool_id] = boost
-                result.boosts_applied += 1
+            for pattern, data in pattern_tool_map.items():
+                if data["count"] < min_occurrences:
+                    continue
 
-        # Step 5: Save learned boosts
-        if result.boosts_applied > 0:
-            self._save_learned_boosts()
+                tool_id = data["tool"]
+                if not tool_id:
+                    continue
 
-        # Step 6: Generate recommendations
-        result.recommendations = self._generate_recommendations(tool_patterns, result)
+                # Calculate confidence
+                confidence = min(0.5 + (data["count"] * 0.1), 0.95)
 
-        # Step 7: Update quality status
-        result.quality_status = "learning_applied" if result.boosts_applied > 0 else "no_new_patterns"
+                # Get or create boost
+                if tool_id not in tool_patterns:
+                    tool_patterns[tool_id] = LearnedBoost(
+                        tool_id=tool_id,
+                        patterns=[],
+                        boost_value=0.0,
+                        confidence=0.0,
+                        occurrence_count=0,
+                    )
 
-        logger.info(
-            f"Learning cycle complete: {result.patterns_learned} patterns, "
-            f"{result.boosts_applied} boosts applied"
-        )
+                boost = tool_patterns[tool_id]
 
-        return result
+                # Add pattern if not too many
+                if len(boost.patterns) < MAX_BOOSTS_PER_TOOL and pattern not in boost.patterns:
+                    boost.patterns.append(pattern)
+                    boost.occurrence_count += data["count"]
+                    boost.confidence = max(boost.confidence, confidence)
+
+                # Add wrong tools as negative patterns
+                for wrong_tool in data["wrong_tools"]:
+                    if wrong_tool not in boost.negative_patterns:
+                        boost.negative_patterns.append(wrong_tool)
+
+                result.patterns_learned += 1
+
+            # Step 4: Apply high-confidence boosts
+            now = datetime.now(timezone.utc).isoformat()
+
+            for tool_id, boost in tool_patterns.items():
+                if boost.confidence < confidence_threshold:
+                    continue
+
+                # Calculate boost value based on confidence
+                boost.boost_value = 0.10 + (boost.confidence - 0.5) * 0.4  # 0.10 to 0.28
+                boost.penalty_value = 0.15  # Penalty for wrong tool
+                boost.last_updated = now
+                boost.source = "feedback"
+
+                # Merge with existing boost
+                if tool_id in self._learned_boosts:
+                    existing = self._learned_boosts[tool_id]
+                    # Merge patterns
+                    for p in boost.patterns:
+                        if p not in existing.patterns and len(existing.patterns) < MAX_BOOSTS_PER_TOOL:
+                            existing.patterns.append(p)
+                    # Update confidence (weighted average)
+                    existing.confidence = (existing.confidence + boost.confidence) / 2
+                    existing.occurrence_count += boost.occurrence_count
+                    existing.boost_value = max(existing.boost_value, boost.boost_value)
+                    existing.last_updated = now
+                    result.boosts_applied += 1
+                else:
+                    self._learned_boosts[tool_id] = boost
+                    result.boosts_applied += 1
+
+            # Step 5: Save learned boosts
+            if result.boosts_applied > 0:
+                self._save_learned_boosts()
+
+            # Step 6: Generate recommendations
+            result.recommendations = self._generate_recommendations(tool_patterns, result)
+
+            # Step 7: Update quality status
+            result.quality_status = "learning_applied" if result.boosts_applied > 0 else "no_new_patterns"
+
+            span.set_attribute("result.patterns_learned", result.patterns_learned)
+            span.set_attribute("result.boosts_applied", result.boosts_applied)
+            span.set_attribute("result.quality_status", result.quality_status)
+
+            logger.info(
+                f"Learning cycle complete: {result.patterns_learned} patterns, "
+                f"{result.boosts_applied} boosts applied"
+            )
+
+            return result
 
     def _extract_tool_from_correction(self, correction: str) -> Optional[str]:
         """Extract tool name from correction text."""

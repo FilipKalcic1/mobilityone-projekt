@@ -151,8 +151,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 120s
+      retries: 20
+      start_period: 300s
     labels:
       - "autoheal=true"
     networks:

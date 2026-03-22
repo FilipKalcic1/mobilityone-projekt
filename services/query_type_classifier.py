@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import List, Optional
 from enum import Enum
 
+from services.dynamic_threshold import ClassificationSignal
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,6 +52,7 @@ class QueryTypeResult:
     matched_pattern: str
     preferred_suffixes: List[str]      # Preferred suffixes
     excluded_suffixes: List[str]       # Excluded suffixes
+    signal: Optional[ClassificationSignal] = None
 
 
 # Backwards-compatible interface - delegates to ML classifier
@@ -83,7 +86,8 @@ class QueryTypeClassifier:
             confidence=ml_result.confidence,
             matched_pattern="ML",
             preferred_suffixes=ml_result.preferred_suffixes,
-            excluded_suffixes=ml_result.excluded_suffixes
+            excluded_suffixes=ml_result.excluded_suffixes,
+            signal=ml_result.signal,
         )
 
 

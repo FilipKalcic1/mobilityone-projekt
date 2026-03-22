@@ -32,7 +32,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Content Security Policy - restrict resource loading
-        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+        # Relax CSP for Swagger/ReDoc UI paths (they load CSS/JS from CDN)
+        path = request.url.path
+        if path.endswith(("/docs", "/redoc", "/openapi.json")):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://cdn.jsdelivr.net; "
+                "frame-ancestors 'none'"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
 
         # Permissions Policy - disable unused browser features
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"

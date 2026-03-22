@@ -189,6 +189,9 @@ class PatternRegistry:
         return bool(cls.EMAIL_PATTERN.match(text.strip()))
 
 
+# Module-level export for convenience
+UUID_PATTERN = PatternRegistry.UUID_PATTERN
+
 # ---
 # NAMING CONVENTIONS
 # ---

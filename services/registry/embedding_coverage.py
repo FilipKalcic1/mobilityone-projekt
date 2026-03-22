@@ -152,7 +152,7 @@ class EmbeddingCoverageTracker:
     critical analysis (rated 1/10 for coverage tracking).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.engine = EmbeddingEngine()
         self.path_entity_map = self.engine.PATH_ENTITY_MAP
         self.output_key_map = self.engine.OUTPUT_KEY_MAP
@@ -329,28 +329,28 @@ class EmbeddingCoverageTracker:
         print("EMBEDDING COVERAGE REPORT")
         print("=" * 60)
 
-        print(f"\n📍 PATH ENTITY COVERAGE:")
+        print("\n📍 PATH ENTITY COVERAGE:")
         print(f"   Total unique segments: {report.total_path_segments}")
         print(f"   Mapped segments: {report.mapped_path_segments}")
         print(f"   Coverage: {report.path_coverage_pct:.1f}%")
         if report.unmapped_path_segments:
             print(f"   Unmapped (top 10): {sorted(report.unmapped_path_segments)[:10]}")
 
-        print(f"\n📦 OUTPUT KEY COVERAGE:")
+        print("\n📦 OUTPUT KEY COVERAGE:")
         print(f"   Total unique keys: {report.total_output_keys}")
         print(f"   Mapped keys: {report.mapped_output_keys}")
         print(f"   Coverage: {report.output_coverage_pct:.1f}%")
         if report.unmapped_output_keys:
             print(f"   Unmapped (top 10): {sorted(report.unmapped_output_keys)[:10]}")
 
-        print(f"\n🔧 OPERATION ID COVERAGE:")
+        print("\n🔧 OPERATION ID COVERAGE:")
         print(f"   Total unique words: {report.total_operation_words}")
         print(f"   Mapped words: {report.mapped_operation_words}")
         print(f"   Coverage: {report.operation_coverage_pct:.1f}%")
         if report.unmapped_operation_words:
             print(f"   Unmapped (top 10): {sorted(report.unmapped_operation_words)[:10]}")
 
-        print(f"\n🛠️ TOOL COVERAGE:")
+        print("\n🛠️ TOOL COVERAGE:")
         print(f"   Tools with mapping: {report.tools_with_mapping}")
         print(f"   Tools without mapping: {report.tools_without_mapping}")
         print(f"   Coverage: {report.tool_coverage_pct:.1f}%")

@@ -19,12 +19,16 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
+from services.tracing import get_tracer, trace_span
+from services.errors import SearchError, ErrorCode
+
 import numpy as np
 import faiss
 
 from config import get_settings
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("faiss_vector_store")
 settings = get_settings()
 
 # Cache directory for embeddings
@@ -53,7 +57,7 @@ class FAISSVectorStore:
     it is unreliable (55% coverage, word overlap issues).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the vector store."""
         self._index: Optional[faiss.IndexFlatIP] = None
         self._tool_ids: List[str] = []  # Maps FAISS index to tool_id
@@ -156,7 +160,8 @@ class FAISSVectorStore:
 
             return embeddings
         except Exception as e:
-            logger.warning(f"Failed to load cached embeddings: {e}")
+            err = SearchError(ErrorCode.FAISS_NOT_INITIALIZED, f"Failed to load cached embeddings: {e}")
+            logger.warning(str(err))
             return {}
 
     def _save_embeddings_to_cache(self) -> None:
@@ -167,7 +172,8 @@ class FAISSVectorStore:
 
             logger.info(f"Saved {len(self._embeddings)} embeddings to cache")
         except Exception as e:
-            logger.warning(f"Failed to save embeddings to cache: {e}")
+            err = SearchError(ErrorCode.FAISS_INDEX_CORRUPT, f"Failed to save embeddings to cache: {e}")
+            logger.warning(str(err))
 
     async def _generate_embeddings(
         self,
@@ -221,7 +227,8 @@ class FAISSVectorStore:
                     self._save_embeddings_to_cache()
 
             except Exception as e:
-                logger.warning(f"Failed to generate embedding for {tool_id}: {e}")
+                err = SearchError(ErrorCode.EMBEDDING_GENERATION_FAILED, f"Failed to generate embedding for {tool_id}: {e}")
+                logger.warning(str(err))
 
         # Save final embeddings
         self._save_embeddings_to_cache()
@@ -258,10 +265,39 @@ class FAISSVectorStore:
         # These ensure primary entities rank higher than helpers/lookups
         base_keywords = self._get_base_tool_keywords(tool_id)
         if base_keywords:
-            # Repeat 3x to heavily weight these keywords
-            parts.append(base_keywords)
-            parts.append(base_keywords)
-            parts.append(base_keywords)
+            # List tools get 3x weight, ID/special tools get 1x
+            tool_lower = tool_id.lower()
+            is_list_tool = any(tool_lower == k for k in [
+                "get_companies", "get_vehicles", "get_persons", "get_expenses",
+                "get_cases", "get_teams", "get_trips", "get_partners",
+                "get_equipment", "get_orgunits", "get_costcenters",
+                "get_roles", "get_tags", "get_pools", "get_tenants",
+                "get_vehicletypes", "get_persontypes", "get_casetypes",
+                "get_expensetypes", "get_expensegroups", "get_equipmenttypes",
+                "get_periodicactivities", "get_triptypes", "get_vehiclecontracts",
+                "get_schedulingmodels", "get_periodicactivitiesschedules",
+                "get_personactivitytypes", "get_personorgunits",
+                "get_tenantpermissions", "get_documenttypes",
+                "get_teammembers", "get_vehicleassignments",
+                "get_personperiodicactivities",
+            ])
+            repeat = 3 if is_list_tool else 1
+            for _ in range(repeat):
+                parts.append(base_keywords)
+
+        # Method-verb repetition (3x) — strengthens action intent signal in embedding
+        METHOD_VERB_TEXT = {
+            "get": "dohvati prikaži pokaži pogledaj vrati",
+            "post": "dodaj kreiraj napravi unesi novi nova novo",
+            "put": "ažuriraj promijeni zamijeni update izmijeni",
+            "patch": "djelomično ažuriraj parcijalno promijeni",
+            "delete": "obriši ukloni makni izbriši trajno brisanje",
+        }
+        method_prefix = tool_id.split("_")[0].lower()
+        method_verbs = METHOD_VERB_TEXT.get(method_prefix, "")
+        if method_verbs:
+            for _ in range(3):
+                parts.append(method_verbs)
 
         # Structural info (method, entity, suffix)
         structural_info = self._extract_structural_info(tool_id)
@@ -313,6 +349,25 @@ class FAISSVectorStore:
             "get_tags": "dohvati sve oznake lista svih oznaka popis tagova",
             "get_pools": "dohvati sve poolove lista svih poolova popis poolova",
             "get_tenants": "dohvati sve tenante lista svih tenanata popis najmova",
+            # Extended list endpoints
+            "get_vehicletypes": "tipovi vozila vrste vozila kategorije vozila popis tipova vozila",
+            "get_persontypes": "tipovi osoba vrste zaposlenika kategorije korisnika popis tipova osoba",
+            "get_casetypes": "tipovi slučajeva vrste prijava kategorije šteta popis tipova slučajeva",
+            "get_expensetypes": "tipovi troškova vrste troškova kategorije izdataka popis tipova troškova",
+            "get_expensegroups": "grupe troškova skupine troškova kategorije troškova popis grupa troškova",
+            "get_equipmenttypes": "tipovi opreme vrste opreme kategorije opreme popis tipova opreme",
+            "get_periodicactivities": "periodične aktivnosti servisi redovni poslovi popis periodičnih aktivnosti",
+            "get_triptypes": "tipovi putovanja vrste putovanja kategorije tripova popis tipova putovanja",
+            "get_vehiclecontracts": "ugovori vozila leasing najam lizing popis ugovora vozila",
+            "get_schedulingmodels": "modeli raspoređivanja raspored sheme popis modela raspoređivanja",
+            "get_periodicactivitiesschedules": "rasporedi periodičnih aktivnosti kalendar servisa popis rasporeda",
+            "get_personactivitytypes": "tipovi aktivnosti osobe vrste aktivnosti zaposlenika popis aktivnosti",
+            "get_personorgunits": "organizacijske jedinice osobe odjeli zaposlenika popis org jedinica osobe",
+            "get_tenantpermissions": "dozvole tenanta korisničke dozvole permisije popis dozvola",
+            "get_documenttypes": "tipovi dokumenata vrste dokumenata kategorije dokumenata popis tipova dokumenata",
+            "get_teammembers": "članovi tima popis članova tima zaposlenici u timu",
+            "get_vehicleassignments": "dodjele vozila tko vozi što popis dodjela vozila",
+            "get_personperiodicactivities": "periodične aktivnosti osobe servisi zaposlenika redovne aktivnosti osobe",
         }
 
         # PRIMARY ENTITY BY ID ENDPOINTS (get_X_id)
@@ -326,9 +381,19 @@ class FAISSVectorStore:
             "get_trips_id": "dohvati jedno putovanje po ID-u detalji putovanja informacije o putovanju",
             "get_equipment_id": "dohvati jednu opremu po ID-u detalji opreme informacije o opremi",
             "get_orgunits_id": "dohvati jednu org jedinicu po ID-u detalji odjela informacije o sektoru",
+            # Extended ID endpoints
+            "get_vehicletypes_id": "detalji tipa vozila informacije o vrsti vozila",
+            "get_casetypes_id": "detalji tipa slučaja informacije o vrsti prijave",
+            "get_expensetypes_id": "detalji tipa troška informacije o vrsti troška",
+            "get_periodicactivities_id": "detalji periodične aktivnosti informacije o servisu",
+            "get_vehiclecontracts_id": "detalji ugovora vozila informacije o leasingu",
+            "get_partners_id": "detalji partnera informacije o dobavljaču klijentu",
+            "get_costcenters_id": "detalji troškovnog centra informacije o mjestu troška",
+            "get_roles_id": "detalji uloge informacije o roli dozvoli",
+            "get_tags_id": "detalji oznake informacije o tagu",
         }
 
-        # SPECIAL TOOLS
+        # SPECIAL TOOLS (write operations and functional endpoints)
         SPECIAL_KEYWORDS = {
             "get_vehiclecalendar": "kalendar vozila raspored vozila moje rezervacije vozila booking vozila pregled rezervacija svi bookings",
             "get_availablevehicles": "dostupna vozila slobodna vozila koja vozila su slobodna raspoloživa vozila",
@@ -338,6 +403,19 @@ class FAISSVectorStore:
             "post_vehiclecalendar": "nova rezervacija vozila rezerviraj vozilo zauzmi vozilo booking dodaj rezervaciju",
             "post_booking": "nova rezervacija booking rezerviraj zauzmi dodaj booking",
             "get_orgunits_tree": "hijerarhija organizacijskih jedinica stablo odjela struktura odjela parent child",
+            # Extended write operations
+            "post_expenses": "dodaj trošak unesi novi trošak kreiraj izdatak novi rashod",
+            "post_trips": "dodaj putovanje novo putovanje kreiraj trip novi putni nalog",
+            "post_companies": "dodaj kompaniju novu tvrtku kreiraj firmu nova kompanija",
+            "post_equipment": "dodaj opremu novu opremu kreiraj inventar",
+            "post_partners": "dodaj partnera novog dobavljača kreiraj klijenta",
+            "delete_expenses_id": "obriši trošak ukloni izdatak makni stavku troška",
+            "delete_trips_id": "obriši putovanje ukloni trip makni putni nalog",
+            "delete_cases_id": "obriši slučaj ukloni štetu zatvori prijavu",
+            "delete_vehiclecalendar_id": "obriši rezervaciju otkaži booking ukloni rezervaciju",
+            "put_vehicles_id": "ažuriraj vozilo promijeni podatke vozila update auta",
+            "put_expenses_id": "ažuriraj trošak promijeni izdatak update troška",
+            "put_companies_id": "ažuriraj kompaniju promijeni tvrtku update firme",
         }
 
         # Check which keywords to return
@@ -447,20 +525,20 @@ class FAISSVectorStore:
                 break
 
         if entity_value:
-            # Repeat entity 5x at START to heavily weight it
-            parts.append(entity_value)
-            parts.append(entity_value)
-            parts.append(entity_value)
+            # Repeat entity 2x (reduced from 5x — entity is same for get_X and get_X_id,
+            # so high repetition provides zero discriminating power between variants)
             parts.append(entity_value)
             parts.append(entity_value)
 
-        # Extract suffix meaning (check longest first)
+        # Extract suffix meaning (check longest first) — 3x for stronger variant discrimination
         for suffix, meaning in sorted(SUFFIX_MEANINGS.items(), key=lambda x: len(x[0]), reverse=True):
             if tool_lower.endswith(suffix.lower()):
                 parts.append(meaning)
+                parts.append(meaning)
+                parts.append(meaning)
                 break
 
-        # Extract HTTP method (LAST - least important for differentiation)
+        # Extract HTTP method
         method = None
         for m in ["get", "post", "put", "patch", "delete"]:
             if tool_lower.startswith(f"{m}_"):
@@ -588,99 +666,105 @@ class FAISSVectorStore:
             logger.warning("FAISSVectorStore not initialized, returning empty results")
             return []
 
-        # Auto-detect entity from query if not provided
-        detected_entity = None
-        if auto_detect_entity and not entity_filter:
-            detected_entity = self._detect_entity_from_query(query)
-            if detected_entity:
-                logger.debug(f"Auto-detected entity: {detected_entity}")
+        with trace_span(_tracer, "faiss.search", {
+            "search.top_k": top_k,
+            "query.preview": query[:80],
+        }) as span:
+            # Auto-detect entity from query if not provided
+            detected_entity = None
+            if auto_detect_entity and not entity_filter:
+                from services.entity_detector import detect_entity
+                detected_entity = detect_entity(query)
+                if detected_entity:
+                    logger.debug(f"Auto-detected entity: {detected_entity}")
 
-        effective_entity_filter = entity_filter or detected_entity
+            effective_entity_filter = entity_filter or detected_entity
 
-        # Expand query with concept mapper (jargon -> standard terms)
-        from services.concept_mapper import get_concept_mapper
-        concept_mapper = get_concept_mapper()
-        expanded_query = concept_mapper.expand_query(query)
+            # Expand query with concept mapper (jargon -> standard terms)
+            from services.concept_mapper import get_concept_mapper
+            concept_mapper = get_concept_mapper()
+            expanded_query = concept_mapper.expand_query(query)
 
-        if expanded_query != query:
-            logger.debug(f"ConceptMapper expanded: '{query}' -> '{expanded_query}'")
+            if expanded_query != query:
+                logger.debug(f"ConceptMapper expanded: '{query}' -> '{expanded_query}'")
 
-        # Get query embedding (using expanded query for better matching)
-        query_embedding = await self._get_query_embedding(expanded_query)
-        if query_embedding is None:
-            return []
+            # Get query embedding (using expanded query for better matching)
+            query_embedding = await self._get_query_embedding(expanded_query)
+            if query_embedding is None:
+                return []
 
-        # Convert to numpy and normalize
-        query_vector = np.array([query_embedding], dtype=np.float32)
-        faiss.normalize_L2(query_vector)
+            # Convert to numpy and normalize
+            query_vector = np.array([query_embedding], dtype=np.float32)
+            faiss.normalize_L2(query_vector)
 
-        # Search with larger k if filtering (need more candidates)
-        has_filter = action_filter or effective_entity_filter
-        search_k = top_k * 5 if has_filter else top_k
+            # Search with larger k if filtering (need more candidates)
+            has_filter = action_filter or effective_entity_filter
+            search_k = top_k * 5 if has_filter else top_k
 
-        # FAISS search
-        distances, indices = self._index.search(query_vector, min(search_k, len(self._tool_ids)))
+            # FAISS search
+            distances, indices = self._index.search(query_vector, min(search_k, len(self._tool_ids)))
 
-        # Build results with filtering
-        results = []
-        for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
-            if idx < 0:  # FAISS returns -1 for empty slots
-                continue
-
-            tool_id = self._tool_ids[idx]
-            score = float(distance)  # Already cosine similarity due to normalization
-            method = self._tool_methods.get(tool_id, "GET")
-            tool_lower = tool_id.lower()
-
-            # Apply entity filter if specified
-            if effective_entity_filter:
-                # Extract entity from tool_id (e.g., get_Companies_id -> companies)
-                parts = tool_lower.split('_')
-                tool_entity = parts[1] if len(parts) >= 2 else ''
-
-                # Check if entity matches (with some flexibility)
-                if effective_entity_filter not in tool_entity and tool_entity not in effective_entity_filter:
+            # Build results with filtering
+            results = []
+            for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
+                if idx < 0:  # FAISS returns -1 for empty slots
                     continue
 
-            # Apply action filter if specified
-            if action_filter:
-                # GET filter: allow GET and search POSTs
-                if action_filter == "GET" and method != "GET":
-                    if method == "POST" and any(x in tool_lower for x in ["search", "query", "filter", "list"]):
-                        pass  # Allow search POSTs
-                    else:
+                tool_id = self._tool_ids[idx]
+                score = float(distance)  # Already cosine similarity due to normalization
+                method = self._tool_methods.get(tool_id, "GET")
+                tool_lower = tool_id.lower()
+
+                # Apply entity filter if specified
+                if effective_entity_filter:
+                    # Extract entity from tool_id (e.g., get_Companies_id -> companies)
+                    parts = tool_lower.split('_')
+                    tool_entity = parts[1] if len(parts) >= 2 else ''
+
+                    # Check if entity matches (with some flexibility)
+                    if effective_entity_filter not in tool_entity and tool_entity not in effective_entity_filter:
                         continue
-                # POST filter: only POST methods (excluding search POSTs)
-                elif action_filter == "POST" and method != "POST":
-                    continue
-                # PUT filter: PUT or PATCH
-                elif action_filter in ("PUT", "PATCH") and method not in ("PUT", "PATCH"):
-                    continue
-                # DELETE filter
-                elif action_filter == "DELETE" and method != "DELETE":
-                    continue
 
-            results.append(SearchResult(
-                tool_id=tool_id,
-                score=score,
-                method=method
-            ))
+                # Apply action filter if specified
+                if action_filter:
+                    # GET filter: allow GET and search POSTs
+                    if action_filter == "GET" and method != "GET":
+                        if method == "POST" and any(x in tool_lower for x in ["search", "query", "filter", "list"]):
+                            pass  # Allow search POSTs
+                        else:
+                            continue
+                    # POST filter: only POST methods (excluding search POSTs)
+                    elif action_filter == "POST" and method != "POST":
+                        continue
+                    # PUT filter: PUT or PATCH
+                    elif action_filter in ("PUT", "PATCH") and method not in ("PUT", "PATCH"):
+                        continue
+                    # DELETE filter
+                    elif action_filter == "DELETE" and method != "DELETE":
+                        continue
 
-            if len(results) >= top_k:
-                break
+                results.append(SearchResult(
+                    tool_id=tool_id,
+                    score=score,
+                    method=method
+                ))
 
-        # If entity filter was too restrictive and we got no results, retry without it
-        if not results and effective_entity_filter and detected_entity:
-            logger.debug(f"Entity filter too restrictive, retrying without entity filter")
-            return await self.search(
-                query=query,
-                top_k=top_k,
-                action_filter=action_filter,
-                entity_filter=None,
-                auto_detect_entity=False
-            )
+                if len(results) >= top_k:
+                    break
 
-        return results
+            # If entity filter was too restrictive and we got no results, retry without it
+            if not results and effective_entity_filter and detected_entity:
+                logger.debug("Entity filter too restrictive, retrying without entity filter")
+                return await self.search(
+                    query=query,
+                    top_k=top_k,
+                    action_filter=action_filter,
+                    entity_filter=None,
+                    auto_detect_entity=False
+                )
+
+            span.set_attribute("faiss.result_count", len(results))
+            return results
 
     async def _get_query_embedding(self, query: str) -> Optional[List[float]]:
         """Get embedding for query text."""

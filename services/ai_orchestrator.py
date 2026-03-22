@@ -16,8 +16,11 @@ from services.patterns import PatternRegistry
 from services.context import UserContextManager
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
 from services.circuit_breaker import CircuitOpenError
+from services.errors import GatewayError, ErrorCode
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("ai_orchestrator")
 settings = get_settings()
 
 # Prometheus LLM metrics
@@ -77,7 +80,7 @@ FINAL_TOKEN_OVERHEAD = 3    # Final overhead added to total count
 # System prompts
 DEFAULT_SYSTEM_PROMPT = "Ti si MobilityOne AI asistent. Odgovaraj na hrvatskom. Budi koncizan."
 RATE_LIMIT_ERROR_MSG = "Sustav je trenutno preopterećen. Pokušajte ponovno za minutu."
-TIMEOUT_ERROR_MSG = "Sustav nije odgovorio na vrijeme. Pokušajte ponovno." 
+TIMEOUT_ERROR_MSG = "Sustav nije odgovorio na vrijeme. Pokušajte ponovno."
 
 
 
@@ -99,7 +102,7 @@ class AIOrchestrator:
     BASE_DELAY = 1.0
     MAX_JITTER = 0.5
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize AI orchestrator."""
         # Shared client: rate limiting + connection pooling across all services
         # SDK retries disabled - we use our own exponential backoff (1-4 seconds)
@@ -121,10 +124,10 @@ class AIOrchestrator:
             except Exception as e:
                 logger.warning(f"Tokenizer initialization error: {e}")
                 logger.info("Falling back to approximate token counting.")
-    
+
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """Azure-safe token counting."""
-        
+
         if not self.tokenizer:
             # Fallback token counting for Croatian language (when tiktoken unavailable)
             total_chars = sum(len(m.get("content", "")) for m in messages)
@@ -141,7 +144,7 @@ class AIOrchestrator:
         return num_tokens
 
 
-            
+
     async def analyze(
         self,
         messages: List[Dict[str, str]],
@@ -225,7 +228,8 @@ class AIOrchestrator:
                     )
 
                 if not response.choices:
-                    logger.error("Empty AI response")
+                    err = GatewayError(ErrorCode.SERVER_ERROR, "Empty AI response")
+                    logger.error(str(err))
                     return {"type": "error", "content": "AI sustav nije vratio odgovor. Pokusajte ponovno."}
 
                 message = response.choices[0].message
@@ -237,7 +241,8 @@ class AIOrchestrator:
                         try:
                             arguments = json.loads(tc.function.arguments)
                         except json.JSONDecodeError:
-                            logger.warning(f"Invalid tool arguments: {tc.function.arguments[:100]}")
+                            err = GatewayError(ErrorCode.VALIDATION_ERROR, f"Invalid tool arguments: {tc.function.arguments[:100]}")
+                            logger.warning(str(err))
                             arguments = {}
                         all_calls.append({
                             "tool": tc.function.name,
@@ -298,7 +303,8 @@ class AIOrchestrator:
 
                 LLM_REQUESTS_TOTAL.labels(model=self.model, status="error").inc()
                 LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
-                logger.error(f"API error {e.status_code}: {e.message}")
+                err = GatewayError.from_status(e.status_code, f"API error {e.status_code}: {e.message}")
+                logger.error(str(err))
                 return {"type": "error", "content": "Doslo je do greske u komunikaciji. Pokusajte ponovno."}
 
             except APITimeoutError as e:
@@ -320,11 +326,13 @@ class AIOrchestrator:
                 }
 
             except Exception as e:
-                logger.error(f"AI error: {e}", exc_info=True)
+                err = GatewayError(ErrorCode.SERVER_ERROR, f"AI error: {e}")
+                logger.error(str(err), exc_info=True)
                 return {"type": "error", "content": "Doslo je do neocekivane greske. Pokusajte ponovno."}
 
         # Should not reach here, but just in case
-        logger.error(f"All {self.MAX_RETRIES} AI retries exhausted, last_error={last_error}")
+        err = GatewayError(ErrorCode.RETRY_EXHAUSTED, f"All {self.MAX_RETRIES} AI retries exhausted, last_error={last_error}")
+        logger.error(str(err))
         return {"type": "error", "content": "Doslo je do greske. Pokusajte ponovno."}
 
     def _calculate_backoff(self, attempt: int) -> float:
@@ -421,7 +429,7 @@ class AIOrchestrator:
 
         return tools
 
-    
+
     def _apply_smart_history(
         self,
         messages: List[Dict[str, str]]
@@ -593,23 +601,38 @@ class AIOrchestrator:
     ) -> Dict[str, Any]:
         """
         Extract parameters from user input.
-        
+
         Args:
             user_input: User message
             required_params: [{name, type, description}]
             context: Additional context
-            
+
         Returns:
             Extracted parameters
         """
+        with trace_span(_tracer, "ai.extract_parameters", {
+            "ai.param_count": len(required_params),
+            "ai.input_length": len(user_input),
+        }):
+            return await self._extract_parameters_inner(
+                user_input, required_params, context
+            )
+
+    async def _extract_parameters_inner(
+        self,
+        user_input: str,
+        required_params: List[Dict[str, str]],
+        context: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Inner implementation of extract_parameters."""
         param_desc = "\n".join([
             f"- {p['name']} ({p['type']}): {p.get('description', '')}"
             for p in required_params
         ])
-        
+
         today = datetime.now()
         tomorrow = today + timedelta(days=1)
-        
+
         system = f"""Izvuci parametre iz korisnikove poruke.
 Vrati JSON objekt s vrijednostima. Koristi null za nedostajuće parametre.
 
@@ -642,10 +665,10 @@ VAŽNO: Ako korisnik daje samo vrijeme/datum kao odgovor (npr. "17:00" ili "prek
 to je vjerojatno odgovor na prethodno pitanje. Koristi taj datum/vrijeme za traženi parametar.
 
 Vrati SAMO JSON, bez drugog teksta."""
-        
+
         if context:
             system += f"\n\nDodatni kontekst: {context}"
-        
+
         # Retry loop with backoff for rate limits + circuit breaker
         for attempt in range(self.MAX_RETRIES):
             try:
@@ -674,7 +697,8 @@ Vrati SAMO JSON, bez drugog teksta."""
                 return json.loads(content)
 
             except json.JSONDecodeError:
-                logger.warning("Parameter extraction JSON error")
+                err = GatewayError(ErrorCode.VALIDATION_ERROR, "Parameter extraction JSON error")
+                logger.warning(str(err))
                 return {}
             except CircuitOpenError:
                 logger.warning("Circuit breaker OPEN - skipping parameter extraction")
@@ -696,11 +720,12 @@ Vrati SAMO JSON, bez drugog teksta."""
                 logger.error("Timeout exceeded in extract_parameters")
                 return {}
             except Exception as e:
-                logger.error(f"Parameter extraction error: {e}")
+                err = GatewayError(ErrorCode.SERVER_ERROR, f"Parameter extraction error: {e}")
+                logger.error(str(err))
                 return {}
 
         return {}
-    
+
     def build_system_prompt(
         self,
         user_context: Dict[str, Any],
@@ -708,11 +733,11 @@ Vrati SAMO JSON, bez drugog teksta."""
     ) -> str:
         """
         Build system prompt with context.
-        
+
         Args:
             user_context: User info
             flow_context: Current flow state
-            
+
         Returns:
             System prompt
         """
@@ -720,9 +745,9 @@ Vrati SAMO JSON, bez drugog teksta."""
         name = ctx.display_name
         person_id = ctx.person_id or ""
         vehicle = ctx.vehicle
-        
+
         today = datetime.now()
-        
+
         prompt = f"""Ti si MobilityOne AI asistent za upravljanje voznim parkom.
         Komuniciraj na HRVATSKOM jeziku. Budi KONCIZAN i JASAN.
 
@@ -759,7 +784,7 @@ Vrati SAMO JSON, bez drugog teksta."""
         ---
         KRITIČNO: ZABRANJENO IZMIŠLJANJE PODATAKA!
         ---
-        NIKADA ne izmišljaj NIŠTA - SVE mora doći iz API-ja! 
+        NIKADA ne izmišljaj NIŠTA - SVE mora doći iz API-ja!
 
         ZABRANJENO izmišljati:
         -ime automobila/vozila

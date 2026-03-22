@@ -84,7 +84,7 @@ def _build_engine(tool_categories=None, tool_documentation=None):
         return None
 
     with patch.object(mod, "settings", mock_settings):
-        with patch.object(mod, "AsyncAzureOpenAI"):
+        with patch("services.openai_client.get_embedding_client", return_value=MagicMock()):
             with patch.object(mod, "_load_json_file", side_effect=fake_load):
                 engine = mod.SearchEngine()
     return engine
@@ -245,18 +245,14 @@ class TestSearchEngineInit:
     def test_creates_openai_client(self):
         import services.registry.search_engine as mod
         mock_settings = _mock_settings()
-        mock_openai_cls = MagicMock()
+        mock_client = MagicMock()
 
         with patch.object(mod, "settings", mock_settings):
-            with patch.object(mod, "AsyncAzureOpenAI", mock_openai_cls):
+            with patch("services.openai_client.get_embedding_client", return_value=mock_client):
                 with patch.object(mod, "_load_json_file", return_value=None):
                     engine = mod.SearchEngine()
 
-        mock_openai_cls.assert_called_once_with(
-            azure_endpoint="https://test.openai.azure.com",
-            api_key="test-key",
-            api_version="2024-02-15",
-        )
+        assert engine.openai is mock_client
 
     def test_builds_tool_to_category_map(self, engine_with_categories):
         assert engine_with_categories._tool_to_category["get_Vehicles"] == "vehicles"
@@ -281,7 +277,7 @@ class TestApplyMethodDisambiguation:
         tools = {"delete_Vehicles_id": _make_tool("delete_Vehicles_id", "DELETE")}
         scored = [(0.80, "delete_Vehicles_id")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("pokazi vozila", scored, tools)
 
@@ -292,7 +288,7 @@ class TestApplyMethodDisambiguation:
         tools = {"put_Vehicles_id": _make_tool("put_Vehicles_id", "PUT")}
         scored = [(0.80, "put_Vehicles_id")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("pokazi vozila", scored, tools)
 
@@ -303,7 +299,7 @@ class TestApplyMethodDisambiguation:
         tools = {"post_CreateVehicle": _make_tool("post_CreateVehicle", "POST")}
         scored = [(0.80, "post_CreateVehicle")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("pokazi vozila", scored, tools)
 
@@ -314,7 +310,7 @@ class TestApplyMethodDisambiguation:
         tools = {"post_Vehicles_search": _make_tool("post_Vehicles_search", "POST")}
         scored = [(0.80, "post_Vehicles_search")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("pokazi vozila", scored, tools)
 
@@ -324,7 +320,7 @@ class TestApplyMethodDisambiguation:
         tools = {"get_Vehicles": _make_tool("get_Vehicles", "GET")}
         scored = [(0.80, "get_Vehicles")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("pokazi vozila", scored, tools)
 
@@ -337,7 +333,7 @@ class TestApplyMethodDisambiguation:
         }
         scored = [(0.80, "delete_Vehicles_id"), (0.75, "get_Vehicles")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.DELETE)):
             result = engine._apply_method_disambiguation("obrisi vozilo", scored, tools)
 
@@ -348,7 +344,7 @@ class TestApplyMethodDisambiguation:
         tools = {"delete_Vehicles_id": _make_tool("delete_Vehicles_id", "DELETE")}
         scored = [(0.80, "delete_Vehicles_id")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.UNKNOWN)):
             result = engine._apply_method_disambiguation("nesto", scored, tools)
 
@@ -359,7 +355,7 @@ class TestApplyMethodDisambiguation:
         tools = {"delete_Vehicles_id": _make_tool("delete_Vehicles_id", "DELETE")}
         scored = [(0.10, "delete_Vehicles_id")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("pokazi", scored, tools)
 
@@ -369,7 +365,7 @@ class TestApplyMethodDisambiguation:
         # op_id not in tools dict
         scored = [(0.80, "ghost_tool")]
 
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_scorers.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine._apply_method_disambiguation("test", scored, {})
 
@@ -984,37 +980,37 @@ class TestDetectPutPatchAmbiguity:
 class TestDetectIntent:
 
     def test_read_intent(self, engine):
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_filters.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.READ)):
             result = engine.detect_intent("pokazi vozila")
         assert result == "READ"
 
     def test_write_intent_create(self, engine):
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_filters.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.CREATE)):
             result = engine.detect_intent("dodaj vozilo")
         assert result == "WRITE"
 
     def test_write_intent_update(self, engine):
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_filters.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.UPDATE)):
             result = engine.detect_intent("azuriraj podatke")
         assert result == "WRITE"
 
     def test_write_intent_delete(self, engine):
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_filters.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.DELETE)):
             result = engine.detect_intent("obrisi vozilo")
         assert result == "WRITE"
 
     def test_write_intent_patch(self, engine):
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_filters.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.PATCH)):
             result = engine.detect_intent("promijeni naziv")
         assert result == "WRITE"
 
     def test_unknown_intent(self, engine):
-        with patch("services.registry.search_engine.detect_action_intent",
+        with patch("services.registry.search_filters.detect_action_intent",
                     return_value=_make_intent_result(ActionIntent.UNKNOWN)):
             result = engine.detect_intent("nesto nejasno")
         assert result == "UNKNOWN"

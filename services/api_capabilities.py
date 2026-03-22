@@ -22,6 +22,7 @@ With DYNAMIC detection:
 - If tool returns 500 with "Unknown filter field" → doesn't support that filter
 """
 
+import asyncio
 import logging
 import json
 from typing import Dict, Optional, Any, Tuple
@@ -355,9 +356,12 @@ class APICapabilityRegistry:
         if not CAPABILITIES_CACHE_FILE.exists():
             return False
 
-        try:
+        def _read():
             with open(CAPABILITIES_CACHE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                return json.load(f)
+
+        try:
+            data = await asyncio.to_thread(_read)
 
             for cap_dict in data.get("capabilities", []):
                 cap = ToolCapability.from_dict(cap_dict)
@@ -378,8 +382,11 @@ class APICapabilityRegistry:
                 "capabilities": [cap.to_dict() for cap in self.capabilities.values()]
             }
 
-            with open(CAPABILITIES_CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            def _write():
+                with open(CAPABILITIES_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+
+            await asyncio.to_thread(_write)
 
             logger.info(f"Saved {len(self.capabilities)} capabilities to cache")
         except Exception as e:

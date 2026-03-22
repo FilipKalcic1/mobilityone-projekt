@@ -619,7 +619,7 @@
 {"text": "molim te imam li booking", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "mozete li problem s vozilom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "molim te pokazi mi vozila", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
-{"text": "koliko vozila ima u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko vozila ima u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "ne radi auto", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "prosli servis?", "intent": "GET_SERVICE_MILEAGE", "action": "GET", "tool": "get_MasterData"}
 {"text": "mozete li pregled steta", "intent": "GET_CASES", "action": "GET", "tool": "get_Cases"}
@@ -822,7 +822,7 @@
 {"text": "jel mozes prijavi kvar", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
 {"text": "molim te prikazi rezervacije", "intent": "GET_MY_BOOKINGS", "action": "GET", "tool": "get_VehicleCalendar"}
 {"text": "problem s vozilom", "intent": "REPORT_DAMAGE", "action": "POST", "tool": "post_AddCase"}
-{"text": "vozila u sustavu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi vozila u sustavu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "upisi km?", "intent": "INPUT_MILEAGE", "action": "POST", "tool": "post_AddMileage"}
 {"text": "molim te sto sve znas", "intent": "GET_VEHICLE_INFO", "action": "GET", "tool": "get_MasterData"}
 {"text": "daj mi info o km", "intent": "GET_MILEAGE", "action": "GET", "tool": "get_MasterData"}
@@ -1543,7 +1543,7 @@
 {"text": "svi automobili", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "vozni park", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "popis svih auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko imamo auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko imamo auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "moj broj mobitela", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "koji mi je telefon", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "daj mi moj broj", "intent": "GET_PHONE", "action": "GET", "tool": null}
@@ -1560,25 +1560,91 @@
 {"text": "what is my phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "show my phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
 {"text": "phone", "intent": "GET_PHONE", "action": "GET", "tool": null}
-{"text": "ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko auta imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko vozila ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "ukupan broj auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko ukupno automobila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "broj auta u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "moze ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "reci mi koliko ima vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ukupno vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko auta imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko vozila ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupan broj auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko ukupno automobila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "broj auta u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "moze ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "reci mi koliko ima vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "daj mi listu auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "pokazi listu vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "ispisi sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
 {"text": "daj pregled vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko je vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "ukupno koliko imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
-{"text": "koliko ima auta u firmi", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko je vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupno koliko imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko ima auta u firmi", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
 {"text": "troskovi za vozilo", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "koliko kosta odrzavanje", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "izdaci za auto", "intent": "GET_EXPENSES", "action": "GET", "tool": "get_Expenses"}
 {"text": "zelim napraviti rezervaciju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "kreiraj novu rezervaciju", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
 {"text": "nova rezervacija", "intent": "BOOK_VEHICLE", "action": "GET", "tool": "get_AvailableVehicles"}
+{"text": "koji auti postoje u firmi", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj mi sve aute", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "nabrojaj mi sva vozila u listi", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koji su automobili u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi mi listu automobila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi kola u firmi", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ispis vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koja kola imamo u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj listu kola", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "trebam vidjeti sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "poakzi vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokaz mi aute", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "svi auti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pregled flote", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "popis kompletne flote", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "mozes mi pokazat koja vozila imamo", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "listu mi daj od vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi mi koja su vozila na popisu", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj da vidim sva vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko vozila imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolko auta imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolko vozila ima", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupno automobila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "daj mi broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliki je broj auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko ukupno vozila ima u statistici", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko ima prebroji vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolko kola imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "broj automobila u sustavu", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupno auta u firmi", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko automobila ukupno imamo", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "daj ukupan broj", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolko ih ima vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolko ima brj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolko je ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko kola ima ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupno koliko auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "moze li ukupan broj auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "prikazi listu svih auta", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi mi sva kola u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj popis svih automobila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "treba mi lista svih vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koje sve aute imamo", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi popis vozila u firmi", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "daj mi popis svih auta u floti", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "ispisi listu vozila", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko ukupno ima auta u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko vozila ukupno ima u firmi", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "reci mi koliko auta imamo ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "jel mozes reci koliko ima vozila ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko je ukupno auta", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "kolki je ukupan broj vozila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko je broj automobila", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "daj mi ukupan broj auta u sustavu", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko auta ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko auta ima ukupno", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "koliko auta postoji", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "vozni park popis", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "vozni park lista", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "pokazi vozni park", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koji auti postoje", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koji automobili postoje", "intent": "GET_VEHICLES", "action": "GET", "tool": "get_Vehicles"}
+{"text": "koliko je broj vozila u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}
+{"text": "ukupan broj vozila u floti", "intent": "GET_VEHICLE_COUNT", "action": "GET", "tool": "get_Vehicles_Agg"}

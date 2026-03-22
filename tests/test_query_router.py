@@ -9,6 +9,7 @@ from services.query_router import (
     INTENT_METADATA,
     ML_CONFIDENCE_THRESHOLD,
 )
+from services.dynamic_threshold import ClassificationSignal
 
 
 # ---------------------------------------------------------------------------
@@ -22,11 +23,13 @@ def router():
 
 
 def _prediction(intent="GET_MILEAGE", confidence=0.99, tool="get_MasterData"):
-    """Create a mock IntentPrediction."""
+    """Create a mock IntentPrediction with real signal."""
     p = MagicMock()
     p.intent = intent
     p.confidence = confidence
     p.tool = tool
+    p.signal = ClassificationSignal.from_confidence_only(confidence, n_classes=29)
+    p.prediction_set = None
     return p
 
 

@@ -94,7 +94,7 @@ class ErrorTranslator:
         self.patterns = [
             # Permission errors (403)
             ErrorPattern(
-                pattern=r"permission|403|forbidden|unauthorized|access denied",
+                pattern=r"permission|403|forbidden|access denied",
                 user_message_template=(
                     "❌ Nemate dozvolu za rezervaciju ovog vozila.\n\n"
                     "Mogući razlozi:\n"
@@ -261,7 +261,7 @@ class ErrorTranslator:
                             existing.resolution_hints = pattern_data["resolution_hints"]
                         break
 
-            logger.info(f"Loaded error patterns from cache")
+            logger.info("Loaded error patterns from cache")
 
         except Exception as e:
             logger.warning(f"Failed to load error patterns: {e}")

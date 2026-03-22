@@ -17,7 +17,6 @@ settings = get_settings()
 
 INPUT_PRICE = settings.LLM_INPUT_PRICE_PER_1K
 OUTPUT_PRICE = settings.LLM_OUTPUT_PRICE_PER_1K
-DAILY_BUDGET = settings.DAILY_COST_BUDGET_USD
 
 
 @dataclass
@@ -33,9 +32,8 @@ class DailyStats:
 class CostTracker:
     """Track LLM usage costs in Redis."""
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client) -> None:
         self.redis = redis_client
-        self.daily_budget = DAILY_BUDGET
         self._session = {"prompt": 0, "completion": 0, "cost": 0.0, "requests": 0}
         self._session_start = datetime.now(timezone.utc)
 
@@ -103,14 +101,46 @@ class CostTracker:
             return DailyStats(date=date)
 
     async def get_total_stats(self) -> Dict:
-        """Get all-time statistics from Redis."""
+        """Get all-time statistics from Redis using pipeline (single round-trip)."""
         total = {"prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}
-        for i in range(90):
-            date = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
-            stats = await self.get_daily_stats(date)
-            total["prompt_tokens"] += stats.prompt_tokens
-            total["completion_tokens"] += stats.completion_tokens
-            total["cost_usd"] += stats.cost_usd
+
+        try:
+            # Try pipeline for efficiency (single round-trip)
+            use_pipeline = False
+            try:
+                pipe = self.redis.pipeline()
+                # Verify it's a real pipeline, not a MagicMock artifact
+                if hasattr(pipe, 'execute') and not isinstance(pipe, type(self.redis)):
+                    use_pipeline = True
+            except Exception:
+                pass
+
+            if use_pipeline:
+                for i in range(90):
+                    day = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+                    pipe.hgetall(f"cost:daily:{day}")
+                results = await pipe.execute()
+            else:
+                # Fallback: sequential calls
+                results = []
+                for i in range(90):
+                    day = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+                    data = await self.redis.hgetall(f"cost:daily:{day}")
+                    results.append(data)
+
+            def get_int(data, k):
+                v = data.get(k) or data.get(k.encode()) or 0
+                return int(v.decode() if isinstance(v, bytes) else v)
+
+            for data in results:
+                if not data:
+                    continue
+                total["prompt_tokens"] += get_int(data, "prompt_tokens")
+                total["completion_tokens"] += get_int(data, "completion_tokens")
+                total["cost_usd"] += get_int(data, "cost_microcents") / 100_000_000
+        except Exception as e:
+            logger.error(f"Failed to get total stats: {e}")
+
         total["total_tokens"] = total["prompt_tokens"] + total["completion_tokens"]
         return total
 

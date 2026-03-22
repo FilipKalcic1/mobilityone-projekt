@@ -273,7 +273,7 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
                             readable_key = self._humanize_key(field)
                             formatted = self._format_value(key, value)
                             return f"**{readable_key}:** {formatted}"
-                
+
                 # If no value found for this keyword pattern, return explicit message
                 if keyword == "lizing":
                     return "Podaci o lizing kući nisu dostupni za vaše vozilo."

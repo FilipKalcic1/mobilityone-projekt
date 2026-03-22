@@ -16,8 +16,10 @@ from config import get_settings
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
 from services.circuit_breaker import CircuitOpenError
 from services.context import UserContextManager
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("chain_planner")
 settings = get_settings()
 
 
@@ -177,7 +179,8 @@ class ChainPlanner:
         Returns:
             ExecutionPlan with primary path and fallbacks
         """
-        logger.info(f"Planning chain for: {query[:50]}...")
+        with trace_span(_tracer, "chain_planner.create_plan", {"query_length": len(query), "num_tools": len(available_tools)}):
+            logger.info(f"Planning chain for: {query[:50]}...")
 
         # Check for deterministic multi-tool patterns (no LLM needed)
         multi_plan = self._check_multi_tool_patterns(query)

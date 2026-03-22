@@ -35,7 +35,7 @@ class CacheManager:
     - Verify cache integrity
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize cache manager."""
         CACHE_DIR.mkdir(exist_ok=True)
         logger.debug(f"CacheManager initialized, dir: {CACHE_DIR}")

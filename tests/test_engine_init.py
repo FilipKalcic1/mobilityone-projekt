@@ -46,8 +46,6 @@ def _make_engine():
         "ErrorLearningService": patch("services.engine.ErrorLearningService"),
         "get_drift_detector": patch("services.engine.get_drift_detector"),
         "CostTracker": patch("services.engine.CostTracker"),
-        "Planner": patch("services.engine.Planner"),
-        "get_chain_planner": patch("services.engine.get_chain_planner"),
         "get_response_extractor": patch("services.engine.get_response_extractor"),
         "get_query_router": patch("services.engine.get_query_router"),
         "get_unified_router": patch("services.engine.get_unified_router"),
@@ -113,7 +111,7 @@ def engine(engine_and_mocks):
 class TestInit:
     def test_engine_created(self, engine):
         assert engine is not None
-        assert engine.MAX_ITERATIONS == 6
+        assert engine is not None  # Engine initializes successfully
 
     def test_engine_has_handlers(self, engine):
         assert engine._tool_handler is not None
@@ -134,8 +132,6 @@ class TestInit:
              patch("services.engine.ErrorLearningService"), \
              patch("services.engine.get_drift_detector"), \
              patch("services.engine.CostTracker"), \
-             patch("services.engine.Planner"), \
-             patch("services.engine.get_chain_planner"), \
              patch("services.engine.get_response_extractor"), \
              patch("services.engine.get_query_router"), \
              patch("services.engine.get_unified_router"), \
@@ -376,7 +372,7 @@ class TestProcess:
                 engine._process_with_state = AsyncMock(side_effect=RuntimeError("boom"))
 
                 result = await engine.process("sender123", "test")
-                assert "greske" in result.lower()
+                assert "greške" in result.lower() or "greske" in result.lower()
 
 
 # ===========================================================================
@@ -547,7 +543,7 @@ class TestProcessWithState:
         assert result == "Km: 50000"
 
     @pytest.mark.asyncio
-    async def test_simple_api_falls_through_to_new_request(self, engine):
+    async def test_simple_api_failure_returns_error_message(self, engine):
         conv = self._make_conv()
         decision = MagicMock()
         decision.action = "simple_api"
@@ -559,10 +555,9 @@ class TestProcessWithState:
         engine._unified_router_initialized = True
 
         engine._deterministic_executor.execute = AsyncMock(return_value=None)
-        engine._handle_new_request = AsyncMock(return_value="Fallback response")
 
         result = await engine._process_with_state("sender", "km?", _user_context(), conv)
-        assert result == "Fallback response"
+        assert "greške" in result.lower() or "pokušajte" in result.lower()
 
     @pytest.mark.asyncio
     async def test_continue_flow_gathering(self, engine):
@@ -701,7 +696,8 @@ class TestHandleNewRequest:
         assert result == "Km: 50000"
 
     @pytest.mark.asyncio
-    async def test_deterministic_fails_falls_to_llm(self, engine):
+    async def test_deterministic_fails_returns_help(self, engine):
+        """When deterministic execution fails in _handle_new_request, return help message."""
         route = MagicMock()
         route.matched = True
         route.flow_type = "simple"
@@ -709,258 +705,20 @@ class TestHandleNewRequest:
 
         engine.query_router.route = MagicMock(return_value=route)
         engine._deterministic_executor.execute = AsyncMock(return_value=None)
-        engine._deterministic_executor.pre_resolve_entity_references = AsyncMock(return_value=None)
-
-        # Mock registry for tool search
-        engine.registry.find_relevant_tools_with_scores = AsyncMock(return_value=[])
-
-        # Mock chain planner
-        plan = MagicMock()
-        plan.understanding = "Test"
-        plan.is_simple = True
-        plan.direct_response = "No tools found answer"
-        plan.missing_data = []
-        plan.has_all_data = True
-        plan.primary_path = []
-        plan.fallback_paths = {}
-        engine.chain_planner.create_plan = AsyncMock(return_value=plan)
 
         conv = AsyncMock()
-        conv.is_in_flow.return_value = False
         result = await engine._handle_new_request("sender", "test?", _user_context(), conv)
-        assert result == "No tools found answer"
+        assert "siguran" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_no_route_match_uses_chain_planner(self, engine):
+    async def test_no_route_match_returns_help(self, engine):
+        """When QueryRouter has no match, return help message instead of LLM chain."""
         route = MagicMock()
         route.matched = False
 
         engine.query_router.route = MagicMock(return_value=route)
-        engine._deterministic_executor.pre_resolve_entity_references = AsyncMock(return_value=None)
-
-        engine.registry.find_relevant_tools_with_scores = AsyncMock(return_value=[
-            {"name": "get_MasterData", "score": 0.8, "schema": {"name": "get_MasterData"}}
-        ])
-
-        plan = MagicMock()
-        plan.understanding = "km"
-        plan.is_simple = True
-        plan.direct_response = None
-        plan.missing_data = []
-        plan.has_all_data = True
-        plan.primary_path = [MagicMock(tool_name="get_MasterData")]
-        plan.fallback_paths = {}
-
-        engine.chain_planner.create_plan = AsyncMock(return_value=plan)
-
-        # AI returns text response
-        engine._instrumented_ai_call = AsyncMock(return_value={"type": "text", "content": "50000 km"})
 
         conv = AsyncMock()
-        conv.is_in_flow.return_value = False
-        result = await engine._handle_new_request("sender", "km?", _user_context(), conv)
-        assert "50000" in result
-
-    @pytest.mark.asyncio
-    async def test_max_iterations_exhausted(self, engine):
-        route = MagicMock()
-        route.matched = False
-
-        engine.query_router.route = MagicMock(return_value=route)
-        engine._deterministic_executor.pre_resolve_entity_references = AsyncMock(return_value=None)
-        engine.registry.find_relevant_tools_with_scores = AsyncMock(return_value=[])
-
-        plan = MagicMock()
-        plan.understanding = "test"
-        plan.is_simple = True
-        plan.direct_response = None
-        plan.missing_data = []
-        plan.has_all_data = True
-        plan.primary_path = []
-        plan.fallback_paths = {}
-
-        engine.chain_planner.create_plan = AsyncMock(return_value=plan)
-
-        # Always return tool_call, never finishing
-        tool_result = {
-            "type": "tool_call",
-            "tool": "get_Something",
-            "parameters": {},
-            "tool_call_id": "tc1"
-        }
-        engine._instrumented_ai_call = AsyncMock(return_value=tool_result)
-
-        tool_mock = MagicMock()
-        tool_mock.method = "GET"
-        engine.registry.get_tool = MagicMock(return_value=tool_mock)
-
-        engine._tool_handler.execute_tool_call = AsyncMock(return_value={
-            "success": True,
-            "data": {"test": 1},
-        })
-
-        engine.response_extractor.extract = AsyncMock(return_value=None)
-
-        conv = AsyncMock()
-        conv.is_in_flow.return_value = False
-        result = await engine._handle_new_request("sender", "test", _user_context(), conv)
-        assert "uspio" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_plan_missing_data_starts_gathering(self, engine):
-        route = MagicMock()
-        route.matched = False
-
-        engine.query_router.route = MagicMock(return_value=route)
-        engine._deterministic_executor.pre_resolve_entity_references = AsyncMock(return_value=None)
-        engine.registry.find_relevant_tools_with_scores = AsyncMock(return_value=[])
-
-        plan = MagicMock()
-        plan.understanding = "booking"
-        plan.is_simple = False
-        plan.direct_response = None
-        plan.missing_data = ["FromTime", "ToTime"]
-        plan.has_all_data = False
-        plan.primary_path = [MagicMock(tool_name="get_AvailableVehicles")]
-        plan.fallback_paths = {}
-
-        engine.chain_planner.create_plan = AsyncMock(return_value=plan)
-
-        with patch("services.engine.DeterministicExecutor") as MockDE:
-            MockDE.build_missing_data_prompt = MagicMock(return_value="Navedite FromTime i ToTime")
-
-            conv = AsyncMock()
-            conv.is_in_flow.return_value = False
-            conv.start_flow = AsyncMock()
-            conv.save = AsyncMock()
-
-            result = await engine._handle_new_request("sender", "rezerviraj", _user_context(), conv)
-            assert "FromTime" in result or "Navedite" in result
-
-    @pytest.mark.asyncio
-    async def test_ai_error_response(self, engine):
-        route = MagicMock()
-        route.matched = False
-
-        engine.query_router.route = MagicMock(return_value=route)
-        engine._deterministic_executor.pre_resolve_entity_references = AsyncMock(return_value=None)
-        engine.registry.find_relevant_tools_with_scores = AsyncMock(return_value=[])
-
-        plan = MagicMock()
-        plan.understanding = "test"
-        plan.is_simple = True
-        plan.direct_response = None
-        plan.missing_data = []
-        plan.has_all_data = True
-        plan.primary_path = []
-        plan.fallback_paths = {}
-
-        engine.chain_planner.create_plan = AsyncMock(return_value=plan)
-        engine._instrumented_ai_call = AsyncMock(return_value={
-            "type": "error",
-            "content": "AI error occurred"
-        })
-
-        conv = AsyncMock()
-        conv.is_in_flow.return_value = False
-        result = await engine._handle_new_request("sender", "test", _user_context(), conv)
-        assert "error" in result.lower() or "AI" in result
-
-
-# ===========================================================================
-# _instrumented_ai_call
-# ===========================================================================
-
-class TestInstrumentedAICall:
-    @pytest.mark.asyncio
-    async def test_success_records_drift(self, engine):
-        engine.ai.analyze = AsyncMock(return_value={
-            "type": "text",
-            "content": "hello",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
-        })
-        engine.ai.model = "gpt-4"
-        engine.drift_detector.record_interaction = AsyncMock()
-        engine.cost_tracker = AsyncMock()
-        engine.cost_tracker.record_usage = AsyncMock()
-
-        result = await engine._instrumented_ai_call(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result["type"] == "text"
-        engine.drift_detector.record_interaction.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_tool_call_records_tools(self, engine):
-        engine.ai.analyze = AsyncMock(return_value={
-            "type": "tool_call",
-            "tool": "get_MasterData",
-        })
-        engine.ai.model = "gpt-4"
-        engine.drift_detector.record_interaction = AsyncMock()
-        engine.cost_tracker = None
-
-        result = await engine._instrumented_ai_call(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result["type"] == "tool_call"
-
-    @pytest.mark.asyncio
-    async def test_error_response_marks_failure(self, engine):
-        engine.ai.analyze = AsyncMock(return_value={
-            "type": "error",
-            "content": "LLM failed",
-        })
-        engine.ai.model = "gpt-4"
-        engine.drift_detector.record_interaction = AsyncMock()
-        engine.cost_tracker = None
-
-        result = await engine._instrumented_ai_call(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result["type"] == "error"
-
-    @pytest.mark.asyncio
-    async def test_exception_in_ai_analyze(self, engine):
-        engine.ai.analyze = AsyncMock(side_effect=RuntimeError("boom"))
-        engine.ai.model = "gpt-4"
-        engine.drift_detector.record_interaction = AsyncMock()
-        engine.cost_tracker = None
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await engine._instrumented_ai_call(
-                messages=[{"role": "user", "content": "test"}]
-            )
-        # Drift should still be recorded in finally block
-        engine.drift_detector.record_interaction.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_drift_failure_doesnt_crash(self, engine):
-        engine.ai.analyze = AsyncMock(return_value={"type": "text", "content": "ok"})
-        engine.ai.model = "gpt-4"
-        engine.drift_detector.record_interaction = AsyncMock(side_effect=RuntimeError("drift fail"))
-        engine.cost_tracker = None
-
-        # Should not raise
-        result = await engine._instrumented_ai_call(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result["type"] == "text"
-
-    @pytest.mark.asyncio
-    async def test_cost_tracker_records_usage(self, engine):
-        engine.ai.analyze = AsyncMock(return_value={
-            "type": "text",
-            "content": "ok",
-            "usage": {"prompt_tokens": 100, "completion_tokens": 50}
-        })
-        engine.ai.model = "gpt-4"
-        engine.drift_detector.record_interaction = AsyncMock()
-        engine.cost_tracker = AsyncMock()
-        engine.cost_tracker.record_usage = AsyncMock()
-
-        await engine._instrumented_ai_call(
-            messages=[{"role": "user", "content": "test"}],
-            user_context=_user_context()
-        )
-        engine.cost_tracker.record_usage.assert_called_once()
+        result = await engine._handle_new_request("sender", "xyz", _user_context(), conv)
+        assert "siguran" in result.lower()
+        assert "Rezervaciju" in result

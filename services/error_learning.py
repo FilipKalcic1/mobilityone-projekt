@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field, asdict
 
+from services.errors import InfrastructureError, ErrorCode
 from services.gdpr_masking import GDPRMaskingService, get_masking_service
-
+from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("error_learning")
 
 # Cache file path for JSON persistence
 ERROR_LEARNING_CACHE_FILE = Path.cwd() / ".cache" / "error_learning.json"
@@ -223,65 +225,71 @@ class ErrorLearningService:
             http_status: HTTP status code (for False Positive detection)
             response_data: Raw API response (for False Positive detection)
         """
-        # ---
-        # FALSE POSITIVE PROTECTION
-        # 200 + empty response = "Data Not Found", NOT a model error
-        # Example: GET /Persons?Filter=Phone(=)099... returns [] because person doesn't exist
-        # ---
-        if self._is_false_positive(http_status, response_data, error_code):
-            self._false_positives_skipped += 1
-            logger.debug(
-                f"⏭️ False positive skipped: {operation_id} "
-                f"(HTTP {http_status}, empty response is valid)"
+        with trace_span(_tracer, "error_learning.record_error", {"error_code": error_code, "operation_id": operation_id}) as span:
+            # ---
+            # FALSE POSITIVE PROTECTION
+            # 200 + empty response = "Data Not Found", NOT a model error
+            # Example: GET /Persons?Filter=Phone(=)099... returns [] because person doesn't exist
+            # ---
+            if self._is_false_positive(http_status, response_data, error_code):
+                self._false_positives_skipped += 1
+                logger.debug(
+                    f"⏭️ False positive skipped: {operation_id} "
+                    f"(HTTP {http_status}, empty response is valid)"
+                )
+                span.set_attribute("result.false_positive", True)
+                return
+
+            self._total_errors += 1
+
+            # Create pattern key
+            pattern_key = f"{error_code}:{operation_id}"
+
+            if pattern_key in self._error_patterns:
+                # Update existing pattern
+                pattern = self._error_patterns[pattern_key]
+                pattern.occurrence_count += 1
+                pattern.last_seen = datetime.now(timezone.utc).isoformat()
+                if correction:
+                    pattern.correction = correction
+                    pattern.resolved = True
+            else:
+                # New pattern
+                pattern = ErrorPattern(
+                    error_code=error_code,
+                    operation_id=operation_id,
+                    error_message=error_message,
+                    context=self._sanitize_context(context),
+                    correction=correction,
+                    resolved=was_corrected
+                )
+                self._error_patterns[pattern_key] = pattern
+
+            # Evict oldest unresolved patterns if over cap
+            if len(self._error_patterns) > self._MAX_ERROR_PATTERNS:
+                unresolved = sorted(
+                    ((k, p) for k, p in self._error_patterns.items() if not p.resolved),
+                    key=lambda x: x[1].occurrence_count
+                )
+                for k, _ in unresolved[:len(self._error_patterns) - self._MAX_ERROR_PATTERNS]:
+                    del self._error_patterns[k]
+
+            # Log for analysis
+            logger.info(
+                f"📊 Error recorded: {pattern_key} "
+                f"(count={pattern.occurrence_count}, resolved={pattern.resolved})"
             )
-            return
 
-        self._total_errors += 1
+            span.set_attribute("result.pattern_key", pattern_key)
+            span.set_attribute("result.occurrence_count", pattern.occurrence_count)
+            span.set_attribute("result.resolved", pattern.resolved)
 
-        # Create pattern key
-        pattern_key = f"{error_code}:{operation_id}"
+            # Persist to Redis if available
+            if self.redis:
+                await self._persist_pattern(pattern_key, pattern)
 
-        if pattern_key in self._error_patterns:
-            # Update existing pattern
-            pattern = self._error_patterns[pattern_key]
-            pattern.occurrence_count += 1
-            pattern.last_seen = datetime.now(timezone.utc).isoformat()
-            if correction:
-                pattern.correction = correction
-                pattern.resolved = True
-        else:
-            # New pattern
-            pattern = ErrorPattern(
-                error_code=error_code,
-                operation_id=operation_id,
-                error_message=error_message,
-                context=self._sanitize_context(context),
-                correction=correction,
-                resolved=was_corrected
-            )
-            self._error_patterns[pattern_key] = pattern
-
-        # Evict oldest unresolved patterns if over cap
-        if len(self._error_patterns) > self._MAX_ERROR_PATTERNS:
-            unresolved = sorted(
-                ((k, p) for k, p in self._error_patterns.items() if not p.resolved),
-                key=lambda x: x[1].occurrence_count
-            )
-            for k, _ in unresolved[:len(self._error_patterns) - self._MAX_ERROR_PATTERNS]:
-                del self._error_patterns[k]
-
-        # Log for analysis
-        logger.info(
-            f"📊 Error recorded: {pattern_key} "
-            f"(count={pattern.occurrence_count}, resolved={pattern.resolved})"
-        )
-
-        # Persist to Redis if available
-        if self.redis:
-            await self._persist_pattern(pattern_key, pattern)
-
-        # Check for new learnable patterns
-        await self._analyze_patterns()
+            # Check for new learnable patterns
+            await self._analyze_patterns()
 
     async def suggest_correction(
         self,
@@ -462,7 +470,8 @@ class ErrorLearningService:
                 json.dumps(asdict(pattern))
             )
         except Exception as e:
-            logger.warning(f"Failed to persist error pattern: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to persist error pattern: {e}")
+            logger.warning(str(err))
 
     async def _analyze_patterns(self) -> None:
         """
@@ -610,7 +619,8 @@ class ErrorLearningService:
                 report_id = str(db_report.id)
                 logger.info(f"Hallucination saved to DB: {report_id} (PII masked)")
             except Exception as e:
-                logger.error(f"Failed to save hallucination to DB: {e}")
+                err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to save hallucination to DB: {e}")
+                logger.error(str(err))
 
         # 2. Also keep in memory cache (masked)
         report = HallucinationReport(
@@ -697,7 +707,8 @@ class ErrorLearningService:
                 json.dumps(asdict(report), default=str)
             )
         except Exception as e:
-            logger.warning(f"Failed to persist hallucination report: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to persist hallucination report: {e}")
+            logger.warning(str(err))
 
     # ---
     # JSON FILE PERSISTENCE (za analizu trendova)

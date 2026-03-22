@@ -152,6 +152,39 @@ class ConceptMapper:
         "status": ["stanje", "state", "status"],
         "stanje": ["status", "state"],
         "gdje je": ["lokacija", "location", "status", "get"],
+
+        # Suffix/Action concept mappings — bridge Croatian verbs to English tool suffixes
+        # GroupBy
+        "grupiraj": ["GroupBy", "grupiranje", "grupa", "po kategoriji"],
+        "grupirane": ["GroupBy", "grupiranje", "grupa"],
+        "grupirano": ["GroupBy", "grupiranje", "grupa"],
+        "po grupama": ["GroupBy", "grupiranje"],
+        # Agg (aggregation)
+        "agregiraj": ["Agg", "agregacija", "statistika", "suma", "prosjek"],
+        "agregirane": ["Agg", "agregacija", "statistika"],
+        "ukupno": ["Agg", "agregacija", "suma", "total"],
+        "prosjek": ["Agg", "agregacija", "average", "prosječno"],
+        "prosječna": ["Agg", "agregacija", "average"],
+        "prosjecna": ["Agg", "agregacija", "average"],
+        "statistika": ["Agg", "agregacija", "GroupBy", "statistika"],
+        # MileageReports
+        "kilometraža": ["MileageReports", "km", "kilometri", "prijeđeni put"],
+        "kilometraza": ["MileageReports", "km", "kilometri", "prijedeni put"],
+        # PeriodicActivities
+        "periodične": ["PeriodicActivities", "servis", "redovne aktivnosti"],
+        "periodicne": ["PeriodicActivities", "servis", "redovne aktivnosti"],
+        "periodičke": ["PeriodicActivities", "servis", "redovne aktivnosti"],
+        # Documents/Metadata nested resources
+        "metapodaci": ["metadata", "shema", "struktura", "polja"],
+        "metapodatci": ["metadata", "shema", "struktura", "polja"],
+        # Bulk operations
+        "bulk": ["multipatch", "grupno ažuriranje", "više stavki"],
+        "masovno": ["multipatch", "bulk", "grupno ažuriranje"],
+        # Thumbnail
+        "thumbnail": ["thumb", "sličica", "preview"],
+        # Tree
+        "stablo": ["tree", "hijerarhija", "struktura"],
+        "hijerarhija": ["tree", "stablo", "struktura"],
     }
 
     # Phrase patterns that should trigger concept expansion

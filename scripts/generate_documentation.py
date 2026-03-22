@@ -166,7 +166,7 @@ class DocumentationGenerator:
         return {
             "categories": categories,
             "documentation": documentation,
-            "training_data": training_data,
+            "training_data": None,  # Step 3 deprecated — training data now in tool_documentation.json
             "knowledge_graph": knowledge_graph,
             "stats": self.stats
         }

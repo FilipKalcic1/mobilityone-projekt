@@ -27,39 +27,24 @@ NO HARDCODING - sve se temelji na DependencyGraph i output_keys.
 import logging
 import re
 from typing import Dict, Any, Optional, List, Tuple
+from services.errors import RoutingError, ErrorCode
 
 from services.patterns import PatternRegistry, ValuePattern
 from services.context import UserContextManager
-from dataclasses import dataclass
+from services.tracing import get_tracer, trace_span
 
+from services.dependency_resolver.models import (
+    ResolutionResult,
+    EntityReference,
+    _MOJ,
+    ORDINAL_PATTERNS,
+    POSSESSIVE_PATTERNS,
+    VEHICLE_NAME_PATTERNS,
+    PARAM_PROVIDERS,
+)
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("dependency_resolver")
 
-@dataclass
-class ResolutionResult:
-    """Result of dependency resolution."""
-    success: bool
-    resolved_value: Optional[Any] = None
-    provider_tool: Optional[str] = None
-    provider_params: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
-    # NEW: User-facing feedback about what was resolved
-    # Used for confirmations like "Razumijem: Golf (ZG-123-AB)"
-    feedback: Optional[Dict[str, Any]] = None
-    # Flag to indicate user selection is needed (e.g., no default vehicle)
-    needs_user_selection: bool = False
-
-@dataclass
-class EntityReference:
-    """
-    Detected entity reference from user text.
-
-    Enables "Vozilo 1" → UUID resolution.
-    """
-    entity_type: str  # "vehicle", "person", "location"
-    reference_type: str  # "ordinal", "possessive", "name", "pattern"
-    value: str  # Original text ("Vozilo 1", "moje vozilo", "Golf")
-    ordinal_index: Optional[int] = None  # For "Vozilo 1" → 0 (0-indexed)
-    is_possessive: bool = False  # For "moje vozilo", "moj auto"
 
 class DependencyResolver:
     """
@@ -81,46 +66,20 @@ class DependencyResolver:
     # ---
 
     # Ordinal patterns: "Vozilo 1", "Vozilo 2", "Vehicle 1"
-    ORDINAL_PATTERNS: List[Tuple[str, str]] = [
-        # Croatian
-        (r'vozilo\s*(\d+)', 'vehicle'),
-        (r'auto\s*(\d+)', 'vehicle'),
-        (r'automobil\s*(\d+)', 'vehicle'),
-        # English
-        (r'vehicle\s*(\d+)', 'vehicle'),
-        (r'car\s*(\d+)', 'vehicle'),
-        # Generic numbered
-        (r'#(\d+)\s*vozilo', 'vehicle'),
-        (r'broj\s*(\d+)', 'vehicle'),
-    ]
+    ORDINAL_PATTERNS: List[Tuple[str, str]] = ORDINAL_PATTERNS
 
     # Possessive patterns: "moje vozilo", "moj auto", "my car"
-    POSSESSIVE_PATTERNS: List[Tuple[str, str]] = [
-        # Croatian possessives (nominative/accusative)
-        (r'moje?\s+vozilo', 'vehicle'),
-        (r'moje?\s+auto', 'vehicle'),
-        (r'moje?\s+automobil', 'vehicle'),
-        (r'moje?\s+registracij[au]', 'vehicle'),
-        # Croatian possessives (dative/locative - "na mom vozilu", "mom autu")
-        (r'mom(?:e|u|em)?\s+vozil[ua]', 'vehicle'),
-        (r'mom(?:e|u|em)?\s+aut[ua]', 'vehicle'),
-        (r'mojoj?e?m?\s+registracij[iu]', 'vehicle'),
-        # Additional Croatian forms
-        (r'moj(?:em?)?\s+vozil[ua]', 'vehicle'),
-        # English possessives
-        (r'my\s+vehicle', 'vehicle'),
-        (r'my\s+car', 'vehicle'),
-        # NOTE: Implicit possessive patterns (just "vozilo" or "auto") are
-        # intentionally NOT included because they are too aggressive and
-        # could match unintended queries like "Koje vozilo je dostupno?"
-    ]
+    # D6: Keep in sync with entity_detector._POSSESSIVE_PATTERNS (broader routing patterns).
+    # These patterns are vehicle-specific for entity resolution; entity_detector covers all entities.
+    # F1: _MOJ covers all Croatian declension forms (nom/gen/dat/lok/akuz/inst)
+    POSSESSIVE_PATTERNS: List[Tuple[str, str]] = POSSESSIVE_PATTERNS
 
     # Vehicle name patterns are intentionally empty.
     # A hardcoded brand/model list is fragile (can't cover all brands, doesn't
     # auto-update, causes false positives like "Golf" the sport).
     # Instead we rely on: ordinal references ("Vozilo 1"), possessive references
     # ("moje vozilo"), and _fuzzy_match_vehicle() which searches actual data.
-    VEHICLE_NAME_PATTERNS: List[str] = []  # Intentionally empty - use fuzzy match instead
+    VEHICLE_NAME_PATTERNS: List[str] = VEHICLE_NAME_PATTERNS
 
     # Patterns for recognizing human-readable values
     # REFACTORED: Now uses centralized PatternRegistry instead of hardcoded patterns
@@ -132,30 +91,9 @@ class DependencyResolver:
 
     # Mapping: parameter name → provider tool patterns
     # These are semantic mappings, not hardcoded tool names
-    PARAM_PROVIDERS: Dict[str, Dict[str, Any]] = {
-        'vehicleid': {
-            'search_terms': ['vehicle', 'vehicles', 'masterdata'],
-            'output_keys': ['Id', 'VehicleId', 'vehicleId'],
-            'preferred_method': 'GET',
-        },
-        'personid': {
-            'search_terms': ['person', 'persons', 'driver', 'user'],
-            'output_keys': ['Id', 'PersonId', 'personId', 'UserId'],
-            'preferred_method': 'GET',
-        },
-        'locationid': {
-            'search_terms': ['location', 'locations', 'site'],
-            'output_keys': ['Id', 'LocationId', 'locationId'],
-            'preferred_method': 'GET',
-        },
-        'bookingid': {
-            'search_terms': ['booking', 'calendar', 'reservation'],
-            'output_keys': ['Id', 'BookingId', 'bookingId'],
-            'preferred_method': 'GET',
-        },
-    }
+    PARAM_PROVIDERS: Dict[str, Dict[str, Any]] = PARAM_PROVIDERS
 
-    def __init__(self, registry: Any):
+    def __init__(self, registry: Any) -> None:
         """
         Initialize resolver with tool registry.
 
@@ -320,135 +258,148 @@ class DependencyResolver:
         Returns:
             ResolutionResult with resolved value or error
         """
-        logger.info(f"Resolving dependency: {missing_param}")
+        with trace_span(_tracer, "dependency_resolver.resolve_dependency", {"missing_param": missing_param, "has_user_value": user_value is not None}) as span:
+            logger.info(f"Resolving dependency: {missing_param}")
 
-        # Check cache first
-        cache_key = f"{missing_param}:{user_value}"
-        if cache_key in self._resolution_cache:
-            cached = self._resolution_cache[cache_key]
-            logger.info(f"Cache hit for {cache_key}")
-            return ResolutionResult(
-                success=True,
-                resolved_value=cached['value'],
-                provider_tool=cached['tool']
-            )
-
-        # Find provider tool
-        provider_tool_id = self.find_provider_tool(missing_param)
-
-        if not provider_tool_id:
-            return ResolutionResult(
-                success=False,
-                error_message=f"Ne mogu pronaći način za dohvatiti {missing_param}"
-            )
-
-        provider_tool = self.registry.get_tool(provider_tool_id)
-        if not provider_tool:
-            return ResolutionResult(
-                success=False,
-                error_message=f"Provider tool {provider_tool_id} nije dostupan"
-            )
-
-        # Build parameters for provider
-        provider_params = {}
-
-        # If user provided a value, try to use it as filter
-        if user_value:
-            value_type = self.detect_value_type(user_value)
-
-            if value_type:
-                param_type, filter_field = value_type
-                provider_params = self.build_filter_query(filter_field, user_value)
-            else:
-                # Try as generic search/name filter
-                provider_params = {'Filter': f"Name(~){user_value}"}
-
-        # Use UserContextManager for validated access
-        ctx = UserContextManager(user_context)
-        person_id = ctx.person_id
-        if person_id:
-            person_param_injected = False
-            # Try to inject PersonId as direct parameter using schema-based classification
-            for param_name, param_def in provider_tool.parameters.items():
-                if param_def.context_key == "person_id":
-                    provider_params[param_name] = person_id
-                    person_param_injected = True
-                    logger.info(f"Dependency resolution: filtering by {param_name}={person_id}")
-                    break
-
-            # If no direct param match but Filter exists, add to Filter
-            if not person_param_injected and 'Filter' in provider_tool.parameters:
-                existing_filter = provider_params.get('Filter', '')
-                if existing_filter:
-                    # Combine with existing filter using semicolon
-                    provider_params['Filter'] = f"{existing_filter};PersonId(=){person_id}"
-                else:
-                    provider_params['Filter'] = f"PersonId(=){person_id}"
-                logger.info(f"Added PersonId filter to dependency resolution")
-        else:
-            logger.warning("No person_id in user_context for dependency resolution")
-
-        # Execute provider tool
-        try:
-            from services.tool_contracts import ToolExecutionContext
-
-            exec_context = ToolExecutionContext(
-                user_context=user_context,
-                tool_outputs={},
-                conversation_state={}
-            )
-
-            result = await executor.execute(
-                tool=provider_tool,
-                llm_params=provider_params,
-                execution_context=exec_context
-            )
-
-            if not result.success:
-                return ResolutionResult(
-                    success=False,
-                    provider_tool=provider_tool_id,
-                    provider_params=provider_params,
-                    error_message=result.error_message
-                )
-
-            # Extract the ID we need from result
-            resolved_value = self._extract_id_from_result(
-                result.data,
-                missing_param
-            )
-
-            if resolved_value:
-                # Cache the resolution
-                self._resolution_cache[cache_key] = {
-                    'value': resolved_value,
-                    'tool': provider_tool_id
-                }
-
-                logger.info(
-                    f"✅ Resolved {missing_param} = {resolved_value} "
-                    f"via {provider_tool_id}"
-                )
-
+            # Check cache first
+            cache_key = f"{missing_param}:{user_value}"
+            if cache_key in self._resolution_cache:
+                cached = self._resolution_cache[cache_key]
+                logger.info(f"Cache hit for {cache_key}")
+                span.set_attribute("result.cache_hit", True)
                 return ResolutionResult(
                     success=True,
-                    resolved_value=resolved_value,
-                    provider_tool=provider_tool_id,
-                    provider_params=provider_params
-                )
-            else:
-                return ResolutionResult(
-                    success=False,
-                    provider_tool=provider_tool_id,
-                    error_message=f"Provider {provider_tool_id} nije vratio {missing_param}"
+                    resolved_value=cached['value'],
+                    provider_tool=cached['tool']
                 )
 
-        except Exception as e:
-            logger.error(f"Resolution error: {e}", exc_info=True)
-            return ResolutionResult(
-                success=False,
-                error_message=f"Greška pri resolvanju: {str(e)}"
-            )
+            # Find provider tool
+            provider_tool_id = self.find_provider_tool(missing_param)
+
+            if not provider_tool_id:
+                span.set_attribute("result.success", False)
+                return ResolutionResult(
+                    success=False,
+                    error_message=f"Ne mogu pronaći način za dohvatiti {missing_param}"
+                )
+
+            provider_tool = self.registry.get_tool(provider_tool_id)
+            if not provider_tool:
+                span.set_attribute("result.success", False)
+                return ResolutionResult(
+                    success=False,
+                    error_message=f"Provider tool {provider_tool_id} nije dostupan"
+                )
+
+            span.set_attribute("provider_tool", provider_tool_id)
+
+            # Build parameters for provider
+            provider_params = {}
+
+            # If user provided a value, try to use it as filter
+            if user_value:
+                value_type = self.detect_value_type(user_value)
+
+                if value_type:
+                    param_type, filter_field = value_type
+                    provider_params = self.build_filter_query(filter_field, user_value)
+                else:
+                    # Try as generic search/name filter
+                    provider_params = {'Filter': f"Name(~){user_value}"}
+
+            # Use UserContextManager for validated access
+            ctx = UserContextManager(user_context)
+            person_id = ctx.person_id
+            if person_id:
+                person_param_injected = False
+                # Try to inject PersonId as direct parameter using schema-based classification
+                for param_name, param_def in provider_tool.parameters.items():
+                    if param_def.context_key == "person_id":
+                        provider_params[param_name] = person_id
+                        person_param_injected = True
+                        logger.info(f"Dependency resolution: filtering by {param_name}={person_id}")
+                        break
+
+                # If no direct param match but Filter exists, add to Filter
+                if not person_param_injected and 'Filter' in provider_tool.parameters:
+                    existing_filter = provider_params.get('Filter', '')
+                    if existing_filter:
+                        # Combine with existing filter using semicolon
+                        provider_params['Filter'] = f"{existing_filter};PersonId(=){person_id}"
+                    else:
+                        provider_params['Filter'] = f"PersonId(=){person_id}"
+                    logger.info("Added PersonId filter to dependency resolution")
+            else:
+                logger.warning("No person_id in user_context for dependency resolution")
+
+            # Execute provider tool
+            try:
+                from services.tool_contracts import ToolExecutionContext
+
+                exec_context = ToolExecutionContext(
+                    user_context=user_context,
+                    tool_outputs={},
+                    conversation_state={}
+                )
+
+                result = await executor.execute(
+                    tool=provider_tool,
+                    llm_params=provider_params,
+                    execution_context=exec_context
+                )
+
+                if not result.success:
+                    span.set_attribute("result.success", False)
+                    return ResolutionResult(
+                        success=False,
+                        provider_tool=provider_tool_id,
+                        provider_params=provider_params,
+                        error_message=result.error_message
+                    )
+
+                # Extract the ID we need from result
+                resolved_value = self._extract_id_from_result(
+                    result.data,
+                    missing_param
+                )
+
+                if resolved_value:
+                    # Cache the resolution
+                    self._resolution_cache[cache_key] = {
+                        'value': resolved_value,
+                        'tool': provider_tool_id
+                    }
+
+                    logger.info(
+                        f"✅ Resolved {missing_param} = {resolved_value} "
+                        f"via {provider_tool_id}"
+                    )
+
+                    span.set_attribute("result.success", True)
+                    span.set_attribute("result.resolved_value", resolved_value)
+                    return ResolutionResult(
+                        success=True,
+                        resolved_value=resolved_value,
+                        provider_tool=provider_tool_id,
+                        provider_params=provider_params
+                    )
+                else:
+                    span.set_attribute("result.success", False)
+                    return ResolutionResult(
+                        success=False,
+                        provider_tool=provider_tool_id,
+                        error_message=f"Provider {provider_tool_id} nije vratio {missing_param}"
+                    )
+
+            except Exception as e:
+                err = RoutingError(ErrorCode.TOOL_NOT_FOUND, f"Resolution error: {e}")
+                logger.error(str(err), exc_info=True)
+                span.set_attribute("result.success", False)
+                span.set_attribute("result.error", str(e))
+                return ResolutionResult(
+                    success=False,
+                    error_message=f"Greška pri resolvanju: {str(e)}"
+                )
 
     def _extract_id_from_result(
         self,
@@ -644,71 +595,79 @@ class DependencyResolver:
         Returns:
             ResolutionResult with UUID or error
         """
-        logger.info(f"Resolving entity: {reference}")
+        with trace_span(_tracer, "dependency_resolver.resolve_entity_reference", {"entity_type": reference.entity_type, "reference_type": reference.reference_type, "value": reference.value}) as span:
+            logger.info(f"Resolving entity: {reference}")
 
-        # STRATEGY 1: Possessive - use user's default vehicle
-        if reference.is_possessive or reference.reference_type == "possessive":
-            # Use UserContextManager for validated vehicle access
-            ctx = UserContextManager(user_context)
-            vehicle = ctx.vehicle
+            # STRATEGY 1: Possessive - use user's default vehicle
+            if reference.is_possessive or reference.reference_type == "possessive":
+                # Use UserContextManager for validated vehicle access
+                ctx = UserContextManager(user_context)
+                vehicle = ctx.vehicle
 
-            if vehicle and vehicle.id:
-                vehicle_id = vehicle.id
-                vehicle_name = vehicle.name or "Vaše vozilo"
-                plate = vehicle.plate or ""
+                if vehicle and vehicle.id:
+                    vehicle_id = vehicle.id
+                    vehicle_name = vehicle.name or "Vaše vozilo"
+                    plate = vehicle.plate or ""
 
-                logger.info(
-                    f"✅ Resolved possessive to user's vehicle: {vehicle_id}"
-                )
-                return ResolutionResult(
-                    success=True,
-                    resolved_value=vehicle_id,
-                    provider_tool="user_context",
-                    provider_params={"source": "possessive"},
-                    feedback={
-                        "entity_type": "vehicle",
-                        "resolved_to": vehicle_name,
-                        "plate": plate,
-                        "reference": reference.value
-                    }
-                )
-            else:
-                # Instead, return a "needs_selection" result to ask the user
-                logger.warning(
-                    f"⚠️ User said '{reference.value}' but has NO default vehicle! "
-                    f"Requesting clarification instead of guessing."
-                )
-                return ResolutionResult(
-                    success=False,
-                    needs_user_selection=True,
-                    error_message=(
-                        f"Rekli ste '{reference.value}', ali nemate postavljeno glavno vozilo. "
-                        f"Molim odaberite vozilo po imenu ili registraciji."
-                    ),
-                    feedback={
-                        "entity_type": "vehicle",
-                        "reference": reference.value,
-                        "reason": "no_default_vehicle",
-                        "suggestion": "Navedite registraciju (npr. 'ZG-1234-AB') ili naziv vozila."
-                    }
+                    logger.info(
+                        f"✅ Resolved possessive to user's vehicle: {vehicle_id}"
+                    )
+                    span.set_attribute("result.success", True)
+                    span.set_attribute("result.strategy", "possessive")
+                    return ResolutionResult(
+                        success=True,
+                        resolved_value=vehicle_id,
+                        provider_tool="user_context",
+                        provider_params={"source": "possessive"},
+                        feedback={
+                            "entity_type": "vehicle",
+                            "resolved_to": vehicle_name,
+                            "plate": plate,
+                            "reference": reference.value
+                        }
+                    )
+                else:
+                    # Instead, return a "needs_selection" result to ask the user
+                    logger.warning(
+                        f"⚠️ User said '{reference.value}' but has NO default vehicle! "
+                        f"Requesting clarification instead of guessing."
+                    )
+                    span.set_attribute("result.success", False)
+                    span.set_attribute("result.reason", "no_default_vehicle")
+                    return ResolutionResult(
+                        success=False,
+                        needs_user_selection=True,
+                        error_message=(
+                            f"Rekli ste '{reference.value}', ali nemate postavljeno glavno vozilo. "
+                            f"Molim odaberite vozilo po imenu ili registraciji."
+                        ),
+                        feedback={
+                            "entity_type": "vehicle",
+                            "reference": reference.value,
+                            "reason": "no_default_vehicle",
+                            "suggestion": "Navedite registraciju (npr. 'ZG-1234-AB') ili naziv vozila."
+                        }
+                    )
+
+            # STRATEGY 2: Ordinal - fetch list and pick by index
+            if reference.reference_type == "ordinal":
+                span.set_attribute("result.strategy", "ordinal")
+                return await self._resolve_by_ordinal(
+                    reference, user_context, executor
                 )
 
-        # STRATEGY 2: Ordinal - fetch list and pick by index
-        if reference.reference_type == "ordinal":
-            return await self._resolve_by_ordinal(
-                reference, user_context, executor
+            # STRATEGY 3: Name - search by vehicle name/description
+            if reference.reference_type == "name":
+                span.set_attribute("result.strategy", "name")
+                return await self._resolve_by_name(
+                    reference, user_context, executor
+                )
+
+            span.set_attribute("result.success", False)
+            return ResolutionResult(
+                success=False,
+                error_message=f"Ne mogu resolvirati referencu: {reference.value}"
             )
-
-        # STRATEGY 3: Name - search by vehicle name/description
-        if reference.reference_type == "name":
-            return await self._resolve_by_name(
-                reference, user_context, executor
-            )
-
-        return ResolutionResult(
-            success=False,
-            error_message=f"Ne mogu resolvirati referencu: {reference.value}"
-        )
 
     async def _resolve_by_ordinal(
         self,
@@ -855,7 +814,8 @@ class DependencyResolver:
             )
 
         except Exception as e:
-            logger.error(f"Ordinal resolution error: {e}", exc_info=True)
+            err = RoutingError(ErrorCode.TOOL_NOT_FOUND, f"Ordinal resolution error: {e}")
+            logger.error(str(err), exc_info=True)
             return ResolutionResult(
                 success=False,
                 error_message=f"Greška: {str(e)}"
@@ -913,7 +873,7 @@ class DependencyResolver:
             if not person_param_injected and "Filter" in provider_tool.parameters:
                 # Combine PersonId and Name filter
                 provider_params["Filter"] = f"PersonId(=){person_id};Name(~){search_value}"
-                logger.info(f"Combined filter: PersonId + Name search")
+                logger.info("Combined filter: PersonId + Name search")
             else:
                 # Add name filter separately
                 provider_params["Filter"] = f"Name(~){search_value}"
@@ -1030,7 +990,8 @@ class DependencyResolver:
             )
 
         except Exception as e:
-            logger.error(f"Name resolution error: {e}", exc_info=True)
+            err = RoutingError(ErrorCode.TOOL_NOT_FOUND, f"Name resolution error: {e}")
+            logger.error(str(err), exc_info=True)
             return ResolutionResult(
                 success=False,
                 error_message=f"Greška: {str(e)}"

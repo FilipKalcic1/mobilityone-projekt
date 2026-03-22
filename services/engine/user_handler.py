@@ -22,7 +22,7 @@ class UserHandler:
     - Build personalized greetings
     """
 
-    def __init__(self, db_session, gateway, cache_service):
+    def __init__(self, db_session, gateway, cache_service) -> None:
         """
         Initialize UserHandler.
 
@@ -74,9 +74,22 @@ class UserHandler:
                 ctx["is_new"] = True
                 return ctx
 
-        # User not found in MobilityOne - return guest context
-        # Bot still works, just without vehicle-specific features
-        logger.info(f"Guest user: {phone[-4:]}... - not in MobilityOne, creating guest context")
+            # Auto-onboard succeeded (user IS in MobilityOne) but DB write failed.
+            # Build context from auto-onboard data so user isn't treated as guest.
+            logger.warning(f"Auto-onboard OK but DB lookup failed for {phone[-4:]} - building context from API data")
+            ctx = {
+                "person_id": None,
+                "phone": phone,
+                "tenant_id": user_service.default_tenant_id,
+                "display_name": display_name,
+                "vehicle": vehicle_data if isinstance(vehicle_data, dict) else {},
+                "is_new": True,
+                "is_guest": False  # NOT guest — user IS in MobilityOne
+            }
+            return ctx
+
+        # User not found in MobilityOne — block via guest context
+        logger.info(f"Guest user: {phone[-4:]}... - not in MobilityOne")
         return {
             "person_id": None,
             "phone": phone,
@@ -97,14 +110,11 @@ class UserHandler:
         Returns:
             Greeting message
         """
-        # Guest user greeting
+        # Guest users are blocked by consent gate — this shouldn't be reached
         if user_context.get("is_guest"):
             return (
-                "Pozdrav!\n\n"
-                "Ja sam MobilityOne AI asistent.\n\n"
-                "Vas broj nije registriran u sustavu, ali svejedno vam mogu pomoci "
-                "s opcim informacijama.\n\n"
-                "Kako vam mogu pomoci?"
+                "Vaš broj nije registriran u MobilityOne sustavu.\n"
+                "Kontaktirajte vašeg administratora za registraciju."
             )
 
         ctx = UserContextManager(user_context)
@@ -114,7 +124,7 @@ class UserHandler:
         greeting += "Ja sam MobilityOne AI asistent.\n\n"
 
         if vehicle and vehicle.plate:
-            greeting += f"Vidim da vam je dodijeljeno vozilo:\n"
+            greeting += "Vidim da vam je dodijeljeno vozilo:\n"
             greeting += f"   **{vehicle.name or 'vozilo'}** ({vehicle.plate})\n"
             greeting += f"   Kilometraza: {vehicle.mileage or 'N/A'} km\n\n"
             greeting += "Kako vam mogu pomoci?\n"

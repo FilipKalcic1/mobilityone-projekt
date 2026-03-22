@@ -27,7 +27,7 @@ import redis.asyncio as aioredis
 import logging
 
 from config import get_settings
-from services.tracing import get_tracer
+from services.tracing import get_tracer, trace_span
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -236,8 +236,10 @@ async def _write_dlq(dlq_entry: str) -> None:
             await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
             logger.info("DLQ message stored in Redis (dlq:webhook)")
             return
-    except Exception as redis_dlq_err:
+    except (ConnectionError, TimeoutError, OSError, aioredis.ConnectionError, aioredis.RedisError) as redis_dlq_err:
         logger.warning(f"DLQ Redis write failed, falling back to file: {redis_dlq_err}")
+    except Exception as redis_dlq_err:
+        logger.error(f"DLQ Redis unexpected error (possible bug): {type(redis_dlq_err).__name__}: {redis_dlq_err}")
 
     # Fallback: local file (atomic append with newline delimiter)
     try:
@@ -256,8 +258,10 @@ async def _write_dlq(dlq_entry: str) -> None:
                 os.fsync(f.fileno())
             logger.info(f"DLQ message stored in {_DLQ_FILE_PATH}")
             return
-    except Exception as file_err:
+    except OSError as file_err:
         logger.error(f"DLQ file write ALSO failed: {file_err}")
+    except Exception as file_err:
+        logger.error(f"DLQ file write unexpected error (possible bug): {type(file_err).__name__}: {file_err}")
 
     # Last resort: stderr (may be captured by log aggregator)
     sys.stderr.write(f"DLQ_WEBHOOK: {dlq_entry}\n")
@@ -282,19 +286,33 @@ async def whatsapp_webhook(request: Request):
     6. Push to Redis STREAM: "whatsapp_stream_inbound"
     7. Worker picks up from stream via consumer group
     """
+    global _redis_client
     _stats["total_received"] += 1
 
     # Extract request_id from middleware for end-to-end tracing
     request_id = getattr(request.state, "request_id", "") if hasattr(request, "state") else ""
 
+    with trace_span(_tracer, "webhook.receive", {
+        "request.id": request_id,
+        "http.method": "POST",
+    }) as wh_span:
+        return await _process_webhook(request, request_id, wh_span)
+
+
+async def _process_webhook(request: Request, request_id: str, span) -> dict:
+    """Inner webhook processing, wrapped by trace span."""
+    global _redis_client
     # Graceful shutdown: reject new messages during drain.
     # The worker and Redis may already be stopping. Accepting messages
     # now and returning 200 to Infobip would cause permanent loss.
     # Returning 503 tells Infobip to retry after the pod restarts.
-    from main import APP_STOPPING
-    if APP_STOPPING:
-        logger.warning("Webhook rejected: APP_STOPPING=True (graceful shutdown)")
-        raise HTTPException(status_code=503, detail="Shutting down")
+    try:
+        from main import APP_STOPPING
+        if APP_STOPPING:
+            logger.warning("Webhook rejected: APP_STOPPING=True (graceful shutdown)")
+            raise HTTPException(status_code=503, detail="Shutting down")
+    except ImportError:
+        pass
 
     try:
         # Get raw body for signature validation
@@ -378,15 +396,22 @@ async def whatsapp_webhook(request: Request):
                     "request_id": request_id,
                 }
 
-                try:
-                    redis = await get_redis()
-                    await redis.xadd("whatsapp_stream_inbound", stream_data)
-                    pushed += 1
-                    logger.info(f"Non-text message forwarded: {sender[-4:]}... type={msg_type}")
-                except Exception as redis_err:
-                    _stats["total_redis_errors"] += 1
-                    logger.error(f"Redis push failed for non-text: {redis_err}")
-                    _diag_log("redis_error", {"error": str(redis_err)})
+                for redis_attempt in range(3):
+                    try:
+                        redis = await get_redis()
+                        await redis.xadd("whatsapp_stream_inbound", stream_data)
+                        pushed += 1
+                        logger.info(f"Non-text message forwarded: {sender[-4:]}... type={msg_type}")
+                        break
+                    except (ConnectionError, TimeoutError, OSError, aioredis.ConnectionError, aioredis.RedisError) as redis_err:
+                        if redis_attempt < 2:
+                            await asyncio.sleep(0.5 * (2 ** redis_attempt))
+                            async with _redis_lock:
+                                _redis_client = None
+                            continue
+                        _stats["total_redis_errors"] += 1
+                        logger.error(f"Redis push failed for non-text after 3 attempts: {redis_err}")
+                        _diag_log("redis_error", {"error": str(redis_err), "type": msg_type})
                 continue
 
             # Push text message to Redis STREAM
@@ -422,7 +447,6 @@ async def whatsapp_webhook(request: Request):
                         # Must acquire lock to prevent concurrent handlers from
                         # using a half-torn-down client reference
                         async with _redis_lock:
-                            global _redis_client
                             _redis_client = None
                         continue
 
@@ -457,17 +481,28 @@ async def whatsapp_webhook(request: Request):
                     })
                     await _write_dlq(dlq_entry)
 
+        span.set_attribute("webhook.messages_pushed", pushed)
         return {"status": "ok", "pushed": pushed}
 
     except HTTPException:
         raise
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        # Data parsing/validation errors — not transient, log and move on
+        _stats["last_error_at"] = datetime.now(timezone.utc).isoformat()
+        _stats["last_error"] = f"Parse error: {type(e).__name__}: {e}"
+        logger.error(f"Webhook data error (returning 200 to prevent retries): {type(e).__name__}: {e}", exc_info=True)
+        _diag_log("data_error", {"error": str(e), "type": type(e).__name__})
+        span.set_attribute("webhook.error", f"{type(e).__name__}: {e}")
+        return {"status": "ok", "error": "data_error"}
     except Exception as e:
         # CRITICAL: Always return 200 to WhatsApp/Infobip!
         # Returning 500 causes retry storms that cascade into duplicate messages.
+        # This broad catch is intentional — it's the last-resort safety net.
         _stats["last_error_at"] = datetime.now(timezone.utc).isoformat()
         _stats["last_error"] = str(e)
         logger.error(f"Webhook processing error (returning 200 to prevent retries): {e}", exc_info=True)
         _diag_log("exception", {"error": str(e)})
+        span.record_exception(e)
         return {"status": "ok", "error": "processing_failed"}
 
 
@@ -500,6 +535,8 @@ async def whatsapp_webhook_verify(request: Request):
 
     if mode == "subscribe" and token == expected_token:
         logger.info("WhatsApp webhook verified successfully")
+        if not challenge:
+            raise HTTPException(status_code=400, detail="Missing challenge parameter")
         return int(challenge)
 
     logger.warning(f"Webhook verification failed: mode={mode}")
@@ -565,7 +602,7 @@ async def webhook_debug(request: Request):
                 "first_entry": stream_info.get("first-entry"),
                 "last_entry": stream_info.get("last-entry"),
             }
-        except Exception as e:
+        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
             diag["stream"] = {"error": str(e)}
 
         # Get consumer group info
@@ -580,7 +617,7 @@ async def webhook_debug(request: Request):
                 }
                 for g in groups
             ]
-        except Exception as e:
+        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
             diag["consumer_groups"] = {"error": str(e)}
 
     except Exception as e:

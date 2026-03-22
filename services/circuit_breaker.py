@@ -55,10 +55,11 @@ class CircuitBreaker:
     OPEN_DURATION_SECONDS = 60
     SUCCESS_THRESHOLD_TO_RESET = 5
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize circuit breaker."""
         self.circuits: Dict[str, CircuitMetrics] = {}
         self._lock = asyncio.Lock()
+        self._half_open_in_progress: Dict[str, bool] = {}
         logger.info("CircuitBreaker initialized")
 
     async def call(self, endpoint_key: str, func, *args, **kwargs):
@@ -84,11 +85,21 @@ class CircuitBreaker:
             if circuit.state == CircuitState.OPEN:
                 if self._should_attempt_reset(circuit):
                     circuit.state = CircuitState.HALF_OPEN
+                    self._half_open_in_progress[endpoint_key] = True
                     logger.info(f"Circuit HALF_OPEN: {endpoint_key}")
                 else:
                     raise CircuitOpenError(
                         f"Endpoint {endpoint_key} je onemogućen zbog prethodnih grešaka. "
                         f"Pokušaj ponovno za {self._time_until_reset(circuit):.0f}s."
+                    )
+
+            # Prevent multiple concurrent calls through half-open gate
+            elif circuit.state == CircuitState.HALF_OPEN:
+                if self._half_open_in_progress.get(endpoint_key, False):
+                    # A test call is already in flight — block subsequent callers
+                    raise CircuitOpenError(
+                        f"Endpoint {endpoint_key} je onemogućen — testni poziv u tijeku. "
+                        f"Pokušaj ponovno za nekoliko sekundi."
                     )
 
         # Execute function
@@ -97,7 +108,7 @@ class CircuitBreaker:
             await self._record_success(endpoint_key)
             return result
 
-        except Exception as e:
+        except Exception:
             await self._record_failure(endpoint_key)
             raise
 
@@ -108,6 +119,9 @@ class CircuitBreaker:
             circuit.success_count += 1
             circuit.failure_count = 0  # Reset failure counter
             circuit.last_success_time = time.time()
+
+            # Reset half-open in-progress flag
+            self._half_open_in_progress[endpoint_key] = False
 
             # Reset circuit if enough successes
             if circuit.state == CircuitState.HALF_OPEN:
@@ -123,6 +137,9 @@ class CircuitBreaker:
             circuit.failure_count += 1
             circuit.success_count = 0  # Reset success counter
             circuit.last_failure_time = time.time()
+
+            # Reset half-open in-progress flag
+            self._half_open_in_progress[endpoint_key] = False
 
             # Open circuit if threshold reached
             if circuit.failure_count >= self.FAILURE_THRESHOLD:

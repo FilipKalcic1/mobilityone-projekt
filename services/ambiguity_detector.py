@@ -11,13 +11,17 @@ This module:
 4. Suggests clarification questions for user when LLM can't decide
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from services.context import UserContextManager
+from services.entity_detector import detect_entity as _detect_entity_from_query
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("ambiguity_detector")
 
 # Suffix patterns that indicate generic operations
 GENERIC_SUFFIX_PATTERNS = [
@@ -97,16 +101,29 @@ class AmbiguityDetector:
     3. Generate clarification questions for user
     """
 
-    def __init__(self, tool_documentation: Optional[Dict] = None):
+    def __init__(self, tool_documentation: Optional[Dict] = None) -> None:
         """Initialize with optional tool documentation for entity extraction."""
         self._tool_documentation = tool_documentation or {}
+
+        # Load calibrated FAISS margin threshold if available
+        cal_path = Path(__file__).parent.parent / "config" / "faiss_margin_calibration.json"
+        try:
+            with open(cal_path, "r", encoding="utf-8") as f:
+                cal_data = json.load(f)
+            self._calibrated_threshold = cal_data["score_threshold"]
+            logger.info(f"FAISS margin calibration loaded: threshold={self._calibrated_threshold}")
+        except FileNotFoundError:
+            self._calibrated_threshold = 0.15  # Fallback to original default
+        except Exception as e:
+            logger.warning(f"Failed to load FAISS margin calibration: {e}")
+            self._calibrated_threshold = 0.15
 
     def detect_ambiguity(
         self,
         query: str,
         search_results: List[Dict[str, Any]],
         user_context: Optional[Dict[str, Any]] = None,
-        score_threshold: float = 0.15,  # Tools within 15% of top score
+        score_threshold: Optional[float] = None,  # Tools within N% of top score
         min_similar_count: int = 3      # Need at least 3 similar tools
     ) -> AmbiguityResult:
         """
@@ -122,6 +139,30 @@ class AmbiguityDetector:
         Returns:
             AmbiguityResult with detection details and hints
         """
+        with trace_span(_tracer, "ambiguity.detect", {
+            "query.preview": query[:50],
+            "result_count": len(search_results) if search_results else 0,
+        }) as span:
+            result = self._detect_ambiguity_inner(
+                query, search_results, user_context,
+                score_threshold, min_similar_count,
+            )
+            span.set_attribute("ambiguity.is_ambiguous", result.is_ambiguous)
+            span.set_attribute("ambiguity.similar_count", len(result.similar_tools))
+            return result
+
+    def _detect_ambiguity_inner(
+        self,
+        query: str,
+        search_results: List[Dict[str, Any]],
+        user_context: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None,
+        min_similar_count: int = 3,
+    ) -> AmbiguityResult:
+        """Inner implementation of detect_ambiguity."""
+        if score_threshold is None:
+            score_threshold = self._calibrated_threshold
+
         if not search_results or len(search_results) < min_similar_count:
             return AmbiguityResult()
 
@@ -200,28 +241,10 @@ class AmbiguityDetector:
         """
         Detect entity from query and user context.
 
-        Priority:
-        1. Explicit entity mention in query
-        2. User's current vehicle (for vehicle-related queries)
-        3. None if can't determine
+        Delegates to entity_detector.detect_entity() which handles
+        diacritic normalization and has the canonical keyword set.
         """
-        query_lower = query.lower()
-
-        # Check query for entity keywords
-        for keyword, entity in ENTITY_KEYWORDS.items():
-            if keyword in query_lower:
-                return entity
-
-        # Check user context for vehicle
-        # Use UserContextManager for validated access
-        if user_context:
-            ctx = UserContextManager(user_context)
-            if ctx.vehicle_id:
-                # User has a vehicle - might be vehicle-related
-                # Only infer if query doesn't mention other entities
-                return None  # Don't assume, let LLM decide
-
-        return None
+        return _detect_entity_from_query(query)
 
     def _build_disambiguation_hint(
         self,

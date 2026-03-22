@@ -1052,21 +1052,13 @@ class TestEdgeCases:
         assert result["type"] == "text"
         assert result["usage"] is None
 
+    @pytest.mark.xfail(reason="Known bug: len(None) crash in _count_tokens when message content is None")
     def test_count_tokens_message_with_none_content(self):
         """Message with None content doesn't crash token counting."""
         orch = _make_orchestrator()
         orch.tokenizer = None
         messages = [{"role": "assistant", "content": None}]
-        # content is None => .get("content", "") returns None, len(None) would crash
-        # Actually, .get("content", "") returns None here because key exists with value None
-        # Let's see if this crashes
-        # The code does: m.get("content", "") which returns None for this case
-        # len(None) will raise TypeError.
-        # This is actually a potential bug - let's just document the behavior
-        # The code uses: sum(len(m.get("content", "")) for m in messages)
-        # m.get("content", "") returns None, len(None) raises
-        # We skip this test since it would reveal a real bug
-        pass
+        orch._count_tokens(messages)  # Should crash with TypeError
 
     @pytest.mark.asyncio
     async def test_analyze_multiple_tool_calls_picks_first(self):

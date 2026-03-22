@@ -22,11 +22,11 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from services.unified_router import (
     RouterDecision,
     PRIMARY_TOOLS,
-    FLOW_TRIGGERS,
     UnifiedRouter,
     get_unified_router,
     _router,
 )
+from tool_routing import FLOW_TRIGGERS
 from services.flow_phrases import EXIT_SIGNALS
 from services.query_router import RouteResult
 

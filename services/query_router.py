@@ -10,8 +10,15 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
 from services.intent_classifier import predict_with_ensemble
+from services.dynamic_threshold import (
+    get_engine as _get_engine, DecisionEngine, DecisionAction,
+    ClassificationSignal, PredictionSet,
+)
+from services.tracing import get_tracer, trace_span
+from services.errors import RoutingError, ErrorCode
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("query_router")
 
 
 @dataclass
@@ -23,6 +30,8 @@ class RouteResult:
     response_template: Optional[str] = None
     flow_type: Optional[str] = None
     confidence: float = 1.0
+    signal: Optional[ClassificationSignal] = None
+    prediction_set: Optional[PredictionSet] = None
     reason: str = ""
 
     def __post_init__(self):
@@ -34,10 +43,10 @@ class RouteResult:
 # All intent-to-tool mappings defined there to avoid triple redundancy
 from tool_routing import INTENT_CONFIG as INTENT_METADATA  # noqa: E402
 
-# Confidence threshold for DETERMINISTIC routing (bypasses LLM)
-# Balanced threshold: High-confidence ML predictions bypass LLM for speed
-# Lower confidence queries still go to LLM for final decision
-ML_CONFIDENCE_THRESHOLD = 0.85  # 85%+ confidence uses ML directly (faster, cheaper)
+# DecisionEngine replaces hardcoded ML_CONFIDENCE_THRESHOLD = 0.85
+# At α=0.0: identical to old `confidence >= 0.85` check
+ML_CONFIDENCE_THRESHOLD = 0.85  # backward-compat re-export for tests
+_engine = _get_engine()
 
 
 class QueryRouter:
@@ -61,47 +70,86 @@ class QueryRouter:
         Returns:
             RouteResult with matched tool or not matched
         """
-        # Get ML prediction (ensemble: TF-IDF first, semantic fallback if <75%)
-        prediction = predict_with_ensemble(query)
+        with trace_span(_tracer, "qrouter.route", {
+            "query.preview": query[:50],
+            "has_context": user_context is not None,
+        }) as span:
+            # Get ML prediction (ensemble: TF-IDF first, semantic fallback if <75%)
+            prediction = predict_with_ensemble(query)
 
-        logger.info(
-            f"ROUTER ML: '{query[:30]}...' -> {prediction.intent} "
-            f"({prediction.confidence:.1%}) tool={prediction.tool}"
-        )
-
-        # Check confidence threshold
-        if prediction.confidence < ML_CONFIDENCE_THRESHOLD:
-            logger.info(f"ROUTER: Low confidence ({prediction.confidence:.1%}), using semantic search")
-            return RouteResult(
-                matched=False,
-                confidence=prediction.confidence,
-                reason=f"ML confidence {prediction.confidence:.1%} below threshold"
+            logger.info(
+                f"ROUTER ML: '{query[:30]}...' -> {prediction.intent} "
+                f"({prediction.confidence:.1%}) tool={prediction.tool}"
             )
 
-        # Get metadata for this intent
-        metadata = INTENT_METADATA.get(prediction.intent)
+            # CP-aware 3-zone decision: ACCEPT / BOOST / DEFER
+            prediction_set = prediction.prediction_set
+            decision = _engine.decide_with_cp(
+                prediction.signal, DecisionEngine.ML_FAST_PATH, prediction_set
+            )
 
-        if metadata is None:
-            # Intent recognized but no metadata - use ML tool suggestion
+            span.set_attribute("qrouter.intent", prediction.intent)
+            span.set_attribute("qrouter.confidence", prediction.confidence)
+            span.set_attribute("qrouter.decision", decision.action.value)
+
+            if decision.is_defer:
+                logger.info(f"ROUTER: DEFER ({prediction.confidence:.1%}), using semantic search")
+                return RouteResult(
+                    matched=False,
+                    confidence=prediction.confidence,
+                    signal=prediction.signal,
+                    prediction_set=prediction_set,
+                    reason=f"ML confidence {prediction.confidence:.1%} below threshold"
+                )
+
+            # Get metadata for this intent
+            metadata = INTENT_METADATA.get(prediction.intent)
+
+            # BOOST → mediation path (CP set 2-5, LLM reranks small candidate set)
+            if decision.action is DecisionAction.BOOST:
+                cp_size = prediction_set.size if prediction_set else 0
+                logger.info(
+                    f"ROUTER: BOOST ({prediction.confidence:.1%}), "
+                    f"CP set size={cp_size}, mediation path"
+                )
+                return RouteResult(
+                    matched=True,
+                    tool_name=metadata["tool"] if metadata else prediction.tool,
+                    extract_fields=metadata["extract_fields"] if metadata else [],
+                    response_template=metadata["response_template"] if metadata else None,
+                    flow_type="mediation",
+                    confidence=prediction.confidence,
+                    signal=prediction.signal,
+                    prediction_set=prediction_set,
+                    reason=f"ML+CP: {prediction.intent} (set={cp_size})"
+                )
+
+            # ACCEPT → fast path (high confidence, CP set=1 or no CP)
+            if metadata is None:
+                # Intent recognized but no metadata - use ML tool suggestion
+                return RouteResult(
+                    matched=True,
+                    tool_name=prediction.tool,
+                    extract_fields=[],
+                    response_template=None,
+                    flow_type="simple",
+                    confidence=prediction.confidence,
+                    signal=prediction.signal,
+                    prediction_set=prediction_set,
+                    reason=f"ML: {prediction.intent}"
+                )
+
             return RouteResult(
                 matched=True,
-                tool_name=prediction.tool,
-                extract_fields=[],
-                response_template=None,
-                flow_type="simple",
+                tool_name=metadata["tool"],
+                extract_fields=metadata["extract_fields"],
+                response_template=metadata["response_template"],
+                flow_type=metadata["flow_type"],
                 confidence=prediction.confidence,
+                signal=prediction.signal,
+                prediction_set=prediction_set,
                 reason=f"ML: {prediction.intent}"
             )
-
-        return RouteResult(
-            matched=True,
-            tool_name=metadata["tool"],
-            extract_fields=metadata["extract_fields"],
-            response_template=metadata["response_template"],
-            flow_type=metadata["flow_type"],
-            confidence=prediction.confidence,
-            reason=f"ML: {prediction.intent}"
-        )
 
     def format_response(
         self,

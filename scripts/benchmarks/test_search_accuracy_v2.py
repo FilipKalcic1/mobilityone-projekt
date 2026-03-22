@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import random
 
 # Add project root to path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv

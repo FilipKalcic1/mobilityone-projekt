@@ -18,6 +18,7 @@ from services.tool_contracts import (
     ParameterDefinition,
     DependencySource
 )
+from services.errors import BotError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class SwaggerParser:
         "MaintenanceDaysPeriod",     # Response field, not request param
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize parser with context parameter schemas."""
         self.context_param_patterns: Dict[str, Dict] = {}
         self.context_param_fallback: Dict[str, str] = {}
@@ -174,7 +175,8 @@ class SwaggerParser:
                     if tool:
                         tools.append(tool)
                 except Exception as e:
-                    logger.debug(f"Skipped {method} {path}: {e}")
+                    err = BotError(ErrorCode.TOOL_SCHEMA_INVALID, f"Invalid schema for {method} {path}: {e}", cause=e)
+                    logger.debug(str(err))
 
         logger.info(f"{service_name}: {len(tools)} operations")
         return tools
@@ -339,7 +341,7 @@ class SwaggerParser:
         if context_key == "person_id":
             param_def.preferred_operator = "(contains)"
             param_def.is_filterable = True
-        
+
         return param_def
 
     def _parse_request_body(
@@ -403,7 +405,7 @@ class SwaggerParser:
     def _infer_output_keys(self, operation: Dict, spec: Dict) -> List[str]:
         """
         Extract ALL output keys from response schema - NO guessing.
-        
+
         This reads the actual schema properties from Swagger spec.
         Field names come directly from API definition.
         """

@@ -368,28 +368,30 @@ class TestIntentClassifierPredict:
 
 class TestIntentClassifierSave:
     def test_save_model(self, tmp_path):
+        from services.intent_training import save_model
         clf = IntentClassifier(model_path=tmp_path)
-        # Use plain picklable objects instead of MagicMock
         clf.model = {"type": "fake_model"}
         clf.label_encoder = {"type": "fake_le"}
         clf.vectorizer = {"type": "fake_vec"}
-        clf._save_model()
+        save_model(clf)
         assert (tmp_path / "tfidf_lr_model.pkl").exists()
 
     def test_save_model_without_vectorizer(self, tmp_path):
+        from services.intent_training import save_model
         clf = IntentClassifier(model_path=tmp_path)
         clf.model = {"type": "fake_model"}
         clf.label_encoder = {"type": "fake_le"}
         clf.vectorizer = {"type": "fake_vec"}
-        clf._save_model(include_vectorizer=False)
+        save_model(clf, include_vectorizer=False)
         with open(tmp_path / "tfidf_lr_model.pkl", "rb") as f:
             data = pickle.load(f)
         assert "vectorizer" not in data
 
     def test_save_metadata(self, tmp_path):
+        from services.intent_training import save_metadata
         clf = IntentClassifier(model_path=tmp_path)
         clf.intent_to_metadata = {"greeting": {"action": "NONE", "tool": None}}
-        clf._save_metadata()
+        save_metadata(clf)
         with open(tmp_path / "metadata.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data == {"greeting": {"action": "NONE", "tool": None}}
@@ -797,8 +799,8 @@ class TestLoadTrainingData:
         ]
         data_file.write_text("\n".join(lines), encoding="utf-8")
 
-        clf = IntentClassifier()
-        texts, labels, metadata = clf._load_training_data(data_file)
+        from services.intent_training import load_training_data
+        texts, labels, metadata = load_training_data(data_file)
         # Texts are normalized: km -> kilometara via synonym mapping
         assert texts == ["hello", "show kilometara"]
         assert labels == ["greeting", "get_mileage"]
@@ -910,8 +912,8 @@ class TestIntentClassifierTrainAlgorithms:
 
         clf = IntentClassifier(algorithm="tfidf_lr", model_path=tmp_path)
 
-        with patch.object(clf, "_train_tfidf_lr", return_value={"accuracy": 0.95}) as mock_train, \
-             patch.object(clf, "_save_metadata") as mock_save_meta:
+        with patch("services.intent_training.train_tfidf_lr", return_value={"accuracy": 0.95}) as mock_train, \
+             patch("services.intent_training.save_metadata") as mock_save_meta:
             metrics = clf.train(training_data_path=data_file)
             mock_train.assert_called_once()
             mock_save_meta.assert_called_once()
@@ -928,8 +930,8 @@ class TestIntentClassifierTrainAlgorithms:
 
         clf = IntentClassifier(algorithm="sbert_lr", model_path=tmp_path)
 
-        with patch.object(clf, "_train_sbert_lr", return_value={"accuracy": 0.92}) as mock_train, \
-             patch.object(clf, "_save_metadata") as mock_save_meta:
+        with patch("services.intent_training.train_sbert_lr", return_value={"accuracy": 0.92}) as mock_train, \
+             patch("services.intent_training.save_metadata") as mock_save_meta:
             metrics = clf.train(training_data_path=data_file)
             mock_train.assert_called_once()
             mock_save_meta.assert_called_once()
@@ -945,8 +947,8 @@ class TestIntentClassifierTrainAlgorithms:
 
         clf = IntentClassifier(algorithm="fasttext", model_path=tmp_path)
 
-        with patch.object(clf, "_train_fasttext", return_value={"accuracy": 0.88}) as mock_train, \
-             patch.object(clf, "_save_metadata") as mock_save_meta:
+        with patch("services.intent_training.train_fasttext", return_value={"accuracy": 0.88}) as mock_train, \
+             patch("services.intent_training.save_metadata") as mock_save_meta:
             metrics = clf.train(training_data_path=data_file)
             mock_train.assert_called_once()
             mock_save_meta.assert_called_once()
@@ -962,8 +964,8 @@ class TestIntentClassifierTrainAlgorithms:
 
         clf = IntentClassifier(algorithm="azure_embedding", model_path=tmp_path)
 
-        with patch.object(clf, "_train_azure_embedding", return_value={"accuracy": 0.98}) as mock_train, \
-             patch.object(clf, "_save_metadata") as mock_save_meta:
+        with patch("services.intent_training.train_azure_embedding", return_value={"accuracy": 0.98}) as mock_train, \
+             patch("services.intent_training.save_metadata") as mock_save_meta:
             metrics = clf.train(training_data_path=data_file)
             mock_train.assert_called_once()
             mock_save_meta.assert_called_once()
@@ -980,8 +982,8 @@ class TestIntentClassifierTrainAlgorithms:
 
         clf = IntentClassifier(algorithm="tfidf_lr", model_path=tmp_path)
 
-        with patch.object(clf, "_train_tfidf_lr", return_value={"accuracy": 0.95}), \
-             patch.object(clf, "_save_metadata") as mock_save_meta:
+        with patch("services.intent_training.train_tfidf_lr", return_value={"accuracy": 0.95}), \
+             patch("services.intent_training.save_metadata") as mock_save_meta:
             clf.train(training_data_path=data_file)
 
             # Verify metadata was captured from training data
@@ -1044,14 +1046,14 @@ class TestTrainTfidfLrDetailed:
 # ============================================================================
 
 class TestTrainSbertLr:
-    """Tests for _train_sbert_lr method."""
+    """Tests for train_sbert_lr function (services.intent_training)."""
 
     def test_train_sbert_lr_import_error(self, tmp_path):
-        """Test _train_sbert_lr when sentence-transformers not installed."""
+        """Test train_sbert_lr when sentence-transformers not installed."""
+        from services.intent_training import train_sbert_lr
         clf = IntentClassifier(algorithm="sbert_lr", model_path=tmp_path)
 
         with patch.dict('sys.modules', {'sentence_transformers': None}):
-            # Simulate ImportError by mocking the import
             original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
 
             def mock_import(name, *args, **kwargs):
@@ -1061,21 +1063,19 @@ class TestTrainSbertLr:
 
             with patch('builtins.__import__', side_effect=mock_import):
                 try:
-                    result = clf._train_sbert_lr(["text"], ["label"])
-                    # If we got here, the method caught the error
+                    result = train_sbert_lr(clf, ["text"], ["label"])
                     assert "error" in result or result.get("accuracy", 0) >= 0
                 except ImportError:
-                    # Expected if import fails before being caught
                     pass
 
     def test_train_sbert_lr_success(self, tmp_path):
-        """Test _train_sbert_lr with mocked SentenceTransformer."""
+        """Test train_sbert_lr with mocked SentenceTransformer."""
+        from services.intent_training import train_sbert_lr
         clf = IntentClassifier(algorithm="sbert_lr", model_path=tmp_path)
 
         texts = ["hello", "show mileage", "create res"]
         labels = ["greeting", "get_mileage", "create_res"]
 
-        # Mock SentenceTransformer
         mock_sbert = MagicMock()
         mock_sbert.encode.return_value = np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
 
@@ -1086,20 +1086,12 @@ class TestTrainSbertLr:
         mock_cv_scores = np.array([0.9, 0.92, 0.88, 0.91, 0.89])
 
         with patch.dict('sys.modules', {'sentence_transformers': MagicMock()}):
-            with patch("services.intent_classifier.SentenceTransformer", return_value=mock_sbert, create=True):
-                # Since sklearn imports happen inside the method, we need to patch them there
-                from sklearn.linear_model import LogisticRegression
-                from sklearn.preprocessing import LabelEncoder
-                from sklearn.model_selection import cross_val_score
-
-                # Mock the sklearn imports
+            with patch("services.intent_training.SentenceTransformer", return_value=mock_sbert, create=True):
                 with patch("sklearn.linear_model.LogisticRegression", return_value=mock_lr), \
                      patch("sklearn.preprocessing.LabelEncoder", return_value=mock_le), \
                      patch("sklearn.model_selection.cross_val_score", return_value=mock_cv_scores), \
-                     patch.object(clf, "_save_model") as mock_save:
-
-                    # We need to test via module reload or mock at the point of import
-                    # For simplicity, let's verify the method structure
+                     patch("services.intent_training.save_model") as mock_save:
+                    # Verify the function structure — sklearn imports are inside function body
                     pass
 
 
@@ -1108,13 +1100,13 @@ class TestTrainSbertLr:
 # ============================================================================
 
 class TestTrainFasttext:
-    """Tests for _train_fasttext method."""
+    """Tests for train_fasttext function (services.intent_training)."""
 
     def test_train_fasttext_import_error(self, tmp_path):
-        """Test _train_fasttext when fasttext not installed."""
+        """Test train_fasttext when fasttext not installed."""
+        from services.intent_training import train_fasttext
         clf = IntentClassifier(algorithm="fasttext", model_path=tmp_path)
 
-        # Create a module that raises ImportError
         original_import = __builtins__['__import__'] if isinstance(__builtins__, dict) else __builtins__.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -1124,13 +1116,14 @@ class TestTrainFasttext:
 
         with patch('builtins.__import__', side_effect=mock_import):
             try:
-                result = clf._train_fasttext(["text"], ["label"])
+                result = train_fasttext(clf, ["text"], ["label"])
                 assert "error" in result
             except ImportError:
                 pass
 
     def test_train_fasttext_success(self, tmp_path):
-        """Test _train_fasttext with mocked fasttext module."""
+        """Test train_fasttext with mocked fasttext module."""
+        from services.intent_training import train_fasttext
         clf = IntentClassifier(algorithm="fasttext", model_path=tmp_path)
 
         texts = ["hello", "show mileage"]
@@ -1138,7 +1131,7 @@ class TestTrainFasttext:
 
         mock_fasttext = MagicMock()
         mock_model = MagicMock()
-        mock_model.test.return_value = (100, 0.95, 0.93)  # (samples, precision, recall)
+        mock_model.test.return_value = (100, 0.95, 0.93)
         mock_fasttext.train_supervised.return_value = mock_model
 
         mock_le = MagicMock()
@@ -1146,14 +1139,11 @@ class TestTrainFasttext:
 
         with patch.dict('sys.modules', {'fasttext': mock_fasttext}):
             with patch("sklearn.preprocessing.LabelEncoder", return_value=mock_le):
-                # Call the method - it will create the training file
-                result = clf._train_fasttext(texts, labels)
+                result = train_fasttext(clf, texts, labels)
 
-                # Verify training file was created
                 train_file = tmp_path / "fasttext_train.txt"
                 assert train_file.exists()
 
-                # Read and verify content
                 content = train_file.read_text(encoding="utf-8")
                 assert "__label__greeting hello" in content
                 assert "__label__get_mileage show mileage" in content
@@ -1745,16 +1735,17 @@ class TestIntentClassifierLoadExceptions:
 # ============================================================================
 
 class TestSaveModelCreatesDirectory:
-    """Test _save_model creates directories."""
+    """Test save_model creates directories."""
 
     def test_save_model_creates_parent_dirs(self, tmp_path):
-        """Test _save_model creates parent directories if they don't exist."""
+        """Test save_model creates parent directories if they don't exist."""
+        from services.intent_training import save_model
         nested_path = tmp_path / "nested" / "deep" / "model_dir"
         clf = IntentClassifier(model_path=nested_path)
         clf.model = {"type": "test"}
         clf.label_encoder = {"type": "test_le"}
 
-        clf._save_model()
+        save_model(clf)
 
         assert nested_path.exists()
         assert (nested_path / "tfidf_lr_model.pkl").exists()
@@ -1765,15 +1756,16 @@ class TestSaveModelCreatesDirectory:
 # ============================================================================
 
 class TestSaveMetadataCreatesDirectory:
-    """Test _save_metadata creates directories."""
+    """Test save_metadata creates directories."""
 
     def test_save_metadata_creates_parent_dirs(self, tmp_path):
-        """Test _save_metadata creates parent directories if they don't exist."""
+        """Test save_metadata creates parent directories if they don't exist."""
+        from services.intent_training import save_metadata
         nested_path = tmp_path / "nested" / "meta_dir"
         clf = IntentClassifier(model_path=nested_path)
         clf.intent_to_metadata = {"test": {"action": "GET", "tool": None}}
 
-        clf._save_metadata()
+        save_metadata(clf)
 
         assert nested_path.exists()
         assert (nested_path / "metadata.json").exists()
@@ -1951,16 +1943,15 @@ class TestIntentClassifierTrainDefaultPath:
         """Train should use TRAINING_DATA_PATH if no path provided."""
         clf = IntentClassifier(algorithm="tfidf_lr", model_path=tmp_path)
 
-        # Mock _load_training_data to capture the path
         captured_path = []
 
-        def capture_path(path):
+        def capture_load(path):
             captured_path.append(path)
             return ["text"], ["label"], {}
 
-        with patch.object(clf, "_load_training_data", side_effect=capture_path), \
-             patch.object(clf, "_train_tfidf_lr", return_value={}), \
-             patch.object(clf, "_save_metadata"):
+        with patch("services.intent_training.load_training_data", side_effect=capture_load), \
+             patch("services.intent_training.train_tfidf_lr", return_value={}), \
+             patch("services.intent_training.save_metadata"):
             clf.train()
 
             assert len(captured_path) == 1

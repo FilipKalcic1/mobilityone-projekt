@@ -29,6 +29,9 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
+from services.errors import BotError, InfrastructureError, ErrorCode
+from services.tracing import get_tracer, trace_span
+
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +39,7 @@ from models import HallucinationReport, AuditLog
 from services.feedback_learning_service import get_feedback_learning_service
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("admin_review")
 
 
 # Constants for validation
@@ -46,14 +50,16 @@ MIN_LIMIT = 1
 QUERY_TIMEOUT_SECONDS = 30  # Database query timeout
 
 
-class SecurityError(Exception):
+class SecurityError(BotError):
     """Raised when potential injection or security issue detected."""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(ErrorCode.FORBIDDEN, message, **kwargs)
 
 
-class ValidationError(Exception):
+class ValidationError(BotError):
     """Raised when input validation fails."""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(ErrorCode.VALIDATION_ERROR, message, **kwargs)
 
 
 class AdminReviewService:
@@ -109,7 +115,7 @@ class AdminReviewService:
         "user_error",      # User said "krivo" by mistake
     ])
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         """
         Initialize with database session.
 
@@ -167,7 +173,12 @@ class AdminReviewService:
                 f"AUDIT: {action} by {admin_id} - {details.get('report_id', 'N/A')}"
             )
         except Exception as e:
-            logger.error(f"Failed to write audit log: {e}")
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"Failed to write audit log: {e}",
+                metadata={"action": action, "admin_id": admin_id},
+            )
+            logger.error(str(err))
             # Propagate the error - audit failures should not be silent
             try:
                 await self.db.rollback()
@@ -285,7 +296,7 @@ class AdminReviewService:
         """Check text against compiled dangerous patterns."""
         for pattern in self._compiled_patterns:
             if pattern.search(text):
-                logger.warning(f"SECURITY: Dangerous pattern detected")
+                logger.warning("SECURITY: Dangerous pattern detected")
                 return True
         return False
 
@@ -325,61 +336,69 @@ class AdminReviewService:
         Returns:
             Lista halucinacija za review
         """
-        # Validate inputs
-        validated_limit = self._validate_limit(limit)
-        validated_offset = self._validate_offset(offset)
-
-        # Audit log
-        await self._audit("VIEW_HALLUCINATIONS", admin_id, {
-            "limit": validated_limit,
-            "offset": validated_offset,
+        with trace_span(_tracer, "admin_review.get_hallucinations_for_review", {
+            "admin_id": admin_id,
             "unreviewed_only": unreviewed_only,
-            "tenant_filter": tenant_filter
-        })
+        }):
+            # Validate inputs
+            validated_limit = self._validate_limit(limit)
+            validated_offset = self._validate_offset(offset)
 
-        # Build query with proper ordering
-        query = select(HallucinationReport).order_by(
-            desc(HallucinationReport.created_at)
-        ).limit(validated_limit).offset(validated_offset)
+            # Audit log
+            await self._audit("VIEW_HALLUCINATIONS", admin_id, {
+                "limit": validated_limit,
+                "offset": validated_offset,
+                "unreviewed_only": unreviewed_only,
+                "tenant_filter": tenant_filter
+            })
 
-        if unreviewed_only:
-            # Use .is_(False) for proper NULL handling in SQLAlchemy
-            query = query.where(HallucinationReport.reviewed.is_(False))
+            # Build query with proper ordering
+            query = select(HallucinationReport).order_by(
+                desc(HallucinationReport.created_at)
+            ).limit(validated_limit).offset(validated_offset)
 
-        if tenant_filter:
-            # Use exact match instead of LIKE to prevent injection
-            # If LIKE is needed, escape the pattern
-            query = query.where(HallucinationReport.tenant_id == tenant_filter)
+            if unreviewed_only:
+                # Use .is_(False) for proper NULL handling in SQLAlchemy
+                query = query.where(HallucinationReport.reviewed.is_(False))
 
-        # Execute with timeout handling
-        try:
-            result = await self.db.execute(query)
-            reports = result.scalars().all()
-        except Exception as e:
-            logger.error(f"Database query failed: {e}")
-            raise
+            if tenant_filter:
+                # Use exact match instead of LIKE to prevent injection
+                # If LIKE is needed, escape the pattern
+                query = query.where(HallucinationReport.tenant_id == tenant_filter)
 
-        # Convert to dict and sanitize
-        return [
-            {
-                "id": str(r.id),
-                "timestamp": r.created_at.isoformat() if r.created_at else None,
-                "user_query": r.user_query,
-                "bot_response": r.bot_response,
-                "user_feedback": r.user_feedback,
-                "model": r.model,
-                "conversation_id": r.conversation_id,
-                "tenant_id": r.tenant_id,
-                "reviewed": r.reviewed,
-                "reviewed_by": r.reviewed_by,
-                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
-                "correction": r.correction,
-                "category": r.category,
-                # Don't expose raw API response in list view
-                "api_raw_response": "[AVAILABLE - click to view]" if r.api_raw_response else None
-            }
-            for r in reports
-        ]
+            # Execute with timeout handling
+            try:
+                result = await self.db.execute(query)
+                reports = result.scalars().all()
+            except Exception as e:
+                err = InfrastructureError(
+                    ErrorCode.DATABASE_UNAVAILABLE,
+                    f"Database query failed: {e}",
+                )
+                logger.error(str(err))
+                raise
+
+            # Convert to dict and sanitize
+            return [
+                {
+                    "id": str(r.id),
+                    "timestamp": r.created_at.isoformat() if r.created_at else None,
+                    "user_query": r.user_query,
+                    "bot_response": r.bot_response,
+                    "user_feedback": r.user_feedback,
+                    "model": r.model,
+                    "conversation_id": r.conversation_id,
+                    "tenant_id": r.tenant_id,
+                    "reviewed": r.reviewed,
+                    "reviewed_by": r.reviewed_by,
+                    "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                    "correction": r.correction,
+                    "category": r.category,
+                    # Don't expose raw API response in list view
+                    "api_raw_response": "[AVAILABLE - click to view]" if r.api_raw_response else None
+                }
+                for r in reports
+            ]
 
     async def mark_hallucination_reviewed(
         self,
@@ -408,93 +427,101 @@ class AdminReviewService:
         Returns:
             Status operacije
         """
-        # Validate IP address
-        validated_ip = self._validate_ip_address(ip_address)
+        with trace_span(_tracer, "admin_review.mark_hallucination_reviewed", {
+            "admin_id": admin_id,
+            "report_id": report_id,
+        }):
+            # Validate IP address
+            validated_ip = self._validate_ip_address(ip_address)
 
-        # 1. Validate correction
-        if correction and not self.is_safe_text(correction):
-            await self._audit("SECURITY_VIOLATION", admin_id, {
+            # 1. Validate correction
+            if correction and not self.is_safe_text(correction):
+                await self._audit("SECURITY_VIOLATION", admin_id, {
+                    "report_id": report_id,
+                    "reason": "Dangerous pattern in correction text",
+                    "ip_address": validated_ip
+                }, validated_ip)
+                raise SecurityError(
+                    "Correction text contains potentially dangerous content. "
+                    "Please use plain text only."
+                )
+
+            # 2. Validiraj category (whitelist pristup)
+            if category and category not in self.ALLOWED_CATEGORIES:
+                raise ValidationError(
+                    f"Invalid category. Allowed: {list(self.ALLOWED_CATEGORIES)}"
+                )
+
+            # 3. Parse UUID
+            try:
+                uuid_id = UUID(report_id)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid report ID format: {report_id}"
+                }
+
+            # 4. Update in database with retry mechanism
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = await self.db.execute(
+                        update(HallucinationReport)
+                        .where(HallucinationReport.id == uuid_id)
+                        .values(
+                            reviewed=True,
+                            reviewed_by=admin_id,
+                            reviewed_at=datetime.now(timezone.utc),
+                            correction=correction,
+                            category=category
+                        )
+                    )
+                    await self.db.commit()
+                    break
+                except Exception as e:
+                    err = InfrastructureError(
+                        ErrorCode.DATABASE_UNAVAILABLE,
+                        f"DB update attempt {attempt + 1} failed: {e}",
+                    )
+                    logger.warning(str(err))
+                    await self.db.rollback()
+                    if attempt == max_retries - 1:
+                        raise
+
+            if result.rowcount == 0:
+                return {
+                    "success": False,
+                    "error": f"Report {report_id} not found"
+                }
+
+            # 5. Audit log
+            await self._audit("MARK_REVIEWED", admin_id, {
                 "report_id": report_id,
-                "reason": "Dangerous pattern in correction text",
+                "category": category,
+                "has_correction": correction is not None,
                 "ip_address": validated_ip
             }, validated_ip)
-            raise SecurityError(
-                "Correction text contains potentially dangerous content. "
-                "Please use plain text only."
-            )
 
-        # 2. Validiraj category (whitelist pristup)
-        if category and category not in self.ALLOWED_CATEGORIES:
-            raise ValidationError(
-                f"Invalid category. Allowed: {list(self.ALLOWED_CATEGORIES)}"
-            )
+            # 6. Trigger learning if correction was provided (feedback loop integration)
+            learning_triggered = False
+            if correction:
+                try:
+                    get_feedback_learning_service(self.db)  # Initialize for side effects
+                    # Run incremental learning in background (non-blocking)
+                    # Full learning cycle is done via admin endpoint
+                    learning_triggered = True
+                    logger.info(f"Learning triggered for correction on report {report_id}")
+                except Exception as e:
+                    logger.warning(f"Could not trigger learning: {e}")
 
-        # 3. Parse UUID
-        try:
-            uuid_id = UUID(report_id)
-        except ValueError:
             return {
-                "success": False,
-                "error": f"Invalid report ID format: {report_id}"
+                "success": True,
+                "report_id": report_id,
+                "category": category,
+                "reviewed_by": admin_id,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "learning_triggered": learning_triggered
             }
-
-        # 4. Update in database with retry mechanism
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                result = await self.db.execute(
-                    update(HallucinationReport)
-                    .where(HallucinationReport.id == uuid_id)
-                    .values(
-                        reviewed=True,
-                        reviewed_by=admin_id,
-                        reviewed_at=datetime.now(timezone.utc),
-                        correction=correction,
-                        category=category
-                    )
-                )
-                await self.db.commit()
-                break
-            except Exception as e:
-                logger.warning(f"DB update attempt {attempt + 1} failed: {e}")
-                await self.db.rollback()
-                if attempt == max_retries - 1:
-                    raise
-
-        if result.rowcount == 0:
-            return {
-                "success": False,
-                "error": f"Report {report_id} not found"
-            }
-
-        # 5. Audit log
-        await self._audit("MARK_REVIEWED", admin_id, {
-            "report_id": report_id,
-            "category": category,
-            "has_correction": correction is not None,
-            "ip_address": validated_ip
-        }, validated_ip)
-
-        # 6. Trigger learning if correction was provided (feedback loop integration)
-        learning_triggered = False
-        if correction:
-            try:
-                learning_service = get_feedback_learning_service(self.db)
-                # Run incremental learning in background (non-blocking)
-                # Full learning cycle is done via admin endpoint
-                learning_triggered = True
-                logger.info(f"Learning triggered for correction on report {report_id}")
-            except Exception as e:
-                logger.warning(f"Could not trigger learning: {e}")
-
-        return {
-            "success": True,
-            "report_id": report_id,
-            "category": category,
-            "reviewed_by": admin_id,
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
-            "learning_triggered": learning_triggered
-        }
 
     async def get_audit_log(
         self,
@@ -513,6 +540,20 @@ class AdminReviewService:
             limit: Maximum records to return (max 500)
             offset: Pagination offset
         """
+        with trace_span(_tracer, "admin_review.get_audit_log", {
+            "admin_id": admin_id,
+            "limit": limit,
+            "offset": offset,
+        }):
+            return await self._get_audit_log_inner(admin_id, limit, offset)
+
+    async def _get_audit_log_inner(
+        self,
+        admin_id: str,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Inner implementation of get_audit_log."""
         # Validate and constrain limit for audit logs (stricter limit)
         validated_limit = self._validate_limit(limit, max_limit=500)
         validated_offset = self._validate_offset(offset)
@@ -547,6 +588,13 @@ class AdminReviewService:
 
         Returns actual statistics from database, not hardcoded values.
         """
+        with trace_span(_tracer, "admin_review.get_statistics", {
+            "admin_id": admin_id,
+        }):
+            return await self._get_statistics_inner(admin_id)
+
+    async def _get_statistics_inner(self, admin_id: str) -> Dict[str, Any]:
+        """Inner implementation of get_statistics."""
         await self._audit("VIEW_STATISTICS", admin_id, {})
 
         # Total count

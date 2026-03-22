@@ -46,6 +46,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport
+from services.errors import InfrastructureError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -585,7 +586,8 @@ class FeedbackAnalyzer:
             db_result = await self.db.execute(query)
             reports = db_result.scalars().all()
         except Exception as e:
-            logger.error(f"Failed to fetch reports: {e}")
+            err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to fetch reports: {e}")
+            logger.error(str(err))
             return result
 
         result.total_reports_analyzed = len(reports)
@@ -655,7 +657,8 @@ class FeedbackAnalyzer:
             db_result = await self.db.execute(query)
             reports = list(db_result.scalars().all())
         except Exception as e:
-            logger.error(f"Failed to fetch reports for comprehensive analysis: {e}")
+            err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to fetch reports for comprehensive analysis: {e}")
+            logger.error(str(err))
             return result
 
         # Add failure category analysis
@@ -706,7 +709,8 @@ class FeedbackAnalyzer:
                 "correction_rate": round(corrected / total * 100, 1) if total > 0 else 0,
             }
         except Exception as e:
-            logger.error(f"Failed to get quick stats: {e}")
+            err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to get quick stats: {e}")
+            logger.error(str(err))
             return {"error": str(e)}
 
     async def export_suggestions(
