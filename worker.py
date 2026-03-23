@@ -980,7 +980,7 @@ class Worker:
                       "Došlo je do greške pri obradi vaše poruke. Molimo pokušajte ponovno."
                   )
               except Exception:
-                  logger.warning(f"Could not send error response to ***{sender[-4:]}")
+                  log("warn", "error_response_failed", {"sender": f"***{sender[-4:]}"})
               ack_ok = True  # DLQ write succeeded — safe to ACK
 
             finally:
