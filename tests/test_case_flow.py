@@ -102,6 +102,8 @@ async def test_case_api():
     return result.success
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_case_flow():
     """Test case creation flow through ToolExecutor."""
 

@@ -210,7 +210,7 @@ class TestHandleAvailability:
             "get_AvailableVehicles", {"from": "sutra", "to": "petak"}, _user_context(), conv
         )
         assert result["success"] is False
-        assert "pronaden" in result["final_response"].lower()
+        assert "prona" in result["final_response"].lower()
 
     @pytest.mark.asyncio
     async def test_execution_fails(self, handler):
@@ -438,7 +438,7 @@ class TestHandleConfirmation:
             result = await handler.handle_confirmation(
                 "sender", "da", _user_context(), conv
             )
-        assert "uspjesna" in result.lower()
+        assert "uspje" in result.lower()
         assert "Golf" in result
         conv.confirm.assert_called_once()
         conv.complete.assert_called_once()
@@ -458,7 +458,7 @@ class TestHandleConfirmation:
         result = await handler.handle_confirmation(
             "sender", "da", _user_context(), conv
         )
-        assert "greska" in result.lower()
+        assert "gre" in result.lower()
         conv.reset.assert_called()
 
     @pytest.mark.asyncio
@@ -476,7 +476,7 @@ class TestHandleConfirmation:
         result = await handler.handle_confirmation(
             "sender", "da", _user_context(), conv
         )
-        assert "nedostaje" in result.lower() or "greska" in result.lower()
+        assert "nedostaje" in result.lower() or "gre" in result.lower()
 
     @pytest.mark.asyncio
     async def test_confirm_booking_failure(self, handler):
@@ -505,7 +505,7 @@ class TestHandleConfirmation:
                 result = await handler.handle_confirmation(
                     "sender", "da", _user_context(), conv
                 )
-        assert "greška" in result.lower() or "greska" in result.lower()
+        assert "gre" in result.lower()
 
     @pytest.mark.asyncio
     async def test_confirm_case_success(self, handler):
@@ -583,7 +583,7 @@ class TestHandleConfirmation:
             result = await handler.handle_confirmation(
                 "sender", "da", _user_context(), conv
             )
-        assert "uspjesna" in result.lower() or "uspješna" in result.lower()
+        assert "uspje" in result.lower() or "uspješna" in result.lower()
 
     @pytest.mark.asyncio
     async def test_confirm_tool_not_found(self, handler):

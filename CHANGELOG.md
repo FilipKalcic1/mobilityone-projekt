@@ -29,14 +29,14 @@ All notable changes to the MobilityOne WhatsApp Bot are documented here.
 - **Production readiness script**: Lua cache, FAISS integrity, memory baseline, PII scan verification
 - **Load testing**: Locust-based webhook load test
 - **Comprehensive documentation**: ARCHITECTURE.md (36KB), SECURITY.md (26KB), DEPLOYMENT.md (33KB)
-- **Test suite expansion**: 502 → 2,764 tests across 93 test files
+- **Test suite expansion**: 502 → 3,197 tests across 93 test files
 - **MobilityOne API verification** in health endpoints
 - **Croatian error message translation**: User-facing errors in Croatian, no internal leaks
 - **SSRF protection** and enhanced input validation
 
 ### Changed
 - Code coverage: 35% → 88% (minimum threshold: 85%)
-- Test count: 502 → 2,764 (93 test files)
+- Test count: 502 → 3,197 (93 test files)
 - Service modules: expanded to 99 files across ML, search, API, conversation, safety, and infrastructure
 - Routing accuracy: achieved 100% Top-1 on all 950 API tools
 - ML Fast Path handles ~85% of queries with 0 LLM calls

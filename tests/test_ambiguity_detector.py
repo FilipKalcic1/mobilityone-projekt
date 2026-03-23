@@ -52,20 +52,20 @@ class TestFindCommonSuffix:
 
 class TestDetectEntity:
     def test_vehicle_keyword(self, detector):
-        assert detector._detect_entity("prikaži vozila", None) == "Vehicles"
+        assert detector._detect_entity("prikaži vozila", None) == "vehicles"
 
     def test_auto_keyword(self, detector):
-        assert detector._detect_entity("daj mi auto", None) == "Vehicles"
+        assert detector._detect_entity("daj mi auto", None) == "vehicles"
 
     def test_expense_keyword(self, detector):
-        assert detector._detect_entity("prikaži troškove", None) == "Expenses"
+        assert detector._detect_entity("prikaži troškove", None) == "expenses"
 
     def test_booking_keyword(self, detector):
-        assert detector._detect_entity("napravi rezervaciju", None) == "VehicleCalendar"
+        assert detector._detect_entity("napravi rezervaciju", None) == "vehiclecalendar"
 
     def test_case_keyword(self, detector):
         # "šteta" matches but entity keyword is "slučaj", "kvar", etc.
-        assert detector._detect_entity("prijavi kvar", None) == "Cases"
+        assert detector._detect_entity("prijavi kvar", None) == "cases"
 
     def test_no_match(self, detector):
         assert detector._detect_entity("hello world", None) is None
@@ -115,7 +115,7 @@ class TestDetectAmbiguity:
             {"tool_id": "get_Expenses_Agg", "score": 0.82},
         ]
         result = detector.detect_ambiguity("statistika vozila", results)
-        assert result.detected_entity == "Vehicles"
+        assert result.detected_entity == "vehicles"
 
     def test_not_ambiguous_different_suffixes(self, detector):
         results = [

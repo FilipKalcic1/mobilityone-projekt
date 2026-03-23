@@ -118,6 +118,7 @@ class TestCircuitBreaker:
     @pytest.mark.asyncio
     async def test_circuit_opens_after_threshold(self):
         """Circuit opens after CIRCUIT_FAILURE_THRESHOLD consecutive failures."""
+        import httpx
         from services.api_gateway import APIGateway, HttpMethod
 
         gw = APIGateway.__new__(APIGateway)
@@ -129,8 +130,8 @@ class TestCircuitBreaker:
         gw._consecutive_failures = 0
         gw._circuit_open_until = 0.0
 
-        # Simulate 3 consecutive timeout failures
-        gw.client.get = AsyncMock(side_effect=Exception("timeout"))
+        # Simulate 3 consecutive timeout failures (must be httpx.TimeoutException to open circuit)
+        gw.client.get = AsyncMock(side_effect=httpx.ReadTimeout("timeout"))
 
         for _ in range(3):
             result = await gw.execute(HttpMethod.GET, "/test", max_retries=0)
@@ -155,7 +156,7 @@ class TestCircuitBreaker:
         result = await gw.execute(HttpMethod.GET, "/test")
 
         assert result.success is False
-        assert result.error_code == "CIRCUIT_OPEN"
+        assert result.error_code == "GATEWAY_CIRCUIT_OPEN"
         # Client should NOT have been called
         gw.client.get.assert_not_called()
 
@@ -237,7 +238,7 @@ class TestWorkerLockFailOpen:
         mock_redis = AsyncMock()
         mock_redis.set = AsyncMock(side_effect=ConnectionError("Redis down"))
 
-        from worker import WhatsAppWorker
+        from worker import Worker as WhatsAppWorker
         worker = WhatsAppWorker.__new__(WhatsAppWorker)
         worker.redis = mock_redis
         worker.consumer_name = "test-consumer"
@@ -252,7 +253,7 @@ class TestWorkerLockFailOpen:
         mock_redis = AsyncMock()
         mock_redis.set = AsyncMock(side_effect=TimeoutError("Redis timeout"))
 
-        from worker import WhatsAppWorker
+        from worker import Worker as WhatsAppWorker
         worker = WhatsAppWorker.__new__(WhatsAppWorker)
         worker.redis = mock_redis
         worker.consumer_name = "test-consumer"
@@ -347,12 +348,10 @@ class TestGracefulShutdown:
         from webhook_simple import router
         app.include_router(router)
 
-        with patch("webhook_simple.APP_STOPPING", True):
-            # This import needs special handling
-            with patch("main.APP_STOPPING", True):
-                client = TestClient(app, raise_server_exceptions=False)
-                response = client.post(
-                    "/whatsapp",
-                    json={"results": [{"from": "123", "message": {"type": "TEXT", "text": "hi"}}]}
-                )
-                assert response.status_code == 503
+        with patch("main.APP_STOPPING", True):
+            client = TestClient(app, raise_server_exceptions=False)
+            response = client.post(
+                "/whatsapp",
+                json={"results": [{"from": "123", "message": {"type": "TEXT", "text": "hi"}}]}
+            )
+            assert response.status_code == 503

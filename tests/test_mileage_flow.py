@@ -132,6 +132,8 @@ async def test_mileage_api():
     }
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_mileage_flow():
     """Test mileage input flow through FlowHandler."""
 
@@ -303,6 +305,8 @@ async def test_mileage_flow():
     await redis_client.aclose()
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_full_mileage_flow():
     """Test mileage submission via ToolExecutor (simplified - no MessageEngine)."""
 

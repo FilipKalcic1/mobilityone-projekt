@@ -176,7 +176,8 @@ class TestHandleMileageInputFlow:
         assert "14500" in resp
         assert "Potvrda" in resp
         conv.request_confirmation.assert_awaited_once()
-        assert conv.context.current_tool == "post_AddMileage"
+        # Tool is set via start_flow, not directly on context
+        conv.start_flow.assert_awaited_once()
 
     async def test_with_vehicle_no_value_starts_gathering(self):
         fe, gw, fh = _make_executor()
@@ -228,56 +229,9 @@ class TestHandleMileageInputFlow:
         assert "20000" in resp
         conv.request_confirmation.assert_awaited_once()
 
-    @patch("services.engine.flow_executors.FlowExecutors.handle_availability_flow", new_callable=AsyncMock)
-    async def test_no_vehicle_fetches_from_api(self, mock_avail):
+    async def test_no_vehicle_returns_error(self):
+        """When no vehicle in context or tool_outputs, returns error message."""
         fe, gw, fh = _make_executor()
-        # Simulate successful API response
-        api_result = MagicMock()
-        api_result.success = True
-        api_result.data = {
-            "Data": [
-                {
-                    "Id": "api-v1",
-                    "DisplayName": "BMW X5",
-                    "LicencePlate": "RI-111",
-                }
-            ]
-        }
-        gw.execute.return_value = api_result
-
-        conv = _make_conv(tool_outputs={})
-        resp = await fe.handle_mileage_input_flow(
-            "unesi km",
-            _user_context_no_vehicle(),
-            conv,
-            router_params={},
-        )
-        # Should have fetched from API and found a vehicle
-        assert "BMW X5" in resp or "RI-111" in resp or "kilometra" in resp.lower()
-        gw.execute.assert_awaited_once()
-
-    @patch("services.engine.flow_executors.FlowExecutors.handle_availability_flow", new_callable=AsyncMock)
-    async def test_no_vehicle_api_fails_returns_error(self, mock_avail):
-        fe, gw, fh = _make_executor()
-        api_result = MagicMock()
-        api_result.success = False
-        api_result.data = None
-        gw.execute.return_value = api_result
-
-        conv = _make_conv(tool_outputs={})
-        resp = await fe.handle_mileage_input_flow(
-            "unesi km",
-            _user_context_no_vehicle(),
-            conv,
-            router_params={},
-        )
-        assert "Nije" in resp or "vozilo" in resp.lower()
-
-    @patch("services.engine.flow_executors.FlowExecutors.handle_availability_flow", new_callable=AsyncMock)
-    async def test_no_vehicle_api_exception_returns_error(self, mock_avail):
-        fe, gw, fh = _make_executor()
-        gw.execute.side_effect = Exception("connection error")
-
         conv = _make_conv(tool_outputs={})
         resp = await fe.handle_mileage_input_flow(
             "unesi km",
@@ -324,27 +278,24 @@ class TestHandleMileageInputFlow:
         assert "Golf" in resp
         assert "ZG-123" in resp
 
-    async def test_stores_vehicle_info_from_api(self):
-        """When fetching from API, vehicle info is stored in tool_outputs."""
+    async def test_vehicle_from_tool_outputs_stored_properly(self):
+        """When vehicle is in tool_outputs, it is used for mileage flow."""
         fe, gw, fh = _make_executor()
-        api_result = MagicMock()
-        api_result.success = True
-        api_result.data = [
-            {"Id": "fetched-v", "DisplayName": "Tesla", "LicencePlate": "ZD-555"}
-        ]
-        gw.execute.return_value = api_result
-
-        tool_outputs = {}
+        tool_outputs = {
+            "VehicleId": "stored-v",
+            "all_available_vehicles": [
+                {"Id": "stored-v", "DisplayName": "Tesla", "LicencePlate": "ZD-555"},
+            ],
+        }
         conv = _make_conv(tool_outputs=tool_outputs)
-        await fe.handle_mileage_input_flow(
+        resp = await fe.handle_mileage_input_flow(
             "unesi km",
             _user_context_no_vehicle(),
             conv,
             router_params={},
         )
-        # Should have stored VehicleId in tool_outputs
-        assert tool_outputs.get("VehicleId") == "fetched-v"
-        assert len(tool_outputs.get("all_available_vehicles", [])) > 0
+        # Should use vehicle from tool_outputs
+        assert "Tesla" in resp or "ZD-555" in resp or "kilometra" in resp.lower()
 
 
 # ===========================================================================

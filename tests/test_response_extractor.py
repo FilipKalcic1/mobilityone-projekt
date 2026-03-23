@@ -15,7 +15,10 @@ def extractor():
             AZURE_OPENAI_API_KEY="fake-key",
             AZURE_OPENAI_API_VERSION="2024-02-01",
         )
-        with patch("services.response_extractor.AsyncAzureOpenAI"):
+        with patch("services.response_extractor.get_openai_client") as mock_client, \
+             patch("services.response_extractor.get_llm_circuit_breaker") as mock_cb:
+            mock_client.return_value = MagicMock()
+            mock_cb.return_value = MagicMock()
             from services.response_extractor import LLMResponseExtractor
             return LLMResponseExtractor()
 

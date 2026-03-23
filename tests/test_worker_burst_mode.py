@@ -19,7 +19,7 @@ class TestBurstModeConfig:
     def test_worker_reads_burst_mode_env(self):
         """Worker module must reference BURST_MODE env var."""
         import worker as worker_module
-        source = open(worker_module.__file__).read()
+        source = open(worker_module.__file__, encoding="utf-8").read()
         assert "BURST_MODE" in source, (
             "worker.py does not read BURST_MODE env var. "
             "K8s ScaledJob sets BURST_MODE=true but worker ignores it."
@@ -28,7 +28,7 @@ class TestBurstModeConfig:
     def test_worker_reads_max_messages_env(self):
         """Worker module must reference MAX_MESSAGES env var."""
         import worker as worker_module
-        source = open(worker_module.__file__).read()
+        source = open(worker_module.__file__, encoding="utf-8").read()
         assert "MAX_MESSAGES" in source, (
             "worker.py does not read MAX_MESSAGES env var. "
             "Burst worker should exit after MAX_MESSAGES."

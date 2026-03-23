@@ -33,7 +33,10 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install faiss-cpu
 
       - name: Pre-import modules
         run: |
@@ -41,12 +44,11 @@ jobs:
           python -c "from services.cost_tracker import get_cost_tracker; print('CostTracker OK')"
           python -c "from services.registry import ToolRegistry; print('Registry OK')"
 
-      - name: Warm up test collection
-        run: pytest tests/ --collect-only -q 2>&1 | tail -10
+      - name: Collect tests
+        run: pytest tests/ --collect-only -q 2>&1 | tail -5
 
       - name: Run tests with coverage
         run: |
-          # Skip integration tests that require real external services
           pytest tests/ -v --tb=short \
             --ignore=tests/test_booking_flow.py \
             --ignore=tests/test_case_flow.py \
@@ -61,6 +63,12 @@ jobs:
             tail -50 test_output.txt
           fi
           exit $RESULT
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          tail -5 test_output.txt >> $GITHUB_STEP_SUMMARY || true
 
   lint:
     runs-on: ubuntu-latest

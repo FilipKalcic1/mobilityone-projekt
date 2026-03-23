@@ -60,13 +60,11 @@ class TestSuccessfulDispatch:
             "messages": [{"messageId": "abc-123-def"}]
         })
 
-        with patch("httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = infobip_response
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = infobip_response
+        whatsapp_service._client = mock_client
 
-            result = await whatsapp_service.send("+385991234567", "Pozdrav!")
+        result = await whatsapp_service.send("+385991234567", "Pozdrav!")
 
         assert result.success is True
         assert result.message_id == "abc-123-def"
@@ -81,13 +79,11 @@ class TestSuccessfulDispatch:
         """
         infobip_response = _mock_response(200, {"messages": [{"messageId": "x"}]})
 
-        with patch("httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = infobip_response
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = infobip_response
+        whatsapp_service._client = mock_client
 
-            await whatsapp_service.send("385991234567", "Test poruka")
+        await whatsapp_service.send("385991234567", "Test poruka")
 
         # Inspect the payload sent to Infobip
         call_args = mock_client.post.call_args
@@ -102,13 +98,11 @@ class TestSuccessfulDispatch:
         """Verify the Infobip URL and authorization header format."""
         infobip_response = _mock_response(200, {"messages": [{"messageId": "x"}]})
 
-        with patch("httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = infobip_response
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = infobip_response
+        whatsapp_service._client = mock_client
 
-            await whatsapp_service.send("385991234567", "Test")
+        await whatsapp_service.send("385991234567", "Test")
 
         call_args = mock_client.post.call_args
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
@@ -146,13 +140,11 @@ class TestRetryBehavior:
                 return fail_response
             return success_response
 
-        with patch("httpx.AsyncClient") as MockClient, \
-             patch("asyncio.sleep", new_callable=AsyncMock):  # Skip real delays
-            mock_client = AsyncMock()
-            mock_client.post.side_effect = mock_post
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = mock_post
+        whatsapp_service._client = mock_client
 
+        with patch("asyncio.sleep", new_callable=AsyncMock):  # Skip real delays
             result = await whatsapp_service.send("385991234567", "Retry test")
 
         assert result.success is True
@@ -168,17 +160,15 @@ class TestRetryBehavior:
         """
         fail_response = _mock_response(503, {"error": "Service Unavailable"})
 
-        with patch("httpx.AsyncClient") as MockClient, \
-             patch("asyncio.sleep", new_callable=AsyncMock):
-            mock_client = AsyncMock()
-            mock_client.post.return_value = fail_response
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = fail_response
+        whatsapp_service._client = mock_client
 
+        with patch("asyncio.sleep", new_callable=AsyncMock):
             result = await whatsapp_service.send("385991234567", "Will fail")
 
         assert result.success is False
-        assert result.error_code == "MAX_RETRIES_EXCEEDED"
+        assert result.error_code == "HTTP_503"
         assert whatsapp_service._messages_failed == 1
         # Should have attempted MAX_RETRIES times
         assert mock_client.post.call_count == whatsapp_service.MAX_RETRIES
@@ -194,13 +184,11 @@ class TestRetryBehavior:
             }
         })
 
-        with patch("httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = error_response
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = error_response
+        whatsapp_service._client = mock_client
 
-            result = await whatsapp_service.send("385991234567", "Bad request test")
+        result = await whatsapp_service.send("385991234567", "Bad request test")
 
         assert result.success is False
         assert result.error_code == "HTTP_400"
@@ -266,15 +254,13 @@ class TestPhoneValidation:
         send() with invalid phone must return failure immediately
         WITHOUT making any HTTP request to Infobip.
         """
-        with patch("httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        whatsapp_service._client = mock_client
 
-            result = await whatsapp_service.send(
-                "550e8400-e29b-41d4-a716-446655440000",
-                "This should never reach Infobip"
-            )
+        result = await whatsapp_service.send(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "This should never reach Infobip"
+        )
 
         assert result.success is False
         assert result.error_code == "INVALID_PHONE"

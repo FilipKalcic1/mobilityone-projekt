@@ -320,7 +320,7 @@ class TestGetRelevantToolsWithAmbiguity:
         mock_detector = MagicMock()
         mock_detector.detect_ambiguity = MagicMock(return_value=mock_amb_result)
 
-        with patch("services.unified_search.get_unified_search", return_value=mock_search):
+        with patch("services.unified_router.get_unified_search", return_value=mock_search):
             with patch("services.unified_router.get_ambiguity_detector", return_value=mock_detector):
                 tools, amb = await router._get_relevant_tools_with_ambiguity("test")
 
@@ -336,7 +336,7 @@ class TestGetRelevantToolsWithAmbiguity:
         reg.is_ready = True
         router._registry = reg
 
-        with patch("services.unified_search.get_unified_search", side_effect=Exception("boom")):
+        with patch("services.unified_router.get_unified_search", side_effect=Exception("boom")):
             tools, amb = await router._get_relevant_tools_with_ambiguity("test")
 
         assert tools == PRIMARY_TOOLS
@@ -356,7 +356,7 @@ class TestGetRelevantToolsWithAmbiguity:
         mock_search.set_registry = MagicMock()
         mock_search.search = AsyncMock(return_value=mock_response)
 
-        with patch("services.unified_search.get_unified_search", return_value=mock_search):
+        with patch("services.unified_router.get_unified_search", return_value=mock_search):
             tools, amb = await router._get_relevant_tools_with_ambiguity("test")
 
         assert tools == PRIMARY_TOOLS
@@ -487,29 +487,18 @@ class TestRouteQueryRouterFastPath:
         assert result.confidence == 1.0
 
     @pytest.mark.asyncio
-    async def test_qr_low_confidence_goes_to_llm(self):
-        """Confidence < 1.0 should NOT use fast path, goes to LLM."""
+    async def test_qr_low_confidence_still_uses_fast_path(self):
+        """Non-mediation matched result uses fast path regardless of confidence."""
         router = _make_router()
-        qr_result = _route_result(matched=True, confidence=0.8)
+        qr_result = _route_result(matched=True, confidence=0.8, flow_type="simple",
+                                  tool_name="get_MasterData")
         router.query_router.route.return_value = qr_result
 
-        # Mock LLM response
-        router.client = MagicMock()
-        router.client.chat = MagicMock()
-        router.client.chat.completions = MagicMock()
-        router.client.chat.completions.create = AsyncMock(
-            return_value=_llm_response({
-                "action": "simple_api",
-                "tool": "get_MasterData",
-                "params": {},
-                "reasoning": "LLM decided",
-                "confidence": 0.9,
-            })
-        )
-
         result = await router.route("nesto", _user_context())
-        # Should have gone to LLM
-        router.client.chat.completions.create.assert_awaited_once()
+        # Fast path: non-mediation matched result goes directly
+        assert result.action == "simple_api"
+        assert result.tool == "get_MasterData"
+        assert result.confidence == 0.8
 
 
 # ==========================================================================
@@ -951,13 +940,13 @@ class TestGetUnifiedRouter:
 class TestRouteFullLLMPath:
     @pytest.mark.asyncio
     async def test_full_route_through_llm(self):
-        """Non-greeting, non-exit, non-flow query with low QR confidence goes to LLM."""
+        """Non-greeting, non-exit, non-flow query with no QR match goes to LLM."""
         router = _make_router()
         router._registry = None
 
-        # QR returns low confidence
+        # QR returns no match — falls through to LLM
         router.query_router.route.return_value = _route_result(
-            matched=True, confidence=0.7
+            matched=False, confidence=0.3
         )
 
         # LLM responds
@@ -1062,7 +1051,7 @@ class TestEdgeCases:
             })
         )
 
-        with patch("services.unified_search.get_unified_search", return_value=mock_search):
+        with patch("services.unified_router.get_unified_search", return_value=mock_search):
             with patch("services.unified_router.get_ambiguity_detector", return_value=mock_detector):
                 result = await router._llm_route("prosjecna", _user_context(), None)
 
@@ -1111,7 +1100,7 @@ class TestEdgeCases:
             })
         )
 
-        with patch("services.unified_search.get_unified_search", return_value=mock_search):
+        with patch("services.unified_router.get_unified_search", return_value=mock_search):
             with patch("services.unified_router.get_ambiguity_detector", return_value=mock_detector):
                 result = await router._llm_route("prosjecna", _user_context(), None)
 

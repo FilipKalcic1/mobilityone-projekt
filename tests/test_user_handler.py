@@ -83,8 +83,8 @@ class TestIdentifyUser:
             assert result["display_name"] == "Korisnik"
 
     @pytest.mark.asyncio
-    async def test_auto_onboard_second_lookup_fails_returns_guest(self, handler):
-        """When auto-onboard succeeds but second lookup fails, returns guest context."""
+    async def test_auto_onboard_second_lookup_fails_returns_fallback_context(self, handler):
+        """When auto-onboard succeeds but second lookup fails, returns API-based context (not guest)."""
         with patch("services.engine.user_handler.UserService") as MockUS:
             svc = MagicMock()
             svc.get_active_identity = AsyncMock(side_effect=[None, None])
@@ -94,7 +94,10 @@ class TestIdentifyUser:
 
             result = await handler.identify_user("+385000000000")
             assert result is not None
-            assert result["is_guest"] is True
+            # User IS in MobilityOne (auto-onboard succeeded), so not a guest
+            assert result["is_guest"] is False
+            assert result["is_new"] is True
+            assert result["display_name"] == "Novi"
 
 
 class TestBuildGreeting:

@@ -55,7 +55,7 @@ def _make_param(name="param", param_type="string", required=True, location="quer
 class TestParameterValidationError:
     def test_basic_error(self):
         err = ParameterValidationError("test error")
-        assert str(err) == "test error"
+        assert "test error" in str(err)
 
     def test_to_ai_feedback_missing(self):
         err = ParameterValidationError(

@@ -500,28 +500,28 @@ class TestHealthCheck:
 
 class TestTaskDoneCallback:
     def test_with_exception(self):
-        s = _sched()
+        from services.rag_scheduler import _task_error_logger
         t = MagicMock()
         t.exception.return_value = RuntimeError("fail")
-        s._task_done_callback(t)
+        _task_error_logger(t)
 
     def test_with_cancelled(self):
-        s = _sched()
+        from services.rag_scheduler import _task_error_logger
         t = MagicMock()
         t.exception.side_effect = asyncio.CancelledError()
-        s._task_done_callback(t)
+        _task_error_logger(t)
 
     def test_with_invalid_state(self):
-        s = _sched()
+        from services.rag_scheduler import _task_error_logger
         t = MagicMock()
         t.exception.side_effect = asyncio.InvalidStateError()
-        s._task_done_callback(t)
+        _task_error_logger(t)
 
     def test_no_exception(self):
-        s = _sched()
+        from services.rag_scheduler import _task_error_logger
         t = MagicMock()
         t.exception.return_value = None
-        s._task_done_callback(t)
+        _task_error_logger(t)
 
 
 # ===========================================================================
@@ -581,7 +581,7 @@ class TestStartStop:
     @pytest.mark.asyncio
     async def test_stop_lock_delete_error(self):
         redis = _redis()
-        redis.delete = AsyncMock(side_effect=Exception("fail"))
+        redis.delete = AsyncMock(side_effect=ConnectionError("fail"))
         s = _sched(redis=redis)
         s._refresh_loop = AsyncMock()
         s._pubsub_listener = AsyncMock()

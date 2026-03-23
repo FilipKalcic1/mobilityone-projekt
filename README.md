@@ -3,7 +3,7 @@
 AI-powered fleet management chatbot that connects WhatsApp users to the MobilityOne platform (950+ API endpoints) via Azure OpenAI.
 
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-2764%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3197%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)
 ![Tools](https://img.shields.io/badge/API%20tools-950+-blueviolet)
 ![Top--1 Accuracy](https://img.shields.io/badge/routing%20accuracy-100%25-brightgreen)
@@ -57,7 +57,7 @@ Redis List (outbound) ---> WhatsApp (Infobip)
 | Query Type klasa | 12 (_id, _documents, _metadata, _Agg, ...) |
 | Prosječna latencija | 2-3 sekunde (uključuje Azure OpenAI) |
 | FAISS search latencija | 1-5ms |
-| Test suite | 2,764 testova, 88% coverage |
+| Test suite | 3,197 testova, 88% coverage |
 
 ## Quick Start
 
@@ -95,7 +95,7 @@ make run-admin    # Admin API (port 8080)
 ## Development
 
 ```bash
-make test         # Pokreni svih 2,764 testova
+make test         # Pokreni svih 3,197 testova
 make coverage     # Testovi + coverage report (minimum 85%)
 make lint         # Ruff linter
 make format       # Auto-format koda
@@ -135,7 +135,7 @@ make check        # lint + test u jednom koraku
 │
 ├── models/                    # ML modeli (TF-IDF, LogReg)
 ├── data/training/             # Training podaci
-├── tests/                     # pytest suite (2,764 testova)
+├── tests/                     # pytest suite (3,197 testova)
 ├── scripts/                   # Utility skripte (30+)
 ├── k8s/                       # Kubernetes manifesti
 ├── docker/                    # Prometheus, Grafana konfiguracija

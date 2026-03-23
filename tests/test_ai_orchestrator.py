@@ -451,7 +451,7 @@ class TestRetryAndErrorHandling:
 
         result = await orch.analyze(messages=[{"role": "user", "content": "test"}])
         assert result["type"] == "error"
-        assert "API" in result["content"]
+        assert "greske" in result["content"].lower() or "komunikacij" in result["content"].lower()
 
     @pytest.mark.asyncio
     async def test_analyze_generic_exception_returns_error(self):
@@ -463,7 +463,7 @@ class TestRetryAndErrorHandling:
 
         result = await orch.analyze(messages=[{"role": "user", "content": "test"}])
         assert result["type"] == "error"
-        assert "Something broke" in result["content"]
+        assert "greske" in result["content"].lower() or "neocekivan" in result["content"].lower()
 
 
 # ============================================================================
