@@ -1,6 +1,5 @@
 """
 Error Parser - AI Feedback Generator
-Version: 2.0
 
 Converts API errors into Croatian explanations for LLM self-correction.
 
@@ -11,11 +10,9 @@ NO business logic - purely error interpretation.
 """
 
 import logging
-from typing import Dict, Any, Optional
-
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 class ErrorParser:
     """

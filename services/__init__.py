@@ -1,6 +1,5 @@
 """
 Services Package
-Version: 10.0
 
 IMPORTANT: Keep this file minimal to avoid circular imports.
 Import services directly where needed.

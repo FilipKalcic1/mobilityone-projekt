@@ -1,6 +1,5 @@
 """
 Parameter Manager - Type Validation, Casting, and Injection
-Version: 2.0
 
 Handles parameter resolution from multiple sources:
 1. User input (FROM_USER)
@@ -12,21 +11,41 @@ NO domain logic - purely type system operations.
 
 import json
 import logging
+import re
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime, date
 
 from services.tool_contracts import (
     UnifiedToolDefinition,
-    ParameterDefinition,
     DependencySource,
     ToolExecutionContext
 )
 from services.patterns import get_injectable_context
+from services.context import UserContextManager
+from services.tracing import get_tracer, trace_span
+from services.errors import BotError, ConversationError, ErrorCode
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("parameter_manager")
+
+# These tools have Swagger metadata that incorrectly maps context_key for certain params.
+# Instead of hardcoding tool IDs throughout the code, define overrides here.
+TOOL_SKIP_CONTEXT_INJECTION: Dict[str, set] = {
+    "post_VehicleCalendar": {"VehicleId", "EntryType", "AssigneeType"},
+    "post_AddMileage": {"VehicleId"},
+    "post_AddCase": {"User", "Subject", "Message"},
+}
+
+# Params that come from flow_handler (not LLM/context), so pass them through directly
+TOOL_FLOW_PARAMS: Dict[str, set] = {
+    "post_VehicleCalendar": {"VehicleId", "AssignedToId", "FromTime", "ToTime",
+                              "EntryType", "AssigneeType", "Description"},
+    "post_AddMileage": {"VehicleId", "Value", "Comment", "Time"},
+    "post_AddCase": {"User", "Subject", "Message"},
+}
 
 
-class ParameterValidationError(Exception):
+class ParameterValidationError(BotError):
     """Raised when parameter validation fails."""
 
     def __init__(
@@ -34,9 +53,10 @@ class ParameterValidationError(Exception):
         message: str,
         missing_params: List[str] = None,
         invalid_params: Dict[str, str] = None,
-        suggested_tools: List[str] = None
+        suggested_tools: List[str] = None,
+        **kwargs
     ):
-        super().__init__(message)
+        super().__init__(ErrorCode.PARAMETER_INVALID, message, **kwargs)
         self.missing_params = missing_params or []
         self.invalid_params = invalid_params or {}
         self.suggested_tools = suggested_tools or []
@@ -57,7 +77,7 @@ class ParameterValidationError(Exception):
                 f"Preporučeni alati za dohvat podataka: {', '.join(self.suggested_tools)}"
             )
 
-        return ". ".join(parts) if parts else self.args[0]
+        return ". ".join(parts) if parts else self.message
 
 
 class ParameterManager:
@@ -117,7 +137,7 @@ class ParameterManager:
         "category": "Koja kategorija?",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize parameter manager."""
         logger.debug("ParameterManager initialized")
 
@@ -141,60 +161,83 @@ class ParameterManager:
         Raises:
             ParameterValidationError: If required parameters are missing
         """
-        resolved = {}
-        warnings = []
+        with trace_span(_tracer, "parameter_manager.resolve_parameters", {
+            "tool.operation_id": tool.operation_id,
+            "llm_params_count": len(llm_params),
+        }):
+            resolved = {}
+            warnings = []
 
-        # Step 1: Inject context parameters (invisible to LLM)
-        context_params = self._inject_context_params(
-            tool,
-            execution_context.user_context
-        )
-        resolved.update(context_params)
+            # Step 1: Inject context parameters (invisible to LLM)
+            context_params = self._inject_context_params(
+                tool,
+                execution_context.user_context
+            )
+            resolved.update(context_params)
 
-        # Step 2: Resolve FROM_TOOL_OUTPUT dependencies
-        output_params, output_warnings = self._resolve_output_params(
-            tool,
-            execution_context.tool_outputs
-        )
-        resolved.update(output_params)
-        warnings.extend(output_warnings)
+            # Step 2: Resolve FROM_TOOL_OUTPUT dependencies
+            output_params, output_warnings = self._resolve_output_params(
+                tool,
+                execution_context.tool_outputs
+            )
+            resolved.update(output_params)
+            warnings.extend(output_warnings)
 
-        # Step 3: Add LLM-provided parameters
-        user_params, user_warnings = self._process_user_params(
-            tool,
-            llm_params
-        )
-        resolved.update(user_params)
-        warnings.extend(user_warnings)
+            # Step 3: Add LLM-provided parameters
+            user_params, user_warnings = self._process_user_params(
+                tool,
+                llm_params
+            )
+            resolved.update(user_params)
+            warnings.extend(user_warnings)
 
-        # Step 4: Validate and cast types
-        validated, cast_warnings = self._validate_and_cast(tool, resolved)
-        warnings.extend(cast_warnings)
+            # Step 3.5: CONTEXT -> USER fallback
+            # If a parameter is defined as FROM_USER but is missing, try to
+            # resolve it from user_context as a last resort.
+            user_param_defs = tool.get_user_params()
+            for param_name in user_param_defs:
+                if param_name not in resolved or resolved[param_name] is None:
+                    # Case-insensitive search in user_context
+                    for key, value in execution_context.user_context.items():
+                        if key.lower() == param_name.lower():
+                            if value is not None:
+                                resolved[param_name] = value
+                                logger.debug(
+                                    f"CONTEXT->USER fallback for '{param_name}'"
+                                )
+                                break
 
-        # Step 5: Check required parameters
-        # MASTER PROMPT v9.0 - ROBUSTAN HANDOFF: Ask for ONE parameter at a time
-        missing = self._check_required_params(tool, validated)
-        if missing:
-            # Get the FIRST missing parameter only
-            first_missing = missing[0]
+            # Step 4: Validate and cast types
+            validated, cast_warnings = self._validate_and_cast(tool, resolved)
+            warnings.extend(cast_warnings)
 
-            # Generate human-friendly question for this specific parameter
-            question = self._get_parameter_question(first_missing, tool)
+            # Step 5: Check required parameters
+            # MASTER PROMPT v9.0 - ROBUSTAN HANDOFF: Ask for ONE parameter at a time
+            missing = self._check_required_params(tool, validated)
+            if missing:
+                # Get the FIRST missing parameter only
+                first_missing = missing[0]
 
-            # Find tools that can provide missing params (for AI context)
-            suggested = self._suggest_provider_tools(tool, missing)
+                err = ConversationError(ErrorCode.PARAMETER_MISSING, f"Required parameter '{first_missing}' missing for {tool.operation_id}")
+                logger.info(str(err))
 
-            raise ParameterValidationError(
-                question,  # Single, clear question
-                missing_params=[first_missing],  # Only first parameter
-                suggested_tools=suggested
+                # Generate human-friendly question for this specific parameter
+                question = self._get_parameter_question(first_missing, tool)
+
+                # Find tools that can provide missing params (for AI context)
+                suggested = self._suggest_provider_tools(tool, missing)
+
+                raise ParameterValidationError(
+                    question,  # Single, clear question
+                    missing_params=[first_missing],  # Only first parameter
+                    suggested_tools=suggested
+                )
+
+            logger.debug(
+                f"Resolved {len(validated)} params for {tool.operation_id}"
             )
 
-        logger.debug(
-            f"Resolved {len(validated)} params for {tool.operation_id}"
-        )
-
-        return validated, warnings
+            return validated, warnings
 
     def _inject_context_params(
         self,
@@ -214,13 +257,14 @@ class ParameterManager:
         """
         injected = {}
 
-        # FIX v13.3: Skip certain params that have incorrect context_key in Swagger metadata
+        logger.info(f" _inject_context_params for {tool.operation_id}")
+        logger.info(f"user_context keys: {list(user_context.keys())}")
+        # Use UserContextManager for logging
+        ctx = UserContextManager(user_context)
+        logger.info(f"person_id in context: {ctx.person_id or 'NOT FOUND'}")
+
         # VehicleId should come from user context vehicle.id, not person_id
-        skip_injection = set()
-        if tool.operation_id == "post_VehicleCalendar":
-            skip_injection = {"VehicleId", "EntryType", "AssigneeType"}
-        elif tool.operation_id == "post_AddMileage":
-            skip_injection = {"VehicleId"}  # VehicleId comes from user_context.vehicle.id
+        skip_injection = TOOL_SKIP_CONTEXT_INJECTION.get(tool.operation_id, set())
 
         # STEP 1: Direct context parameter injection (existing behavior)
         for param_name, param_def in tool.get_context_params().items():
@@ -288,7 +332,7 @@ class ParameterManager:
         nested_obj = get_injectable_context(user_context)
 
         for key, value in nested_obj.items():
-            logger.debug(f"  -> Injected {key}={value} into {param_name}")
+            logger.debug(f"-> Injected {key}={value} into {param_name}")
 
         # Return None if no fields were injected
         return nested_obj if nested_obj else None
@@ -377,35 +421,13 @@ class ParameterManager:
                         break
 
                 if not matched:
-                    # FIX v13.3: Special handling for VehicleCalendar booking params
                     # These params come from flow_handler, not LLM, so pass them through
-                    if tool.operation_id == "post_VehicleCalendar" and param_name in {
-                        "VehicleId", "AssignedToId", "FromTime", "ToTime",
-                        "EntryType", "AssigneeType", "Description"
-                    }:
+                    flow_params = TOOL_FLOW_PARAMS.get(tool.operation_id, set())
+                    if param_name in flow_params:
                         processed[param_name] = value
-                        logger.debug(f"Passed through booking param: {param_name}")
+                        logger.debug(f"Passed through flow param: {param_name} for {tool.operation_id}")
                         continue
 
-                    # FIX v13.4: Special handling for AddMileage params
-                    # VehicleId comes from user_context.vehicle.id, not context injection
-                    if tool.operation_id == "post_AddMileage" and param_name in {
-                        "VehicleId", "Value", "Comment", "Time"
-                    }:
-                        processed[param_name] = value
-                        logger.debug(f"Passed through mileage param: {param_name}")
-                        continue
-
-                    # FIX v13.5: Special handling for AddCase params
-                    # These come from flow_handler, not standard param resolution
-                    if tool.operation_id == "post_AddCase" and param_name in {
-                        "User", "Subject", "Message"
-                    }:
-                        processed[param_name] = value
-                        logger.debug(f"Passed through case param: {param_name}")
-                        continue
-
-                    # FIX v13.2: Log at debug level, not warning, because
                     # some params like personId are intentionally added by
                     # tool_executor AFTER this processing step
                     logger.debug(
@@ -500,6 +522,13 @@ class ParameterManager:
                 )
                 validated[param_name] = casted
             except (ValueError, TypeError) as e:
+                err = ConversationError(
+                    ErrorCode.PARAMETER_INVALID,
+                    f"Parameter '{param_name}' has invalid value: {e}",
+                    metadata={"param": param_name, "expected_type": param_def.param_type},
+                    cause=e,
+                )
+                logger.warning(str(err))
                 warnings.append(
                     f"Type casting failed for {param_name}: {e}"
                 )
@@ -522,7 +551,10 @@ class ParameterManager:
             if isinstance(value, int):
                 return value
             if isinstance(value, str):
-                # Handle "100.0" -> 100
+                # Strip non-numeric suffixes: "45000 km" -> "45000", "100.0" -> 100
+                cleaned = re.sub(r'[^\d.\-]', '', value)
+                if cleaned:
+                    return int(float(cleaned))
                 return int(float(value))
             return int(value)
 
@@ -569,30 +601,100 @@ class ParameterManager:
 
         return value
 
-    def _parse_datetime(self, value: Any) -> str:
-        """Parse datetime to ISO 8601 format."""
+    def _parse_datetime(self, value: Any, timezone_offset: str = "+01:00") -> str:
+        """
+        Parse datetime to ISO 8601 format WITH TIMEZONE.
+
+        - Handles Croatian natural language dates (sutra, danas, prekosutra)
+        - Adds timezone offset to prevent UTC/CET confusion
+        - Default timezone is CET (+01:00) for Croatian users
+
+        Args:
+            value: DateTime value (string, datetime object, or natural language)
+            timezone_offset: Timezone offset string (default: "+01:00" for CET)
+
+        Returns:
+            ISO 8601 datetime string with timezone
+        """
+        from datetime import timedelta
+
         if isinstance(value, datetime):
+            # Add timezone if missing
+            if value.tzinfo is None:
+                return value.isoformat() + timezone_offset
             return value.isoformat()
 
         if isinstance(value, str):
-            # Already ISO format
-            if "T" in value and len(value) >= 19:
-                return value
+            value_lower = value.lower().strip()
 
-            # Try common formats
+            # STEP 1: Handle Croatian natural language dates
+            today = datetime.now()
+            time_part = None
+
+            # Extract time if present (e.g., "sutra u 9:00" or "sutra 9h")
+            # Require separator or suffix to avoid matching bare numbers
+            time_match = re.search(r'(\d{1,2})[:\.](\d{1,2})|\b(\d{1,2})\s*(h|sati)\b', value_lower)
+            if time_match:
+                if time_match.group(1) is not None:
+                    hour = int(time_match.group(1))
+                    minute = int(time_match.group(2))
+                else:
+                    hour = int(time_match.group(3))
+                    minute = 0
+                # Validate hour/minute ranges
+                if 0 <= hour <= 23 and 0 <= minute <= 59:
+                    time_part = (hour, minute)
+
+            # Parse Croatian date words
+            if "sutra" in value_lower:
+                base_date = today + timedelta(days=1)
+            elif "prekosutra" in value_lower:
+                base_date = today + timedelta(days=2)
+            elif "danas" in value_lower:
+                base_date = today
+            elif "jučer" in value_lower or "jucer" in value_lower:
+                base_date = today - timedelta(days=1)
+            else:
+                base_date = None
+
+            # If we parsed a Croatian date word
+            if base_date is not None:
+                if time_part:
+                    hour, minute = time_part
+                    dt = base_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                else:
+                    # Default to 9:00 AM if no time specified
+                    dt = base_date.replace(hour=9, minute=0, second=0, microsecond=0)
+
+                logger.debug(f"Parsed Croatian date: '{value}' -> {dt.isoformat()}{timezone_offset}")
+                return dt.isoformat() + timezone_offset
+
+            # STEP 2: Already ISO format - ensure timezone
+            if "T" in value and len(value) >= 19:
+                # Check if already has timezone
+                if "+" in value[-6:] or "Z" in value:
+                    return value
+                return value + timezone_offset
+
+            # STEP 3: Try common formats
             formats = [
                 "%Y-%m-%d %H:%M:%S",
                 "%Y-%m-%d %H:%M",
                 "%d.%m.%Y %H:%M",
+                "%d.%m.%Y",
                 "%Y-%m-%d"
             ]
 
             for fmt in formats:
                 try:
                     dt = datetime.strptime(value, fmt)
-                    return dt.isoformat()
+                    return dt.isoformat() + timezone_offset
                 except ValueError:
                     continue
+
+            # Fallback: if value looks like a datetime (contains "T"), add timezone
+            if "T" in value and "+" not in value and "Z" not in value:
+                return value + timezone_offset
 
         return str(value)
 
@@ -628,19 +730,7 @@ class ParameterManager:
         """Check for missing required parameters."""
         missing = []
 
-        # FIX v13.3: Skip params with incorrect context_key/dependency_source
-        # These have incorrect metadata in Swagger definitions
-        # - VehicleId comes from user selection or user_context.vehicle.id, not person_id
-        # - EntryType/AssigneeType will be injected by executor
-        skip_params = set()
-        if tool.operation_id == "post_VehicleCalendar":
-            skip_params = {"VehicleId", "EntryType", "AssigneeType"}
-        elif tool.operation_id == "post_AddMileage":
-            # VehicleId comes from llm_params (passed from flow/executor), not context
-            skip_params = {"VehicleId"}
-        elif tool.operation_id == "post_AddCase":
-            # All params come from flow, not context injection
-            skip_params = {"User", "Subject", "Message"}
+        skip_params = TOOL_SKIP_CONTEXT_INJECTION.get(tool.operation_id, set())
 
         for param_name in tool.required_params:
             if param_name in skip_params:
@@ -783,45 +873,49 @@ class ParameterManager:
         Returns:
             (path, query_params, body)
         """
-        query_params = {}
-        body_params = {}
-        path = tool.path
+        with trace_span(_tracer, "parameter_manager.prepare_request", {
+            "tool.operation_id": tool.operation_id,
+            "tool.method": tool.method,
+        }):
+            query_params = {}
+            body_params = {}
+            path = tool.path
 
-        for param_name, value in params.items():
-            if value is None:
-                continue
+            for param_name, value in params.items():
+                if value is None:
+                    continue
 
-            param_def = tool.parameters.get(param_name)
-            if not param_def:
-                # Unknown param - add to body by default
-                body_params[param_name] = value
-                continue
+                param_def = tool.parameters.get(param_name)
+                if not param_def:
+                    # Unknown param - add to body by default
+                    body_params[param_name] = value
+                    continue
 
-            location = param_def.location
+                location = param_def.location
 
-            if location == "path":
-                # Substitute in path template
-                path = path.replace(f"{{{param_name}}}", str(value))
-                path = path.replace(f"{{{{{param_name}}}}}", str(value))
-            elif location == "query":
-                query_params[param_name] = value
-            elif location == "header":
-                # Headers handled separately in executor
-                pass
-            else:  # body
-                body_params[param_name] = value
+                if location == "path":
+                    # Substitute in path template
+                    path = path.replace(f"{{{param_name}}}", str(value))
+                    path = path.replace(f"{{{{{param_name}}}}}", str(value))
+                elif location == "query":
+                    query_params[param_name] = value
+                elif location == "header":
+                    # Headers handled separately in executor
+                    pass
+                else:  # body
+                    body_params[param_name] = value
 
-        # For GET/DELETE: all params go to query
-        if tool.method in ("GET", "DELETE"):
+            # For GET/DELETE: all params go to query
+            if tool.method in ("GET", "DELETE"):
+                return (
+                    path,
+                    params if params else None,
+                    None
+                )
+
+            # For POST/PUT/PATCH: separate query and body
             return (
                 path,
-                params if params else None,
-                None
+                query_params if query_params else None,
+                body_params if body_params else None
             )
-
-        # For POST/PUT/PATCH: separate query and body
-        return (
-            path,
-            query_params if query_params else None,
-            body_params if body_params else None
-        )

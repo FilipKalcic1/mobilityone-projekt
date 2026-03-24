@@ -1,6 +1,5 @@
 """
 Error Learning Service - Self-Correction Engine
-Version: 1.0
 
 KRITIČNA KOMPONENTA za robustan sustav.
 
@@ -17,20 +16,19 @@ Primjer:
 
 import logging
 import json
-import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field, asdict
-from collections import defaultdict
 
+from services.errors import InfrastructureError, ErrorCode
 from services.gdpr_masking import GDPRMaskingService, get_masking_service
-
+from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("error_learning")
 
 # Cache file path for JSON persistence
 ERROR_LEARNING_CACHE_FILE = Path.cwd() / ".cache" / "error_learning.json"
-
 
 @dataclass
 class ErrorPattern:
@@ -41,9 +39,8 @@ class ErrorPattern:
     context: Dict[str, Any]
     correction: Optional[str] = None  # What fixed it
     occurrence_count: int = 1
-    last_seen: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    last_seen: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved: bool = False
-
 
 @dataclass
 class HallucinationReport:
@@ -58,18 +55,17 @@ class HallucinationReport:
              Bot odgovara "5000 EUR" ali je zapravo 3000 EUR.
     """
     timestamp: str
-    user_query: str  # Što je korisnik pitao
-    bot_response: str  # Što je bot odgovorio (halucinacija)
-    user_feedback: str  # "krivo" ili detaljni feedback
-    retrieved_chunks: List[str]  # RAG chunk ID-evi korišteni
-    model: str  # Koji model je producirao odgovor
+    user_query: str  # What the user asked
+    bot_response: str  # Bot response (hallucination)
+    user_feedback: str  # "krivo" or detailed feedback
+    retrieved_chunks: List[str]  # RAG chunk IDs used
+    model: str  # Model that produced the response
     api_raw_response: Optional[Dict[str, Any]] = None  # Sirovi API response
     conversation_id: Optional[str] = None
     tenant_id: Optional[str] = None
     reviewed: bool = False  # Za manualni pregled
     correction: Optional[str] = None  # Ljudska korekcija
     category: Optional[str] = None  # "wrong_data", "outdated", "misunderstood"
-
 
 @dataclass
 class CorrectionRule:
@@ -81,7 +77,6 @@ class CorrectionRule:
     confidence: float  # 0.0 to 1.0
     success_count: int = 0
     failure_count: int = 0
-
 
 class ErrorLearningService:
     """
@@ -151,6 +146,11 @@ class ErrorLearningService:
         # Hallucination reports - in-memory cache (DB is source of truth)
         self._hallucination_reports: List[HallucinationReport] = []
 
+        # Memory caps — prevents unbounded growth on long-lived pods
+        self._MAX_ERROR_PATTERNS = 500
+        self._MAX_LEARNED_RULES = 100
+        self._MAX_HALLUCINATION_REPORTS = 200
+
         # Statistics
         self._total_errors = 0
         self._corrected_errors = 0
@@ -201,34 +201,6 @@ class ErrorLearningService:
             )
         return result.masked_text
 
-    async def record_model_interaction(
-        self,
-        model_version: str,
-        latency_ms: int,
-        success: bool,
-        error_type: str = None,
-        confidence_score: float = None,
-        tools_called: List[str] = None,
-        tenant_id: str = None
-    ) -> None:
-        """
-        Record successful model interaction for drift analysis.
-
-        Call this after every LLM API call to build baseline.
-        Feeds into drift detection system.
-        """
-        if self._drift_detector:
-            await self._drift_detector.record_interaction(
-                model_version=model_version,
-                latency_ms=latency_ms,
-                success=success,
-                error_type=error_type,
-                confidence_score=confidence_score,
-                tools_called=tools_called,
-                hallucination_reported=False,
-                tenant_id=tenant_id
-            )
-
     async def record_error(
         self,
         error_code: str,
@@ -253,56 +225,71 @@ class ErrorLearningService:
             http_status: HTTP status code (for False Positive detection)
             response_data: Raw API response (for False Positive detection)
         """
-        # =====================================================================
-        # FALSE POSITIVE ZAŠTITA
-        # 200 + prazan odgovor = "Data Not Found", NE greška modela
-        # Primjer: GET /Persons?Filter=Phone(=)099... vraća [] jer osoba ne postoji
-        # =====================================================================
-        if self._is_false_positive(http_status, response_data, error_code):
-            self._false_positives_skipped += 1
-            logger.debug(
-                f"⏭️ False positive skipped: {operation_id} "
-                f"(HTTP {http_status}, empty response is valid)"
+        with trace_span(_tracer, "error_learning.record_error", {"error_code": error_code, "operation_id": operation_id}) as span:
+            # ---
+            # FALSE POSITIVE PROTECTION
+            # 200 + empty response = "Data Not Found", NOT a model error
+            # Example: GET /Persons?Filter=Phone(=)099... returns [] because person doesn't exist
+            # ---
+            if self._is_false_positive(http_status, response_data, error_code):
+                self._false_positives_skipped += 1
+                logger.debug(
+                    f"⏭️ False positive skipped: {operation_id} "
+                    f"(HTTP {http_status}, empty response is valid)"
+                )
+                span.set_attribute("result.false_positive", True)
+                return
+
+            self._total_errors += 1
+
+            # Create pattern key
+            pattern_key = f"{error_code}:{operation_id}"
+
+            if pattern_key in self._error_patterns:
+                # Update existing pattern
+                pattern = self._error_patterns[pattern_key]
+                pattern.occurrence_count += 1
+                pattern.last_seen = datetime.now(timezone.utc).isoformat()
+                if correction:
+                    pattern.correction = correction
+                    pattern.resolved = True
+            else:
+                # New pattern
+                pattern = ErrorPattern(
+                    error_code=error_code,
+                    operation_id=operation_id,
+                    error_message=error_message,
+                    context=self._sanitize_context(context),
+                    correction=correction,
+                    resolved=was_corrected
+                )
+                self._error_patterns[pattern_key] = pattern
+
+            # Evict oldest unresolved patterns if over cap
+            if len(self._error_patterns) > self._MAX_ERROR_PATTERNS:
+                unresolved = sorted(
+                    ((k, p) for k, p in self._error_patterns.items() if not p.resolved),
+                    key=lambda x: x[1].occurrence_count
+                )
+                for k, _ in unresolved[:len(self._error_patterns) - self._MAX_ERROR_PATTERNS]:
+                    del self._error_patterns[k]
+
+            # Log for analysis
+            logger.info(
+                f"📊 Error recorded: {pattern_key} "
+                f"(count={pattern.occurrence_count}, resolved={pattern.resolved})"
             )
-            return
 
-        self._total_errors += 1
+            span.set_attribute("result.pattern_key", pattern_key)
+            span.set_attribute("result.occurrence_count", pattern.occurrence_count)
+            span.set_attribute("result.resolved", pattern.resolved)
 
-        # Create pattern key
-        pattern_key = f"{error_code}:{operation_id}"
+            # Persist to Redis if available
+            if self.redis:
+                await self._persist_pattern(pattern_key, pattern)
 
-        if pattern_key in self._error_patterns:
-            # Update existing pattern
-            pattern = self._error_patterns[pattern_key]
-            pattern.occurrence_count += 1
-            pattern.last_seen = datetime.utcnow().isoformat()
-            if correction:
-                pattern.correction = correction
-                pattern.resolved = True
-        else:
-            # New pattern
-            pattern = ErrorPattern(
-                error_code=error_code,
-                operation_id=operation_id,
-                error_message=error_message,
-                context=self._sanitize_context(context),
-                correction=correction,
-                resolved=was_corrected
-            )
-            self._error_patterns[pattern_key] = pattern
-
-        # Log for analysis
-        logger.info(
-            f"📊 Error recorded: {pattern_key} "
-            f"(count={pattern.occurrence_count}, resolved={pattern.resolved})"
-        )
-
-        # Persist to Redis if available
-        if self.redis:
-            await self._persist_pattern(pattern_key, pattern)
-
-        # Check for new learnable patterns
-        await self._analyze_patterns()
+            # Check for new learnable patterns
+            await self._analyze_patterns()
 
     async def suggest_correction(
         self,
@@ -444,28 +431,6 @@ class ErrorLearningService:
                 )
                 break
 
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get learning statistics including hallucination data."""
-        unreviewed_hallucinations = sum(
-            1 for r in self._hallucination_reports if not r.reviewed
-        )
-        return {
-            "total_errors": self._total_errors,
-            "corrected_errors": self._corrected_errors,
-            "correction_rate": (
-                self._corrected_errors / self._total_errors
-                if self._total_errors > 0 else 0
-            ),
-            "pattern_count": len(self._error_patterns),
-            "known_rules": len(self._correction_rules),
-            "learned_rules": len(self._learned_rules),
-            "pattern_matches": self._pattern_matches,
-            # NEW: Hallucination & False Positive stats
-            "hallucinations_reported": self._hallucinations_reported,
-            "hallucinations_pending_review": unreviewed_hallucinations,
-            "false_positives_skipped": self._false_positives_skipped
-        }
-
     def _rule_matches(
         self,
         rule: CorrectionRule,
@@ -505,7 +470,8 @@ class ErrorLearningService:
                 json.dumps(asdict(pattern))
             )
         except Exception as e:
-            logger.warning(f"Failed to persist error pattern: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to persist error pattern: {e}")
+            logger.warning(str(err))
 
     async def _analyze_patterns(self) -> None:
         """
@@ -540,29 +506,19 @@ class ErrorLearningService:
                 )
                 self._learned_rules.append(new_rule)
 
+                # Cap learned rules: drop lowest-confidence if over limit
+                if len(self._learned_rules) > self._MAX_LEARNED_RULES:
+                    self._learned_rules.sort(key=lambda r: r.confidence, reverse=True)
+                    self._learned_rules = self._learned_rules[:self._MAX_LEARNED_RULES]
+
                 logger.info(
                     f"🎓 Learned new rule: {pattern.error_code} → "
                     f"{pattern.correction} (from {pattern.occurrence_count} occurrences)"
                 )
 
-    async def load_from_redis(self) -> None:
-        """Load persisted patterns from Redis."""
-        if not self.redis:
-            return
-
-        try:
-            patterns = await self.redis.hgetall("error_learning:patterns")
-            for key, value in patterns.items():
-                data = json.loads(value)
-                self._error_patterns[key] = ErrorPattern(**data)
-
-            logger.info(f"Loaded {len(self._error_patterns)} error patterns from Redis")
-        except Exception as e:
-            logger.warning(f"Failed to load error patterns: {e}")
-
-    # =========================================================================
+    # ---
     # FALSE POSITIVE DETEKCIJA
-    # =========================================================================
+    # ---
 
     def _is_false_positive(
         self,
@@ -580,15 +536,15 @@ class ErrorLearningService:
 
         NE uči iz ovoga jer model je radio ispravno!
         """
-        # Ako nema HTTP statusa, ne možemo odlučiti
+        # Without HTTP status, we can't determine the outcome
         if http_status is None:
             return False
 
-        # Samo 2xx statusni kodovi mogu biti false positives
+        # Only 2xx status codes can be false positives
         if not (200 <= http_status < 300):
             return False
 
-        # Prazan odgovor na uspješan request = Data Not Found, ne greška
+        # Empty response on successful request = Data Not Found, not an error
         if response_data is None:
             return True
 
@@ -603,9 +559,9 @@ class ErrorLearningService:
 
         return False
 
-    # =========================================================================
+    # ---
     # HALLUCINATION REPORTING ("krivo" feedback)
-    # =========================================================================
+    # ---
 
     async def record_hallucination(
         self,
@@ -663,11 +619,12 @@ class ErrorLearningService:
                 report_id = str(db_report.id)
                 logger.info(f"Hallucination saved to DB: {report_id} (PII masked)")
             except Exception as e:
-                logger.error(f"Failed to save hallucination to DB: {e}")
+                err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to save hallucination to DB: {e}")
+                logger.error(str(err))
 
         # 2. Also keep in memory cache (masked)
         report = HallucinationReport(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             user_query=masked_query,
             bot_response=masked_response,
             user_feedback=masked_feedback,
@@ -680,14 +637,18 @@ class ErrorLearningService:
         )
         self._hallucination_reports.append(report)
 
+        # Cap in-memory cache: DB is source of truth, keep only recent entries
+        if len(self._hallucination_reports) > self._MAX_HALLUCINATION_REPORTS:
+            self._hallucination_reports = self._hallucination_reports[-self._MAX_HALLUCINATION_REPORTS:]
+
         # 3. Persist to Redis if available (cache)
         if self.redis:
             await self._persist_hallucination(report)
 
-        # Log for monitoring
+        # Log for monitoring (use masked versions — GDPR Article 25)
         logger.warning(
-            f"Hallucination reported: query='{user_query[:50]}...' "
-            f"feedback='{user_feedback}' conversation={conversation_id}"
+            f"Hallucination reported: query='{masked_query[:50]}...' "
+            f"feedback='{masked_feedback}' conversation={conversation_id}"
         )
 
         # Send to drift detector (closes the feedback loop)
@@ -700,7 +661,7 @@ class ErrorLearningService:
                 tenant_id=tenant_id
             )
 
-        # Generiraj follow-up pitanje za više konteksta
+        # Generate follow-up question for more context
         follow_up = self._generate_hallucination_followup(user_feedback, bot_response)
 
         return {
@@ -720,14 +681,14 @@ class ErrorLearningService:
         Umjesto da bot šuti, pitamo što je točno bilo pogrešno.
         To nam daje "zlato" za fine-tuning i RAG poboljšanja.
         """
-        # Ako je feedback kratak ("krivo", "ne"), pitaj za detalje
+        # If feedback is short ("krivo", "ne"), ask for details
         if len(user_feedback.strip()) < 20:
             return (
                 "Zabilježio sam grešku i proslijedio je timu na analizu. "
                 "Možete li mi reći što je točno bilo pogrešno kako bih brže naučio?"
             )
 
-        # Ako je feedback detaljniji, zahvali i potvrdi
+        # If feedback is more detailed, thank and confirm
         return (
             "Hvala na povratnoj informaciji! Zabilježio sam detalje i "
             "proslijedio ih timu. Ispričavam se za neugodnost."
@@ -746,149 +707,12 @@ class ErrorLearningService:
                 json.dumps(asdict(report), default=str)
             )
         except Exception as e:
-            logger.warning(f"Failed to persist hallucination report: {e}")
+            err = InfrastructureError(ErrorCode.REDIS_UNAVAILABLE, f"Failed to persist hallucination report: {e}")
+            logger.warning(str(err))
 
-    # =========================================================================
-    # LLM SELF-HEALING (samo za 400 Bad Request)
-    # =========================================================================
-
-    async def try_self_heal(
-        self,
-        error_code: str,
-        operation_id: str,
-        error_message: str,
-        original_params: Dict[str, Any],
-        llm_client: Optional[Any] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Pokušaj self-healing za greške.
-
-        Strategija (optimizacija troškova):
-        1. Prvo probaj PRAVILA (Zero-cost) - KNOWN_CORRECTIONS
-        2. Ako pravila ne pomažu I greška je 400, koristi LLM
-
-        Args:
-            error_code: Error code (npr. "400", "405")
-            operation_id: Tool koji je failao
-            error_message: Poruka greške
-            original_params: Originalni parametri
-            llm_client: Optional LLM client za self-healing (manji model)
-
-        Returns:
-            Ispravljeni parametri ili None
-        """
-        # ==== KORAK 1: Probaj pravila (besplatno) ====
-        correction = await self.suggest_correction(
-            error_code=error_code,
-            operation_id=operation_id,
-            error_message=error_message,
-            current_params=original_params
-        )
-
-        if correction:
-            logger.info(
-                f"✅ Self-heal via RULE: {correction['type']} "
-                f"(confidence={correction.get('confidence', 0):.2f})"
-            )
-            return correction
-
-        # ==== KORAK 2: Za 405/403 - NE koristi LLM, riješi if-else ====
-        if error_code in ["405", "403"]:
-            logger.debug(f"⏭️ {error_code} nije za LLM - koristi if-else logiku")
-            return self._handle_non_llm_error(error_code, error_message, operation_id)
-
-        # ==== KORAK 3: Za 400 Bad Request - koristi LLM ako je dostupan ====
-        if error_code == "400" and llm_client:
-            logger.info("🤖 Trying LLM self-heal for 400 Bad Request...")
-            return await self._llm_self_heal(
-                error_message=error_message,
-                original_params=original_params,
-                llm_client=llm_client
-            )
-
-        return None
-
-    def _handle_non_llm_error(
-        self,
-        error_code: str,
-        error_message: str,
-        operation_id: str
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Handle errors that don't need LLM (403, 405, etc).
-
-        Klasična if-else logika - jeftinije od LLM poziva.
-        """
-        if error_code == "405":
-            # Method Not Allowed - vjerojatno POST umjesto GET
-            return {
-                "type": "method",
-                "action": {
-                    "hint": "Try GET instead of POST for retrieval operations",
-                    "suggested_method": "GET"
-                },
-                "confidence": 0.8
-            }
-
-        if error_code == "403":
-            # Forbidden - token/permission issue
-            return {
-                "type": "auth",
-                "action": {
-                    "hint": "Refresh token or check permissions",
-                    "needs_reauth": True
-                },
-                "confidence": 0.9
-            }
-
-        return None
-
-    async def _llm_self_heal(
-        self,
-        error_message: str,
-        original_params: Dict[str, Any],
-        llm_client: Any
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Koristi manji LLM model za popravak JSON/parametara.
-
-        NAPOMENA: Ovo je "skupa" operacija - koristi samo za 400 greške
-        gdje pravila ne pomažu.
-
-        Za produkciju koristi manji model (gpt-4o-mini, claude-haiku).
-        """
-        prompt = f"""Greška API poziva: {error_message}
-
-Originalni parametri:
-{json.dumps(original_params, indent=2, ensure_ascii=False)}
-
-Popravi parametre tako da odgovaraju očekivanom formatu.
-Vrati SAMO ispravljeni JSON objekt, bez objašnjenja.
-"""
-        try:
-            # Placeholder - u produkciji koristi stvarni LLM client
-            # response = await llm_client.generate(prompt, max_tokens=500)
-            # fixed_params = json.loads(response)
-
-            logger.info("LLM self-heal called (placeholder - implement with actual client)")
-            return None
-
-        except Exception as e:
-            logger.warning(f"LLM self-heal failed: {e}")
-            return None
-
-    def get_hallucination_stats(self) -> Dict[str, Any]:
-        """Get hallucination reporting statistics."""
-        unreviewed = sum(1 for r in self._hallucination_reports if not r.reviewed)
-        return {
-            "total_reported": self._hallucinations_reported,
-            "pending_review": unreviewed,
-            "false_positives_skipped": self._false_positives_skipped
-        }
-
-    # =========================================================================
+    # ---
     # JSON FILE PERSISTENCE (za analizu trendova)
-    # =========================================================================
+    # ---
 
     def save_to_file(self) -> None:
         """
@@ -905,7 +729,7 @@ Vrati SAMO ispravljeni JSON objekt, bez objašnjenja.
 
             data = {
                 "version": "2.0",
-                "saved_at": datetime.utcnow().isoformat(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
                 "patterns": [asdict(p) for p in self._error_patterns.values()],
                 "hallucinations": [asdict(h) for h in self._hallucination_reports],
                 "learned_rules": [
@@ -940,236 +764,3 @@ Vrati SAMO ispravljeni JSON objekt, bez objašnjenja.
 
         except Exception as e:
             logger.warning(f"Failed to save error learning state: {e}")
-
-    def load_from_file(self) -> bool:
-        """
-        Učitaj stanje iz JSON datoteke.
-
-        Returns:
-            True ako je učitavanje uspjelo
-        """
-        if not ERROR_LEARNING_CACHE_FILE.exists():
-            logger.debug("No error learning cache file found")
-            return False
-
-        try:
-            with open(ERROR_LEARNING_CACHE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Load patterns
-            for pattern_data in data.get("patterns", []):
-                pattern = ErrorPattern(**pattern_data)
-                key = f"{pattern.error_code}:{pattern.operation_id}"
-                self._error_patterns[key] = pattern
-
-            # Load hallucinations
-            for hal_data in data.get("hallucinations", []):
-                # Handle optional fields
-                hal_data.setdefault("api_raw_response", None)
-                hal_data.setdefault("conversation_id", None)
-                hal_data.setdefault("tenant_id", None)
-                hal_data.setdefault("reviewed", False)
-                hal_data.setdefault("correction", None)
-                hal_data.setdefault("category", None)
-                self._hallucination_reports.append(HallucinationReport(**hal_data))
-
-            # Load learned rules
-            for rule_data in data.get("learned_rules", []):
-                rule = CorrectionRule(
-                    trigger_pattern=rule_data["trigger_pattern"],
-                    trigger_operation=rule_data.get("trigger_operation"),
-                    correction_type=rule_data["correction_type"],
-                    correction_action=rule_data["correction_action"],
-                    confidence=rule_data.get("confidence", 0.6),
-                    success_count=rule_data.get("success_count", 0),
-                    failure_count=rule_data.get("failure_count", 0)
-                )
-                self._learned_rules.append(rule)
-
-            # Load statistics
-            stats = data.get("statistics", {})
-            self._total_errors = stats.get("total_errors", 0)
-            self._corrected_errors = stats.get("corrected_errors", 0)
-            self._pattern_matches = stats.get("pattern_matches", 0)
-            self._hallucinations_reported = stats.get("hallucinations_reported", 0)
-            self._false_positives_skipped = stats.get("false_positives_skipped", 0)
-
-            logger.info(
-                f"📂 Error learning state loaded: {len(self._error_patterns)} patterns, "
-                f"{len(self._hallucination_reports)} hallucinations, "
-                f"{len(self._learned_rules)} learned rules"
-            )
-            return True
-
-        except Exception as e:
-            logger.warning(f"Failed to load error learning state: {e}")
-            return False
-
-    # =========================================================================
-    # FEEDBACK LOOP CLOSURE
-    # =========================================================================
-
-    async def apply_correction_to_learning(
-        self,
-        user_query: str,
-        wrong_response: str,
-        correct_response: str,
-        category: str,
-        model: str
-    ) -> Dict[str, Any]:
-        """
-        Apply admin correction back to learning system.
-
-        This CLOSES THE FEEDBACK LOOP:
-        1. User reports "krivo"
-        2. Admin reviews and provides correction
-        3. Correction feeds back into learning
-        4. Future similar queries get better responses
-
-        Args:
-            user_query: Original user question
-            wrong_response: What the bot said (wrong)
-            correct_response: What the bot should have said
-            category: Error category (hallucination, outdated, etc.)
-            model: Model that made the error
-
-        Returns:
-            Dict with learning results
-        """
-        result = {
-            "correction_applied": True,
-            "pattern_created": False,
-            "rule_updated": False,
-            "ready_for_finetuning": True
-        }
-
-        # 1. Create error pattern from correction
-        pattern_key = f"correction:{category}:{hash(user_query[:50])}"
-
-        if pattern_key not in self._error_patterns:
-            pattern = ErrorPattern(
-                error_code=f"HALLUCINATION_{category.upper()}",
-                operation_id="llm_response",
-                error_message=f"Bot gave wrong answer: {wrong_response[:100]}",
-                context={
-                    "user_query": user_query,
-                    "wrong_response": wrong_response,
-                    "correct_response": correct_response,
-                    "model": model
-                },
-                correction=correct_response,
-                occurrence_count=1,
-                resolved=True
-            )
-            self._error_patterns[pattern_key] = pattern
-            result["pattern_created"] = True
-        else:
-            # Update existing pattern
-            self._error_patterns[pattern_key].occurrence_count += 1
-            self._error_patterns[pattern_key].correction = correct_response
-
-        # 2. Try to learn rule from this correction
-        await self._analyze_patterns()
-
-        # 3. Log for fine-tuning dataset
-        logger.info(
-            f"Feedback loop closed: query='{user_query[:30]}...' "
-            f"category={category} model={model}"
-        )
-
-        return result
-
-    async def get_training_data_export(
-        self,
-        format: str = "jsonl",
-        min_corrections: int = 1
-    ) -> List[Dict[str, Any]]:
-        """
-        Export corrected hallucinations for model fine-tuning.
-
-        Format compatible with OpenAI fine-tuning API.
-
-        Args:
-            format: Export format (jsonl, csv)
-            min_corrections: Minimum corrections needed to include
-
-        Returns:
-            List of training examples
-        """
-        training_data = []
-
-        # Get from database if available
-        if self.db:
-            try:
-                from services.hallucination_repository import HallucinationRepository
-                repo = HallucinationRepository(self.db)
-                exports = await repo.export_for_training(
-                    reviewed_only=True,
-                    with_correction_only=True
-                )
-
-                for ex in exports:
-                    training_data.append({
-                        "messages": [
-                            {"role": "user", "content": ex["instruction"]},
-                            {"role": "assistant", "content": ex["correct_output"]}
-                        ],
-                        "metadata": {
-                            "category": ex.get("category"),
-                            "original_model": ex.get("model"),
-                            "wrong_output": ex.get("wrong_output")
-                        }
-                    })
-
-            except Exception as e:
-                logger.error(f"Failed to export training data: {e}")
-
-        # Also include in-memory corrections
-        for pattern in self._error_patterns.values():
-            if pattern.resolved and pattern.correction:
-                ctx = pattern.context
-                if ctx.get("user_query") and ctx.get("correct_response"):
-                    training_data.append({
-                        "messages": [
-                            {"role": "user", "content": ctx["user_query"]},
-                            {"role": "assistant", "content": ctx["correct_response"]}
-                        ],
-                        "metadata": {
-                            "pattern_key": f"{pattern.error_code}:{pattern.operation_id}",
-                            "occurrences": pattern.occurrence_count
-                        }
-                    })
-
-        logger.info(f"Exported {len(training_data)} training examples")
-        return training_data
-
-    async def get_drift_status(self) -> Optional[Dict[str, Any]]:
-        """
-        Get current model drift status.
-
-        Returns:
-            Drift report or None if detector not connected
-        """
-        if self._drift_detector:
-            report = await self._drift_detector.check_drift()
-            return {
-                "has_drift": report.has_drift,
-                "severity": report.overall_severity,
-                "alerts": len(report.alerts),
-                "recommendations": report.recommendations
-            }
-        return None
-
-    # =========================================================================
-    # NAPOMENA O ADMIN FUNKCIJAMA
-    # =========================================================================
-    # Admin funkcije (get_hallucinations_for_review, mark_hallucination_reviewed)
-    # su NAMJERNO premještene u services/admin_review.py
-    #
-    # RAZLOG: Arhitektonska izolacija od LLM-a
-    # - Bot koristi ErrorLearningService za PISANJE
-    # - Admin koristi AdminReviewService za ČITANJE/REVIEW
-    # - Ove funkcije nikad ne smiju biti dostupne LLM-u
-    #
-    # Vidi: services/admin_review.py za AdminReviewService
-    # =========================================================================

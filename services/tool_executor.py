@@ -1,23 +1,28 @@
 """
 Tool Executor - Production-Ready Execution Engine
-Version: 2.0
 
 GATE 1: INVISIBLE INJECTION (Merge) - Auto-inject context params
 GATE 2: TYPE VALIDATION & CASTING - Strict type checking
 GATE 3: CIRCUIT BREAKER - Prevent cascading failures
+GATE 4: PARAM MERGING - get_merged_params from Registry (copy semantics)
 
 Features:
-- Domain-agnostic execution
+- Domain-agnostic execution (NO tool-specific if/else)
 - Parameter resolution from multiple sources
 - Circuit breaker protection
 - Detailed error feedback for AI
+- Fail-fast on missing tools
 
-NO business logic.
+PHASE 3: This is a DUMB HTTP CLIENT.
+- NO business logic here
+- NO if tool_name == "..."
+- All defaults come from ToolRegistry._HIDDEN_DEFAULTS
+- All params merged via registry.get_merged_params()
 """
 
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from services.api_gateway import APIGateway, HttpMethod, APIResponse
 from services.tool_contracts import (
@@ -29,7 +34,13 @@ from services.parameter_manager import ParameterManager, ParameterValidationErro
 from services.circuit_breaker import CircuitBreaker, CircuitOpenError
 from services.error_parser import ErrorParser
 from services.patterns import should_skip_person_id_injection
+from services.context import UserContextManager
+from services.filter_builder import FilterBuilder
+from services.api_capabilities import get_capability_registry, ParameterSupport
+from services.errors import BotError, ErrorCode
 
+if TYPE_CHECKING:
+    from services.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +60,8 @@ class ToolExecutor:
     def __init__(
         self,
         gateway: APIGateway,
-        circuit_breaker: Optional[CircuitBreaker] = None
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        registry: Optional["ToolRegistry"] = None
     ):
         """
         Initialize executor.
@@ -57,12 +69,14 @@ class ToolExecutor:
         Args:
             gateway: API Gateway for HTTP calls
             circuit_breaker: Optional circuit breaker
+            registry: Optional ToolRegistry for hidden defaults injection
         """
         self.gateway = gateway
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self.param_manager = ParameterManager()
+        self.registry = registry  # CJELINA 2: Used for inject_defaults
 
-        logger.info("ToolExecutor initialized (v2.0)")
+        logger.info("ToolExecutor initialized (v3.0 - PHASE 3 DUMB CLIENT)")
 
     async def execute(
         self,
@@ -84,7 +98,14 @@ class ToolExecutor:
         start_time = time.time()
         operation_id = tool.operation_id
 
-        logger.info(f"🔧 Executing: {operation_id}")
+        logger.info(f"Executing: {operation_id}")
+
+        # PHASE 3: Fail-fast if tool not in registry
+        if self.registry and not self.registry.get_tool(operation_id):
+            raise ValueError(
+                f"Tool '{operation_id}' not found in registry. "
+                f"Available tools: {len(self.registry.tools)}"
+            )
 
         try:
             # GATE 1 & 2: Parameter resolution and validation
@@ -96,7 +117,20 @@ class ToolExecutor:
 
             if warnings:
                 for warning in warnings:
-                    logger.warning(f"⚠️ {warning}")
+                    logger.warning(f"{warning}")
+
+            # PATH params like personIdOrEmail need to be in resolved_params for path substitution
+            # Use UserContextManager for validated access
+            ctx_manager = UserContextManager(execution_context.user_context)
+            person_id_already_injected = False
+            person_id = ctx_manager.person_id  # Returns None if missing or invalid UUID
+            if person_id:
+                for param_name, param_def in tool.parameters.items():
+                    if param_def.location == "path" and param_def.context_key == "person_id":
+                        if param_name not in resolved_params or not resolved_params.get(param_name):
+                            resolved_params[param_name] = person_id
+                            person_id_already_injected = True
+                            logger.info(f"PATH INJECT: {param_name}={person_id[:8]}... for {operation_id}")
 
             # Prepare request components
             path, query_params, body = self.param_manager.prepare_request(
@@ -104,16 +138,24 @@ class ToolExecutor:
                 params=resolved_params
             )
 
-            # FIX v13.2: INJECT PERSON_ID DIRECTLY INTO QUERY PARAMS
+            # Build and inject filter string for GET requests
+            if tool.method == "GET":
+                filter_string = FilterBuilder.build_filter_string(tool, resolved_params)
+                if filter_string:
+                    if query_params is None:
+                        query_params = {}
+                    query_params["Filter"] = filter_string
+                    logger.info(f"Built filter string: {filter_string}")
+
             # This bypasses parameter_manager validation which was filtering out
             # personId because it's not in Swagger definition for most GET tools.
             # The injection happens HERE, not in message_engine, so it goes
             # directly to the API call without being filtered.
-            if tool.method == "GET":
-                person_id = execution_context.user_context.get("person_id")
+            if tool.method == "GET" and not person_id_already_injected:
+                # Reuse ctx_manager from above (validated access)
+                person_id = ctx_manager.person_id
                 if person_id:
                     # Use APICapabilityRegistry to check if tool supports PersonId
-                    from services.api_capabilities import get_capability_registry, ParameterSupport
                     capability_registry = get_capability_registry()
 
                     should_inject = True
@@ -154,18 +196,19 @@ class ToolExecutor:
                                     )
                                     break
 
-            # FIX v13.3: Inject EntryType and AssigneeType for VehicleCalendar booking
-            # These params have incorrect context_key in Swagger metadata
-            if tool.operation_id == "post_VehicleCalendar" and body:
-                if "EntryType" not in body:
-                    body["EntryType"] = 0  # BOOKING
-                    logger.debug("Injected EntryType=0 (BOOKING) for VehicleCalendar")
-                if "AssigneeType" not in body:
-                    body["AssigneeType"] = 1  # PERSON
-                    logger.debug("Injected AssigneeType=1 (PERSON) for VehicleCalendar")
+            # GATE 4: PHASE 3 - Merge hidden defaults from Registry (copy semantics)
+            # All business logic (EntryType, AssigneeType, etc.) is defined in
+            # ToolRegistry._HIDDEN_DEFAULTS, not here. Executor is "dumb".
+            if self.registry:
+                # Use get_merged_params for body (POST/PUT/PATCH)
+                if body:
+                    body = self.registry.get_merged_params(operation_id, body)
+                # Also merge for query params if needed
+                if query_params:
+                    query_params = self.registry.get_merged_params(operation_id, query_params)
 
             # Build full URL using STRICT Master Prompt v3.1 formula
-            full_url = self._build_url(tool)
+            full_url = self._build_url(tool, resolved_path=path)
 
             # VALIDATE: HTTP Method and URL construction
             self._validate_http_request(
@@ -193,7 +236,7 @@ class ToolExecutor:
                 query_params=query_params,
                 body=body,
                 headers=headers,
-                tenant_id=execution_context.user_context.get("tenant_id")
+                tenant_id=ctx_manager.tenant_id  # Use ctx_manager from above
             )
 
             # Process response
@@ -207,11 +250,9 @@ class ToolExecutor:
                     operation_id=operation_id
                 )
 
-                # FIX v13.2: Learn from "Unknown filter field" errors
                 # This teaches the system to stop injecting personId for tools that don't support it
                 error_msg = response.error_message or ""
                 if "unknown filter field" in error_msg.lower():
-                    from services.api_capabilities import get_capability_registry
                     cap_registry = get_capability_registry()
                     if cap_registry:
                         cap_registry.record_failure(
@@ -259,7 +300,7 @@ class ToolExecutor:
                 error_code="PARAMETER_VALIDATION_ERROR",
                 error_message=str(e),
                 ai_feedback=ai_feedback,
-                missing_params=e.missing_params,  # KRITIČNO: Proslijedi missing_params za auto-chaining
+                missing_params=e.missing_params,  # Pass missing_params for auto-chaining
                 execution_time_ms=int((time.time() - start_time) * 1000)
             )
 
@@ -276,7 +317,8 @@ class ToolExecutor:
             )
 
         except Exception as e:
-            logger.error(f"Execution error: {e}", exc_info=True)
+            err = BotError(ErrorCode.TOOL_EXECUTION_FAILED, f"Tool '{operation_id}' execution failed: {e}", cause=e)
+            logger.error(str(err), exc_info=True)
 
             ai_feedback = (
                 f"Neočekivana greška pri izvršavanju '{operation_id}': {str(e)}. "
@@ -363,7 +405,7 @@ class ToolExecutor:
             f"(query={bool(query_params)}, body={bool(body)})"
         )
 
-    def _build_url(self, tool: "UnifiedToolDefinition") -> str:
+    def _build_url(self, tool: "UnifiedToolDefinition", resolved_path: str = None) -> str:
         """
         Build full URL using STRICT MASTER PROMPT v3.1 formula.
 
@@ -375,15 +417,16 @@ class ToolExecutor:
 
         Args:
             tool: UnifiedToolDefinition with swagger_name, service_url, path
+            resolved_path: Optional path with PATH parameters already substituted
 
         Returns:
             Relative URL string (APIGateway will prepend base_url)
         """
-        # MASTER PROMPT v3.1: Strict URL construction
+        # Strict URL construction
         # Formula: base_url + "/" + swagger_name + "/" + path.lstrip('/')
 
         swagger_name = tool.swagger_name
-        path = tool.path
+        path = resolved_path if resolved_path else tool.path
         service_url = tool.service_url
 
         # Case 1: If path is absolute (complete URL), use it directly
@@ -417,7 +460,7 @@ class ToolExecutor:
             return url
 
         # Case 4: No swagger_name, no service_url - use path only
-        logger.warning(f"⚠️ No swagger_name or service_url for {tool.operation_id}, using path only")
+        logger.warning(f"No swagger_name or service_url for {tool.operation_id}, using path only")
         return path
 
     def _build_headers(

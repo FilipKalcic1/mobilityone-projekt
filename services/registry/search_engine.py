@@ -1,6 +1,5 @@
 """
 Search Engine - Semantic and keyword search for tool discovery.
-Version: 2.0 (With Category-Based Search)
 
 Single responsibility: Find relevant tools using embeddings, categories, and scoring.
 """
@@ -8,22 +7,35 @@ Single responsibility: Find relevant tools using embeddings, categories, and sco
 import json
 import logging
 import os
-import re
 from typing import Dict, List, Set, Tuple, Any, Optional
-
-from openai import AsyncAzureOpenAI
 
 from config import get_settings
 from services.tool_contracts import UnifiedToolDefinition, DependencyGraph
 from services.scoring_utils import cosine_similarity
-from services.patterns import (
-    READ_INTENT_PATTERNS,
-    MUTATION_INTENT_PATTERNS,
-    USER_SPECIFIC_PATTERNS,
-    USER_FILTER_PARAMS
+from services.tracing import get_tracer, trace_span
+# ML-based intent detection (replaces regex patterns)
+from services.intent_classifier import detect_action_intent, ActionIntent  # noqa: F401 - used by tests via patch
+from services.registry.search_filters import (
+    detect_intent as _detect_intent,
+    detect_categories as _detect_categories,
+    filter_by_method as _filter_by_method,
+    filter_by_categories as _filter_by_categories,
+    find_relevant_tools_filtered as _find_relevant_tools_filtered,
+)
+from services.registry.search_scorers import (
+    DISAMBIGUATION_CONFIG,
+    CATEGORY_CONFIG,
+    apply_method_disambiguation,
+    apply_user_specific_boosting,
+    apply_learned_pattern_boosting,
+    apply_evaluation_adjustment,
+    apply_category_boosting,
+    apply_documentation_boosting,
+    apply_example_query_boosting,
 )
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("search_engine")
 settings = get_settings()
 
 
@@ -70,38 +82,20 @@ class SearchEngine:
     - Handle fallback keyword search
     """
 
-    # Configuration for method disambiguation
-    DISAMBIGUATION_CONFIG = {
-        "read_intent_penalty_factor": 0.25,
-        "unclear_intent_penalty_factor": 0.10,
-        "delete_penalty_multiplier": 2.0,
-        "update_penalty_multiplier": 1.0,
-        "create_penalty_multiplier": 0.5,
-        "get_boost_on_read_intent": 0.05,
-    }
+    # Configuration dicts imported from search_scorers module
+    DISAMBIGUATION_CONFIG = DISAMBIGUATION_CONFIG
+    CATEGORY_CONFIG = CATEGORY_CONFIG
 
-    MAX_TOOLS_PER_RESPONSE = 12
+    MAX_TOOLS_PER_RESPONSE = 20  # Increased from 12 to give LLM more options
 
-    # Category matching configuration
-    CATEGORY_CONFIG = {
-        "category_boost": 0.12,        # Boost for tools in matching category
-        "keyword_match_boost": 0.08,   # Boost for keyword matches
-        "documentation_boost": 0.10,   # Boost when query matches tool documentation
-        "training_match_boost": 0.35,  # Boost when similar to training examples (increased from 0.15)
-    }
-
-    def __init__(self):
-        """Initialize search engine with OpenAI client and category data."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+    def __init__(self) -> None:
+        """Initialize search engine with shared OpenAI client and category data."""
+        from services.openai_client import get_embedding_client
+        self.openai = get_embedding_client()
 
         # Load category and documentation data
         self._tool_categories = _load_json_file("tool_categories.json")
         self._tool_documentation = _load_json_file("tool_documentation.json")
-        self._training_queries = _load_json_file("training_queries.json")
 
         # Build reverse lookup: tool_id -> category
         self._tool_to_category: Dict[str, str] = {}
@@ -120,20 +114,14 @@ class SearchEngine:
                 keywords.update(cat_data.get("typical_intents", []))
                 self._category_keywords[cat_name] = {k.lower() for k in keywords}
 
-            logger.info(f"📂 Loaded {len(self._tool_to_category)} tool→category mappings")
+            logger.info(f"Loaded {len(self._tool_to_category)} tool→category mappings")
         else:
             logger.warning("Tool categories not loaded - category boosting disabled")
 
         if self._tool_documentation:
-            logger.info(f"📄 Loaded documentation for {len(self._tool_documentation)} tools")
+            logger.info(f"Loaded documentation for {len(self._tool_documentation)} tools")
 
-        if self._training_queries:
-            # Support both "examples" (new) and "training_data" (legacy)
-            training_count = len(self._training_queries.get("examples",
-                                  self._training_queries.get("training_data", [])))
-            logger.info(f"🎯 Loaded {training_count} training examples")
-
-        logger.debug("SearchEngine initialized (v2.0 with categories)")
+        logger.debug("SearchEngine initialized (v4.0 - documentation only, no training_queries)")
 
     async def find_relevant_tools_with_scores(
         self,
@@ -148,24 +136,33 @@ class SearchEngine:
         prefer_retrieval: bool = False,
         prefer_mutation: bool = False
     ) -> List[Dict[str, Any]]:
-        """
-        Find relevant tools with similarity scores.
+        """Find relevant tools with similarity scores. Returns list of dicts with name, score, schema."""
+        with trace_span(_tracer, "search.find_tools", {
+            "query.preview": query[:50],
+            "top_k": top_k,
+            "threshold": threshold,
+            "tool_count": len(tools),
+        }):
+            return await self._find_relevant_inner(
+                query, tools, embeddings, dependency_graph,
+                retrieval_tools, mutation_tools, top_k, threshold,
+                prefer_retrieval, prefer_mutation
+            )
 
-        Args:
-            query: User query
-            tools: Dict of all tools
-            embeddings: Dict of embeddings by operation_id
-            dependency_graph: Dependency graph for chaining
-            retrieval_tools: Set of retrieval tool IDs
-            mutation_tools: Set of mutation tool IDs
-            top_k: Number of base tools to return
-            threshold: Minimum similarity threshold
-            prefer_retrieval: Only search retrieval tools
-            prefer_mutation: Only search mutation tools
-
-        Returns:
-            List of dicts with name, score, and schema
-        """
+    async def _find_relevant_inner(
+        self,
+        query: str,
+        tools: Dict[str, UnifiedToolDefinition],
+        embeddings: Dict[str, List[float]],
+        dependency_graph: Dict[str, DependencyGraph],
+        retrieval_tools: Set[str],
+        mutation_tools: Set[str],
+        top_k: int,
+        threshold: float,
+        prefer_retrieval: bool,
+        prefer_mutation: bool
+    ) -> List[Dict[str, Any]]:
+        """Inner implementation of find_relevant_tools_with_scores."""
         query_embedding = await self._get_query_embedding(query)
 
         if not query_embedding:
@@ -195,14 +192,24 @@ class SearchEngine:
             if similarity >= lenient_threshold:
                 scored.append((similarity, op_id))
 
-        # Apply scoring adjustments
-        scored = self._apply_method_disambiguation(query, scored, tools)
+        # Compute action intent once to avoid redundant ML inference calls
+        action_intent = detect_action_intent(query)
+
+        # Apply scoring adjustments (Rank Don't Filter architecture)
+        scored = self._apply_method_disambiguation(query, scored, tools, action_intent=action_intent)
         scored = self._apply_user_specific_boosting(query, scored, tools)
         scored = self._apply_category_boosting(query, scored, tools)
         scored = self._apply_documentation_boosting(query, scored)
+        scored = self._apply_example_query_boosting(query, scored)  # NEW: Match against example_queries_hr
+        scored = self._apply_learned_pattern_boosting(query, scored)  # NEW: Feedback learning integration
         scored = self._apply_evaluation_adjustment(scored)
 
         scored.sort(key=lambda x: x[0], reverse=True)
+
+        # INTENT-AWARE WILDCARD INJECTION
+        # Ensure tools matching detected intent are always considered by LLM
+        # This prevents training bias from excluding the correct HTTP method
+        scored = self._inject_intent_matching_tools(query, scored, tools, search_pool, embeddings)
 
         # Expansion search if needed
         if len(scored) < top_k and len(scored) > 0:
@@ -224,20 +231,25 @@ class SearchEngine:
         boosted_tools = self._apply_dependency_boosting(base_tools, dependency_graph)
         final_tools = boosted_tools[:self.MAX_TOOLS_PER_RESPONSE]
 
-        # Build result
+        # Build result with PILLAR 6: Origin Guide injection
         result = []
         scored_dict = {op_id: score for score, op_id in scored}
 
         for tool_id in final_tools:
             schema = tools[tool_id].to_openai_function()
             score = scored_dict.get(tool_id, 0.0)
+
+            # PILLAR 6: Inject origin guide into result
+            origin_guide = self._get_origin_guide(tool_id)
+
             result.append({
                 "name": tool_id,
                 "score": score,
-                "schema": schema
+                "schema": schema,
+                "origin_guide": origin_guide  # NEW: Parameter origin info
             })
 
-        logger.info(f"📦 Returning {len(result)} tools with scores")
+        logger.info(f"Returning {len(result)} tools with scores and origin guides")
         return result
 
     async def _get_query_embedding(self, query: str) -> Optional[List[float]]:
@@ -252,68 +264,140 @@ class SearchEngine:
             logger.warning(f"Query embedding error: {e}")
             return None
 
+    def detect_put_patch_ambiguity(
+        self,
+        scored: List[Tuple[float, str]],
+        tools: Dict[str, UnifiedToolDefinition],
+        score_threshold: float = 0.70,
+        score_diff_threshold: float = 0.10
+    ) -> Optional[Dict[str, Any]]:
+        """Detect if both PUT and PATCH for the same resource are highly ranked.
+        Returns dict with ambiguity info if detected, None otherwise."""
+        # Get top tools that are PUT or PATCH
+        put_tools = []
+        patch_tools = []
+
+        for score, op_id in scored[:10]:  # Check top 10
+            if score < score_threshold:
+                continue
+
+            tool = tools.get(op_id)
+            if not tool:
+                continue
+
+            if tool.method == "PUT" or "put_" in op_id.lower():
+                put_tools.append((score, op_id))
+            elif tool.method == "PATCH" or "patch_" in op_id.lower():
+                patch_tools.append((score, op_id))
+
+        if not put_tools or not patch_tools:
+            return None
+
+        # Check if they're for the same resource type
+        # Extract resource name from tool ID (e.g., "put_Vehicles_id" -> "Vehicles")
+        def extract_resource(op_id: str) -> str:
+            parts = op_id.replace("put_", "").replace("patch_", "").split("_")
+            return parts[0].lower() if parts else ""
+
+        for put_score, put_id in put_tools:
+            put_resource = extract_resource(put_id)
+            for patch_score, patch_id in patch_tools:
+                patch_resource = extract_resource(patch_id)
+
+                # Same resource with similar scores = ambiguous
+                if put_resource == patch_resource:
+                    if abs(put_score - patch_score) <= score_diff_threshold:
+                        logger.info(f"PUT/PATCH ambiguity detected: {put_id} vs {patch_id}")
+                        return {
+                            "ambiguous": True,
+                            "resource": put_resource.title(),
+                            "put_tool": put_id,
+                            "put_score": put_score,
+                            "patch_tool": patch_id,
+                            "patch_score": patch_score,
+                            "message": (
+                                "Želite li potpuno ažuriranje (PUT - zamjenjuje sve podatke) "
+                                "ili djelomično ažuriranje (PATCH - mijenja samo navedena polja)?"
+                            )
+                        }
+
+        return None
+
     def _apply_method_disambiguation(
         self,
         query: str,
         scored: List[Tuple[float, str]],
-        tools: Dict[str, UnifiedToolDefinition]
+        tools: Dict[str, UnifiedToolDefinition],
+        action_intent=None
     ) -> List[Tuple[float, str]]:
-        """Apply penalties/boosts based on detected intent."""
+        """Apply penalties/boosts based on detected intent using ML."""
+        return apply_method_disambiguation(query, scored, tools, action_intent=action_intent)
+
+    def _inject_intent_matching_tools(
+        self,
+        query: str,
+        scored: List[Tuple[float, str]],
+        tools: Dict[str, UnifiedToolDefinition],
+        search_pool: set,
+        embeddings: Dict[str, List[float]]
+    ) -> List[Tuple[float, str]]:
+        """INTENT-AWARE WILDCARD INJECTION: Ensures tools matching detected intent
+        are ALWAYS in candidate list, even without training examples.
+        The LLM (not embeddings) should make the final decision."""
         query_lower = query.lower().strip()
+        scored_tools = {op_id for _, op_id in scored}
 
-        # Use pre-compiled patterns for performance
-        from services.patterns import is_read_intent as check_read, is_mutation_intent as check_mutation
-        is_read_intent = check_read(query_lower)
-        is_mutation_intent = check_mutation(query_lower)
+        # Detect DELETE intent
+        delete_keywords = ["obriši", "obrisi", "delete", "ukloni", "makni", "izbriši", "izbrisi"]
+        is_delete_intent = any(kw in query_lower for kw in delete_keywords)
 
-        if is_mutation_intent:
-            return scored
+        # Detect CREATE/POST intent
+        create_keywords = ["dodaj", "kreiraj", "napravi", "novi", "nova", "prijavi", "unesi"]
+        is_create_intent = any(kw in query_lower for kw in create_keywords)
 
-        config = self.DISAMBIGUATION_CONFIG
-        penalty_factor = (
-            config["read_intent_penalty_factor"] if is_read_intent
-            else config["unclear_intent_penalty_factor"]
-        )
+        # Detect UPDATE intent
+        update_keywords = ["ažuriraj", "azuriraj", "promijeni", "izmijeni", "update", "edit"]
+        is_update_intent = any(kw in query_lower for kw in update_keywords)
 
-        if is_read_intent:
-            logger.info(f"🔍 Detected READ intent in: '{query}'")
+        injected = list(scored)  # Copy
+        injection_score = 0.50  # Minimum score to be considered
+        max_injections = 5  # Don't flood with wildcards
+        injections_count = 0
 
-        adjusted = []
-        for score, op_id in scored:
+        for op_id in search_pool:
+            if op_id in scored_tools:
+                continue  # Already in results
+            if injections_count >= max_injections:
+                break
+
             tool = tools.get(op_id)
             if not tool:
-                adjusted.append((score, op_id))
                 continue
 
-            op_id_lower = op_id.lower()
+            should_inject = False
 
-            if tool.method == "DELETE" or "delete" in op_id_lower:
-                penalty = penalty_factor * config["delete_penalty_multiplier"]
-                new_score = max(0, score - penalty)
-                adjusted.append((new_score, op_id))
+            # DELETE intent → inject delete_ tools
+            if is_delete_intent and (tool.method == "DELETE" or "delete" in op_id.lower()):
+                should_inject = True
 
-            elif tool.method in ("PUT", "PATCH"):
-                penalty = penalty_factor * config["update_penalty_multiplier"]
-                new_score = max(0, score - penalty)
-                adjusted.append((new_score, op_id))
+            # CREATE intent → inject post_ tools (but not search POSTs)
+            elif is_create_intent and tool.method == "POST":
+                is_search_post = any(x in op_id.lower() for x in ["search", "query", "filter", "find"])
+                if not is_search_post:
+                    should_inject = True
 
-            elif tool.method == "POST" and "get" not in op_id_lower:
-                is_search_post = any(x in op_id_lower for x in ["search", "query", "find", "filter"])
-                if is_search_post:
-                    adjusted.append((score, op_id))
-                else:
-                    penalty = penalty_factor * config["create_penalty_multiplier"]
-                    new_score = max(0, score - penalty)
-                    adjusted.append((new_score, op_id))
+            # UPDATE intent → inject put_/patch_ tools
+            elif is_update_intent and tool.method in ("PUT", "PATCH"):
+                should_inject = True
 
-            elif tool.method == "GET" and is_read_intent:
-                boost = config["get_boost_on_read_intent"]
-                adjusted.append((score + boost, op_id))
+            if should_inject:
+                injected.append((injection_score, op_id))
+                injections_count += 1
+                logger.info(f"WILDCARD INJECT: {op_id} (intent match, no training)")
 
-            else:
-                adjusted.append((score, op_id))
-
-        return adjusted
+        # Re-sort after injection
+        injected.sort(key=lambda x: x[0], reverse=True)
+        return injected
 
     def _apply_user_specific_boosting(
         self,
@@ -322,71 +406,22 @@ class SearchEngine:
         tools: Dict[str, UnifiedToolDefinition]
     ) -> List[Tuple[float, str]]:
         """Boost tools that support user-specific filtering."""
-        query_lower = query.lower().strip()
+        return apply_user_specific_boosting(query, scored, tools)
 
-        is_user_specific = any(
-            re.search(pattern, query_lower)
-            for pattern in USER_SPECIFIC_PATTERNS
-        )
-
-        if not is_user_specific:
-            return scored
-
-        logger.info(f"👤 Detected USER-SPECIFIC intent in: '{query}'")
-
-        boost_value = 0.15
-        penalty_value = 0.10
-        masterdata_boost = 0.25
-        calendar_penalty = 0.20
-
-        adjusted = []
-        for score, op_id in scored:
-            tool = tools.get(op_id)
-            if not tool:
-                adjusted.append((score, op_id))
-                continue
-
-            tool_params_lower = {p.lower() for p in tool.parameters.keys()}
-            has_user_filter = bool(tool_params_lower & USER_FILTER_PARAMS)
-            op_id_lower = op_id.lower()
-
-            if 'masterdata' in op_id_lower:
-                new_score = score + masterdata_boost + boost_value
-                adjusted.append((new_score, op_id))
-
-            elif 'calendar' in op_id_lower or 'equipment' in op_id_lower:
-                new_score = max(0, score - calendar_penalty)
-                adjusted.append((new_score, op_id))
-
-            elif has_user_filter:
-                new_score = score + boost_value
-                adjusted.append((new_score, op_id))
-
-            elif tool.method == "GET" and 'vehicle' in op_id_lower:
-                new_score = max(0, score - penalty_value)
-                adjusted.append((new_score, op_id))
-
-            else:
-                adjusted.append((score, op_id))
-
-        return adjusted
+    def _apply_learned_pattern_boosting(
+        self,
+        query: str,
+        scored: List[Tuple[float, str]]
+    ) -> List[Tuple[float, str]]:
+        """Apply learned boosts/penalties from feedback learning service."""
+        return apply_learned_pattern_boosting(query, scored)
 
     def _apply_evaluation_adjustment(
         self,
         scored: List[Tuple[float, str]]
     ) -> List[Tuple[float, str]]:
         """Apply performance-based adjustments."""
-        try:
-            from services.tool_evaluator import get_tool_evaluator
-            evaluator = get_tool_evaluator()
-
-            adjusted = []
-            for score, op_id in scored:
-                new_score = evaluator.apply_evaluation_adjustment(op_id, score)
-                adjusted.append((new_score, op_id))
-            return adjusted
-        except ImportError:
-            return scored
+        return apply_evaluation_adjustment(scored)
 
     def _apply_dependency_boosting(
         self,
@@ -404,7 +439,7 @@ class SearchEngine:
             for provider_id in dep_graph.provider_tools[:2]:
                 if provider_id not in result:
                     result.append(provider_id)
-                    logger.debug(f"🔗 Boosted {provider_id} for {tool_id}")
+                    logger.debug(f"Boosted {provider_id} for {tool_id}")
 
         return result
 
@@ -483,55 +518,7 @@ class SearchEngine:
         tools: Dict[str, UnifiedToolDefinition]
     ) -> List[Tuple[float, str]]:
         """Boost tools that belong to categories matching the query."""
-        if not self._tool_to_category or not self._category_keywords:
-            return scored
-
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-
-        # Find matching categories based on keywords
-        matching_categories: Set[str] = set()
-
-        for cat_name, keywords in self._category_keywords.items():
-            # Check for word overlap
-            if query_words & keywords:
-                matching_categories.add(cat_name)
-                continue
-
-            # Check for substring matches
-            for keyword in keywords:
-                if len(keyword) >= 4 and keyword in query_lower:
-                    matching_categories.add(cat_name)
-                    break
-
-        if matching_categories:
-            logger.info(f"📂 Query matches categories: {matching_categories}")
-
-        config = self.CATEGORY_CONFIG
-        category_boost = config["category_boost"]
-        keyword_boost = config["keyword_match_boost"]
-
-        adjusted = []
-        for score, op_id in scored:
-            tool_category = self._tool_to_category.get(op_id)
-
-            if tool_category and tool_category in matching_categories:
-                new_score = score + category_boost
-                adjusted.append((new_score, op_id))
-            else:
-                # Check for keyword matches in operation_id
-                op_lower = op_id.lower()
-                keyword_match = any(
-                    word in op_lower
-                    for word in query_words
-                    if len(word) >= 4
-                )
-                if keyword_match:
-                    adjusted.append((score + keyword_boost, op_id))
-                else:
-                    adjusted.append((score, op_id))
-
-        return adjusted
+        return apply_category_boosting(query, scored, tools, self._tool_to_category, self._category_keywords)
 
     def _apply_documentation_boosting(
         self,
@@ -539,77 +526,30 @@ class SearchEngine:
         scored: List[Tuple[float, str]]
     ) -> List[Tuple[float, str]]:
         """Boost tools whose documentation matches the query."""
-        if not self._tool_documentation:
-            return scored
+        return apply_documentation_boosting(query, scored, self._tool_documentation)
 
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-
-        config = self.CATEGORY_CONFIG
-        doc_boost = config["documentation_boost"]
-        training_boost = config["training_match_boost"]
-
-        # Check for training example matches
-        matched_tools_from_training: Set[str] = set()
-        if self._training_queries:
-            # Support both "examples" (new) and "training_data" (legacy)
-            training_data = self._training_queries.get("examples",
-                             self._training_queries.get("training_data", []))
-            for example in training_data:
-                example_query = example.get("query", "").lower()
-                # Simple word overlap matching
-                example_words = set(example_query.split())
-                overlap = len(query_words & example_words)
-                if overlap >= 2 or (overlap >= 1 and len(query_words) <= 3):
-                    matched_tools_from_training.add(example.get("primary_tool", ""))
-                    for alt in example.get("alternative_tools", []):
-                        matched_tools_from_training.add(alt)
-
-        if matched_tools_from_training:
-            logger.info(f"🎯 Training matches: {list(matched_tools_from_training)[:5]}")
-
-        adjusted = []
-        for score, op_id in scored:
-            boost = 0.0
-
-            # Check training example matches
-            if op_id in matched_tools_from_training:
-                boost += training_boost
-
-            # Check documentation matches
-            doc = self._tool_documentation.get(op_id, {})
-
-            # Match against example_queries
-            example_queries = doc.get("example_queries", [])
-            for example in example_queries:
-                example_lower = example.lower()
-                example_words = set(example_lower.split())
-                if query_words & example_words:
-                    boost += doc_boost * 0.5
-                    break
-
-            # Match against when_to_use
-            when_to_use = doc.get("when_to_use", [])
-            for use_case in when_to_use:
-                use_case_lower = use_case.lower()
-                if any(word in use_case_lower for word in query_words if len(word) >= 4):
-                    boost += doc_boost * 0.3
-                    break
-
-            # Match against purpose
-            purpose = doc.get("purpose", "").lower()
-            if any(word in purpose for word in query_words if len(word) >= 4):
-                boost += doc_boost * 0.2
-
-            adjusted.append((score + boost, op_id))
-
-        return adjusted
+    def _apply_example_query_boosting(
+        self,
+        query: str,
+        scored: List[Tuple[float, str]]
+    ) -> List[Tuple[float, str]]:
+        """Match user query against tool documentation example_queries_hr."""
+        return apply_example_query_boosting(query, scored, self._tool_documentation)
 
     def get_tool_documentation(self, tool_id: str) -> Optional[Dict[str, Any]]:
         """Get documentation for a specific tool."""
         if not self._tool_documentation:
             return None
         return self._tool_documentation.get(tool_id)
+
+    def _get_origin_guide(self, tool_id: str) -> Dict[str, str]:
+        """PILLAR 6: Get parameter origin guide for a tool.
+        Returns dict mapping parameter names to their origins (CONTEXT/USER)."""
+        if not self._tool_documentation:
+            return {}
+
+        doc = self._tool_documentation.get(tool_id, {})
+        return doc.get("parameter_origin_guide", {})
 
     def get_tool_category(self, tool_id: str) -> Optional[str]:
         """Get category for a specific tool."""
@@ -622,174 +562,23 @@ class SearchEngine:
         cat_data = self._tool_categories["categories"].get(category_name, {})
         return cat_data.get("tools", [])
 
-    def _find_direct_training_matches(self, query: str) -> Set[str]:
-        """
-        Find tools that directly match training examples.
-        Uses word overlap to find training matches and returns the primary tools.
+    # --- Filtering delegates (see search_filters.py for full docs) ---
 
-        Returns:
-            Set of tool IDs that match training examples
-        """
-        if not self._training_queries:
-            return set()
-
-        query_lower = query.lower().strip()
-        query_words = set(query_lower.split())
-        matched_tools: Set[str] = set()
-
-        training_data = self._training_queries.get("examples",
-                         self._training_queries.get("training_data", []))
-
-        best_overlap = 0
-        best_tool = None
-
-        for example in training_data:
-            example_query = example.get("query", "").lower()
-            example_words = set(example_query.split())
-            overlap = len(query_words & example_words)
-
-            # Require significant overlap
-            if overlap >= 3 or (overlap >= 2 and len(query_words) <= 4):
-                tool = example.get("primary_tool", "")
-                if tool:
-                    matched_tools.add(tool)
-                    # Track best match
-                    if overlap > best_overlap:
-                        best_overlap = overlap
-                        best_tool = tool
-
-        # If we have a clear best match (3+ words), prioritize it
-        if best_tool and best_overlap >= 3:
-            return {best_tool}
-
-        return matched_tools
-
-    # =========================================================================
-    # NEW: FILTERING METHODS FOR OPTIMIZED SEARCH
-    # =========================================================================
-
-    def detect_intent(self, query: str) -> str:
-        """
-        Detect query intent: READ, WRITE, or UNKNOWN.
-
-        Returns:
-            'READ' - user wants information (GET)
-            'WRITE' - user wants to create/update/delete (POST/PUT/DELETE)
-            'UNKNOWN' - unclear intent
-        """
-        query_lower = query.lower().strip()
-
-        # Check for mutation intent first (more specific)
-        if any(re.search(pattern, query_lower) for pattern in MUTATION_INTENT_PATTERNS):
-            return "WRITE"
-
-        # Check for read intent
-        if any(re.search(pattern, query_lower) for pattern in READ_INTENT_PATTERNS):
-            return "READ"
-
-        return "UNKNOWN"
+    def detect_intent(self, query: str, action_intent=None) -> str:
+        """Detect query intent: 'READ', 'WRITE', or 'UNKNOWN'."""
+        return _detect_intent(query, action_intent=action_intent)
 
     def detect_categories(self, query: str) -> Set[str]:
-        """
-        Detect which categories the query is about.
+        """Detect which categories the query is about."""
+        return _detect_categories(query, self._category_keywords)
 
-        Returns:
-            Set of category names that match the query
-        """
-        if not self._category_keywords:
-            return set()
+    def filter_by_method(self, tool_ids: Set[str], tools: Dict[str, UnifiedToolDefinition], intent: str) -> Set[str]:
+        """Filter tools by HTTP method based on intent."""
+        return _filter_by_method(tool_ids, tools, intent)
 
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-        matching_categories: Set[str] = set()
-
-        for cat_name, keywords in self._category_keywords.items():
-            # Check for word overlap
-            if query_words & keywords:
-                matching_categories.add(cat_name)
-                continue
-
-            # Check for substring matches (for longer keywords)
-            for keyword in keywords:
-                if len(keyword) >= 4 and keyword in query_lower:
-                    matching_categories.add(cat_name)
-                    break
-
-        return matching_categories
-
-    def filter_by_method(
-        self,
-        tool_ids: Set[str],
-        tools: Dict[str, UnifiedToolDefinition],
-        intent: str
-    ) -> Set[str]:
-        """
-        Filter tools by HTTP method based on intent.
-
-        Args:
-            tool_ids: Set of tool IDs to filter
-            tools: Dict of all tools
-            intent: 'READ', 'WRITE', or 'UNKNOWN'
-
-        Returns:
-            Filtered set of tool IDs
-        """
-        if intent == "UNKNOWN":
-            return tool_ids  # No filtering
-
-        filtered = set()
-
-        for tool_id in tool_ids:
-            tool = tools.get(tool_id)
-            if not tool:
-                continue
-
-            if intent == "READ":
-                # For READ intent, prefer GET methods
-                # But also include POST methods that are actually searches
-                if tool.method == "GET":
-                    filtered.add(tool_id)
-                elif tool.method == "POST":
-                    # Some POST methods are actually search/query operations
-                    op_lower = tool_id.lower()
-                    if any(x in op_lower for x in ["search", "query", "find", "filter", "list"]):
-                        filtered.add(tool_id)
-
-            elif intent == "WRITE":
-                # For WRITE intent, prefer POST/PUT/PATCH/DELETE
-                if tool.method in ("POST", "PUT", "PATCH", "DELETE"):
-                    filtered.add(tool_id)
-
-        logger.info(f"🔍 Method filter ({intent}): {len(tool_ids)} → {len(filtered)} tools")
-        return filtered if filtered else tool_ids  # Fallback to all if nothing matches
-
-    def filter_by_categories(
-        self,
-        tool_ids: Set[str],
-        categories: Set[str]
-    ) -> Set[str]:
-        """
-        Filter tools to only those in matching categories.
-
-        Args:
-            tool_ids: Set of tool IDs to filter
-            categories: Set of category names to match
-
-        Returns:
-            Filtered set of tool IDs
-        """
-        if not categories or not self._tool_to_category:
-            return tool_ids  # No filtering if no categories detected
-
-        filtered = set()
-
-        for tool_id in tool_ids:
-            tool_category = self._tool_to_category.get(tool_id)
-            if tool_category and tool_category in categories:
-                filtered.add(tool_id)
-
-        logger.info(f"📂 Category filter ({categories}): {len(tool_ids)} → {len(filtered)} tools")
-        return filtered if filtered else tool_ids  # Fallback to all if nothing matches
+    def filter_by_categories(self, tool_ids: Set[str], categories: Set[str]) -> Set[str]:
+        """Filter tools to only those in matching categories."""
+        return _filter_by_categories(tool_ids, self._tool_to_category, categories)
 
     async def find_relevant_tools_filtered(
         self,
@@ -805,121 +594,10 @@ class SearchEngine:
         """
         Find relevant tools using FILTER-THEN-SEARCH approach.
 
-        This method:
-        1. Detects intent (READ vs WRITE)
-        2. Filters by HTTP method
-        3. Detects categories
-        4. Filters by categories
-        5. Runs semantic search on filtered set
-        6. Applies boosts and returns results
-
-        This dramatically reduces search space for better accuracy.
+        Delegates to search_filters.find_relevant_tools_filtered.
         """
-        # Step 1: Detect intent
-        intent = self.detect_intent(query)
-        logger.info(f"🎯 Detected intent: {intent}")
+        return await _find_relevant_tools_filtered(
+            self, query, tools, embeddings, dependency_graph,
+            retrieval_tools, mutation_tools, top_k, threshold
+        )
 
-        # Step 2: Start with all tools
-        search_pool = set(tools.keys())
-        original_size = len(search_pool)
-
-        # Step 3: Filter by method based on intent
-        if intent != "UNKNOWN":
-            search_pool = self.filter_by_method(search_pool, tools, intent)
-
-        # Step 4: Detect categories
-        categories = self.detect_categories(query)
-        if categories:
-            logger.info(f"📂 Detected categories: {categories}")
-
-        # Step 5: Filter by categories (only if we have matches)
-        if categories:
-            search_pool = self.filter_by_categories(search_pool, categories)
-
-        logger.info(f"🔎 Search space: {original_size} → {len(search_pool)} tools")
-
-        # Step 6: Run semantic search on filtered set
-        query_embedding = await self._get_query_embedding(query)
-
-        if not query_embedding:
-            # Fallback to keyword search
-            fallback = self._fallback_keyword_search(query, tools, top_k)
-            return [
-                {"name": name, "score": 0.0, "schema": tools[name].to_openai_function()}
-                for name in fallback if name in search_pool
-            ]
-
-        # Calculate similarity scores on filtered pool
-        lenient_threshold = max(0.40, threshold - 0.20)
-        scored = []
-
-        for op_id in search_pool:
-            if op_id not in embeddings:
-                continue
-
-            similarity = cosine_similarity(query_embedding, embeddings[op_id])
-
-            if similarity >= lenient_threshold:
-                scored.append((similarity, op_id))
-
-        # Apply scoring adjustments (boosts, not filters)
-        scored = self._apply_method_disambiguation(query, scored, tools)
-        scored = self._apply_user_specific_boosting(query, scored, tools)
-        scored = self._apply_category_boosting(query, scored, tools)
-        scored = self._apply_documentation_boosting(query, scored)
-        scored = self._apply_evaluation_adjustment(scored)
-
-        # CRITICAL: Find DIRECT training matches and boost them to TOP
-        training_matched = self._find_direct_training_matches(query)
-        if training_matched:
-            logger.info(f"🎯 Direct training matches: {training_matched}")
-            # Ensure training-matched tools WIN - use score 2.0 to beat any other tool
-            scored_tools = {op_id for _, op_id in scored}
-            for tool_id in training_matched:
-                if tool_id in tools:
-                    if tool_id in scored_tools:
-                        # Set to highest score to ensure it wins
-                        scored = [(2.0, t) if t == tool_id else (s, t) for s, t in scored]
-                    else:
-                        # Add with highest score if not present
-                        scored.append((2.0, tool_id))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-
-        # Expansion if needed
-        if len(scored) < top_k and len(scored) > 0:
-            keyword_matches = self._description_keyword_search(query, search_pool, tools)
-            for op_id, desc_score in keyword_matches:
-                if op_id not in [s[1] for s in scored]:
-                    scored.append((desc_score * 0.7, op_id))
-            scored.sort(key=lambda x: x[0], reverse=True)
-
-        if not scored:
-            fallback = self._fallback_keyword_search(query, tools, top_k)
-            return [
-                {"name": name, "score": 0.0, "schema": tools[name].to_openai_function()}
-                for name in fallback
-            ]
-
-        # Apply dependency boosting
-        base_tools = [op_id for _, op_id in scored[:top_k]]
-        boosted_tools = self._apply_dependency_boosting(base_tools, dependency_graph)
-        final_tools = boosted_tools[:self.MAX_TOOLS_PER_RESPONSE]
-
-        # Build result
-        result = []
-        scored_dict = {op_id: score for score, op_id in scored}
-
-        for tool_id in final_tools:
-            if tool_id not in tools:
-                continue
-            schema = tools[tool_id].to_openai_function()
-            score = scored_dict.get(tool_id, 0.0)
-            result.append({
-                "name": tool_id,
-                "score": score,
-                "schema": schema
-            })
-
-        logger.info(f"📦 Returning {len(result)} tools (filtered search)")
-        return result

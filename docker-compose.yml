@@ -1,6 +1,6 @@
 # =============================================================================
 # MobilityOne WhatsApp Bot - Unified Docker Compose
-# Version: 3.0 - Production Ready with Dual-User Security
+# Version: 3.1 - Production Ready with Dual-User Security (No Dashboard)
 #
 # ARCHITECTURE:
 # - bot_net: Bot API + Worker (public facing)
@@ -15,6 +15,8 @@
 # USAGE:
 #   Development: docker-compose up -d
 #   With Admin:  docker-compose --profile admin up -d
+#
+# NOTE: Admin Dashboard has been removed. Use Admin API directly via HTTP.
 # =============================================================================
 
 services:
@@ -29,10 +31,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: appuser
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-securepassword123}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-super_tajna_lozinka}
       POSTGRES_DB: mobility_db
-      BOT_DB_PASSWORD: ${BOT_DB_PASSWORD:-bot_secure_pass_123}
-      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-admin_secure_pass_456}
+      BOT_DB_PASSWORD: ${BOT_DB_PASSWORD:-bot_password_123}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-admin_password_456}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
@@ -47,12 +49,48 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
 
+  # --- PgBouncer (Connection Pooling) ---
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: mobility_pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://appuser:${DB_PASSWORD:-super_tajna_lozinka}@postgres:5432/mobility_db
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 25
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 10
+      RESERVE_POOL_TIMEOUT: 3
+      SERVER_IDLE_TIMEOUT: 600
+      SERVER_LIFETIME: 3600
+      AUTH_TYPE: plain
+      # Allow bot_user and admin_user through PgBouncer
+      AUTH_USER: appuser
+      # CRITICAL: Must match Docker port mapping (default is 5432, we need 6432)
+      LISTEN_PORT: 6432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "autoheal=true"
+    networks:
+      - db_net
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+
   # --- Redis ---
   redis:
     image: redis:7-alpine
     container_name: mobility_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -71,8 +109,8 @@ services:
     container_name: mobility_migration
     command: ["alembic", "upgrade", "head"]
     environment:
-      - DATABASE_URL=postgresql://admin_user:${ADMIN_DB_PASSWORD:-admin_secure_pass_456}@postgres:5432/mobility_db
-      - ADMIN_DATABASE_URL=postgresql://admin_user:${ADMIN_DB_PASSWORD:-admin_secure_pass_456}@postgres:5432/mobility_db
+      - DATABASE_URL=postgresql://admin_user:${ADMIN_DB_PASSWORD:-admin_password_456}@postgres:5432/mobility_db
+      - ADMIN_DATABASE_URL=postgresql://admin_user:${ADMIN_DB_PASSWORD:-admin_password_456}@postgres:5432/mobility_db
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,12 +133,13 @@ services:
       - .env
     environment:
       # BOT uses limited user!
-      - DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_secure_pass_123}@postgres:5432/mobility_db
-      - BOT_DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_secure_pass_123}@postgres:5432/mobility_db
+      - DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_password_123}@postgres:5432/mobility_db
+      - BOT_DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_password_123}@postgres:5432/mobility_db
       - REDIS_URL=redis://redis:6379/0
-      - SERVICE_TYPE=api
+      - SERVICE_ROLE=bot
     volumes:
       - cache_data:/app/.cache:rw
+      - models_data:/app/models:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,11 +148,11 @@ services:
       migration:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 180s
+      retries: 20
+      start_period: 300s
     labels:
       - "autoheal=true"
     networks:
@@ -134,21 +173,24 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_secure_pass_123}@postgres:5432/mobility_db
-      - BOT_DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_secure_pass_123}@postgres:5432/mobility_db
+      - DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_password_123}@postgres:5432/mobility_db
+      - BOT_DATABASE_URL=postgresql+asyncpg://bot_user:${BOT_DB_PASSWORD:-bot_password_123}@postgres:5432/mobility_db
       - REDIS_URL=redis://redis:6379/0
-      - SERVICE_TYPE=worker
+      - SERVICE_ROLE=bot
     volumes:
       - cache_data:/app/.cache:rw
+      - models_data:/app/models:rw
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'python worker.py' || exit 1"]
+      # Redis connectivity check: verifies worker can reach its primary dependency.
+      # Tuned to tolerate brief network blips: 3 consecutive failures × 30s = 90s before restart.
+      test: ["CMD", "python", "-c", "import os,redis; r=redis.from_url(os.environ['REDIS_URL']); r.ping()"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 90s
     labels:
       - "autoheal=true"
     networks:
@@ -174,10 +216,10 @@ services:
       - .env
     environment:
       # Admin uses full-access user
-      - DATABASE_URL=postgresql+asyncpg://admin_user:${ADMIN_DB_PASSWORD:-admin_secure_pass_456}@postgres:5432/mobility_db
-      - ADMIN_DATABASE_URL=postgresql+asyncpg://admin_user:${ADMIN_DB_PASSWORD:-admin_secure_pass_456}@postgres:5432/mobility_db
+      - DATABASE_URL=postgresql+asyncpg://admin_user:${ADMIN_DB_PASSWORD:-admin_password_456}@postgres:5432/mobility_db
+      - ADMIN_DATABASE_URL=postgresql+asyncpg://admin_user:${ADMIN_DB_PASSWORD:-admin_password_456}@postgres:5432/mobility_db
       - REDIS_URL=redis://redis:6379/0
-      - SERVICE_TYPE=admin
+      - SERVICE_ROLE=admin
     volumes:
       - cache_data:/app/.cache:ro
     depends_on:
@@ -203,6 +245,7 @@ services:
           memory: 512M
     profiles:
       - admin
+
 
   # ===========================================================================
   # RELIABILITY
@@ -241,6 +284,7 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/alerts:/etc/prometheus/alerts:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -307,6 +351,8 @@ volumes:
   redis_data:
     driver: local
   cache_data:
+    driver: local
+  models_data:
     driver: local
   prometheus_data:
     driver: local

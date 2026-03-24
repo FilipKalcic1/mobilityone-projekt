@@ -1,6 +1,5 @@
 """
 Test Case Creation Flow
-Version: 1.0
 
 Simulira case creation flow kroz MessageEngine:
 1. Korisnik: "Prijavi kvar - prednja guma ima udarac"
@@ -13,12 +12,15 @@ koji trenutno nije dostupan m1AI klijentu. Test ce pokazati 403 error
 dok se ne dodaju potrebne permisije.
 
 Pokreni: python -m tests.test_case_flow
+
+Note: Integration test - skipped in CI (when APP_ENV=testing).
 """
 
 import asyncio
 import logging
 import sys
 import os
+import pytest
 
 # Fix Windows console encoding for emojis
 if sys.platform == "win32":
@@ -38,6 +40,8 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_case_api():
     """Test AddCase API directly."""
 
@@ -98,6 +102,8 @@ async def test_case_api():
     return result.success
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_case_flow():
     """Test case creation flow through ToolExecutor."""
 

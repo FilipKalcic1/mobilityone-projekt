@@ -1,6 +1,5 @@
 """
 WhatsApp Integration Service
-Version: 1.0
 
 KRITIČNA KOMPONENTA - Rješava probleme:
 1. Phone vs UUID trap: Validira da 'to' sadrži telefonski broj, ne UUID
@@ -25,24 +24,16 @@ import re
 import unicodedata
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass
-from datetime import datetime
 
 import httpx
 
 from config import get_settings
-
+from services.errors import ConversationError, GatewayError, ErrorCode
+from services.patterns import UUID_PATTERN
+from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("whatsapp_service")
 settings = get_settings()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# VALIDATION PATTERNS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# UUID pattern (v4): 8-4-4-4-12 hex characters
-UUID_PATTERN = re.compile(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-)
 
 # Phone number pattern (international format)
 # Accepts: +385..., 385..., 00385..., etc.
@@ -83,8 +74,9 @@ class WhatsAppService:
     # Infobip limits
     MAX_MESSAGE_LENGTH = 4096  # WhatsApp text limit
     MAX_RETRIES = 3
-    BASE_DELAY = 1.0  # Base delay for exponential backoff
-    MAX_JITTER = 0.5  # Random jitter (0-0.5 seconds)
+    BASE_DELAY = 1.0   # Base delay for exponential backoff
+    MAX_BACKOFF = 60.0  # Hard cap: prevents CPU death spiral on 0.5 CPU
+    MAX_JITTER = 1.0    # Random jitter (0-1s) — decorrelates fleet retries
 
     def __init__(
         self,
@@ -106,6 +98,10 @@ class WhatsAppService:
 
         # Validate configuration
         self._validate_config()
+
+        # Reusable HTTP client — avoids connection setup per message.
+        # On 0.5 CPU, TLS handshake per send wastes ~50ms of the 100ms CFS window.
+        self._client = httpx.AsyncClient(timeout=30.0)
 
         # Stats
         self._messages_sent = 0
@@ -137,9 +133,9 @@ class WhatsAppService:
                 "INFOBIP_API_KEY appears to be invalid (too short)."
             )
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # VALIDATION METHODS (CRITICAL FOR 400 ERROR PREVENTION)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     def validate_phone_number(self, number: str) -> Tuple[bool, str, Optional[str]]:
         """
@@ -252,7 +248,8 @@ class WhatsAppService:
             # Fallback to JSON serialization
             try:
                 return (json.dumps(value, ensure_ascii=False), True)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"JSON serialization failed for dict, using str(): {e}")
                 return (str(value), True)
 
         # Handle list
@@ -267,7 +264,8 @@ class WhatsAppService:
 
             try:
                 return (json.dumps(value, ensure_ascii=False), True)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"JSON serialization failed for list, using str(): {e}")
                 return (str(value), True)
 
         # Handle other types
@@ -321,9 +319,9 @@ class WhatsAppService:
 
         return text
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # PAYLOAD BUILDING (INFOBIP SPECIFIC)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     def build_payload(
         self,
@@ -381,9 +379,9 @@ class WhatsAppService:
             "Accept": "application/json"
         }
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # SENDING WITH RETRY (EXPONENTIAL BACKOFF + JITTER)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     async def send(
         self,
@@ -402,56 +400,66 @@ class WhatsAppService:
         Returns:
             SendResult with success/failure info
         """
-        # Step 1: Validate phone number
-        if validate:
-            is_valid, normalized_to, error = self.validate_phone_number(to)
-            if not is_valid:
-                logger.error(f"Phone validation failed: {error}")
+        with trace_span(_tracer, "whatsapp_service.send", {"to_suffix": to[-4:] if to else "", "validate": validate}) as span:
+            # Step 1: Validate phone number
+            if validate:
+                is_valid, normalized_to, error = self.validate_phone_number(to)
+                if not is_valid:
+                    logger.error(f"Phone validation failed: {error}")
+                    span.set_attribute("result.success", False)
+                    span.set_attribute("result.error_code", "INVALID_PHONE")
+                    return SendResult(
+                        success=False,
+                        error_code="INVALID_PHONE",
+                        error_message=error
+                    )
+                to = normalized_to
+
+            # Step 2: Ensure text is string
+            text_str, was_converted = self.ensure_string(text)
+            if was_converted:
+                logger.warning(f"Text was converted from {type(text).__name__} to string")
+
+            # Step 3: Ensure UTF-8 safe
+            text_str = self.ensure_utf8_safe(text_str)
+
+            # Step 4: Check length
+            if len(text_str) > self.MAX_MESSAGE_LENGTH:
+                err = ConversationError(ErrorCode.MESSAGE_TOO_LONG, f"Message too long ({len(text_str)} chars), truncating to {self.MAX_MESSAGE_LENGTH}")
+                logger.warning(str(err))
+                text_str = text_str[:self.MAX_MESSAGE_LENGTH - 3] + "..."
+
+            span.set_attribute("message.text_length", len(text_str))
+
+            # Step 5: Build payload
+            payload = self.build_payload(to, text_str)
+            headers = self.build_headers()
+
+            if not headers:
+                span.set_attribute("result.success", False)
+                span.set_attribute("result.error_code", "CONFIG_ERROR")
                 return SendResult(
                     success=False,
-                    error_code="INVALID_PHONE",
-                    error_message=error
+                    error_code="CONFIG_ERROR",
+                    error_message="API key not configured"
                 )
-            to = normalized_to
 
-        # Step 2: Ensure text is string
-        text_str, was_converted = self.ensure_string(text)
-        if was_converted:
-            logger.warning(f"Text was converted from {type(text).__name__} to string")
-
-        # Step 3: Ensure UTF-8 safe
-        text_str = self.ensure_utf8_safe(text_str)
-
-        # Step 4: Check length
-        if len(text_str) > self.MAX_MESSAGE_LENGTH:
-            logger.warning(
-                f"Message too long ({len(text_str)} chars), truncating to {self.MAX_MESSAGE_LENGTH}"
-            )
-            text_str = text_str[:self.MAX_MESSAGE_LENGTH - 3] + "..."
-
-        # Step 5: Build payload
-        payload = self.build_payload(to, text_str)
-        headers = self.build_headers()
-
-        if not headers:
-            return SendResult(
-                success=False,
-                error_code="CONFIG_ERROR",
-                error_message="API key not configured"
+            # DEEP LOGGING: Log payload before sending
+            logger.info(
+                f"SENDING TO INFOBIP: "
+                f"to={to[-4:]}..., "
+                f"text_length={len(text_str)}, "
+                f"payload={json.dumps(payload, ensure_ascii=False)[:200]}"
             )
 
-        # DEEP LOGGING: Log payload before sending
-        logger.info(
-            f"SENDING TO INFOBIP: "
-            f"to={to[-4:]}..., "
-            f"text_length={len(text_str)}, "
-            f"payload={json.dumps(payload, ensure_ascii=False)[:200]}"
-        )
+            # Step 6: Send with retry
+            url = f"https://{self.base_url}/whatsapp/1/message/text"
 
-        # Step 6: Send with retry
-        url = f"https://{self.base_url}/whatsapp/1/message/text"
-
-        return await self._send_with_retry(url, payload, headers)
+            result = await self._send_with_retry(url, payload, headers)
+            span.set_attribute("result.success", result.success)
+            if result.message_id:
+                span.set_attribute("result.message_id", result.message_id)
+            return result
 
     async def _send_with_retry(
         self,
@@ -471,12 +479,11 @@ class WhatsAppService:
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        url,
-                        json=payload,
-                        headers=headers
-                    )
+                response = await self._client.post(
+                    url,
+                    json=payload,
+                    headers=headers
+                )
 
                 # Success
                 if response.status_code in (200, 201):
@@ -484,7 +491,12 @@ class WhatsAppService:
 
                     try:
                         response_data = response.json()
-                        message_id = response_data.get("messages", [{}])[0].get("messageId")
+                        # Infobip returns messageId at root level (single message)
+                        # or in messages[] array (batch). Handle both.
+                        message_id = (
+                            response_data.get("messageId")
+                            or response_data.get("messages", [{}])[0].get("messageId")
+                        )
                     except Exception:
                         message_id = None
 
@@ -542,7 +554,7 @@ class WhatsAppService:
                     error_message = error_data.get("requestError", {}).get(
                         "serviceException", {}
                     ).get("text", str(error_data))
-                except Exception:
+                except (ValueError, KeyError, AttributeError):
                     error_message = response.text
 
                 logger.error(
@@ -559,6 +571,8 @@ class WhatsAppService:
 
             except httpx.TimeoutException as e:
                 last_error = str(e)
+                err = GatewayError(ErrorCode.TIMEOUT, f"WhatsApp API timeout: {e}", status_code=408)
+                logger.error(str(err))
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self._calculate_backoff(attempt)
                     logger.warning(
@@ -571,7 +585,8 @@ class WhatsAppService:
 
             except Exception as e:
                 last_error = str(e)
-                logger.error(f"Send error: {e}")
+                err = GatewayError(ErrorCode.RETRY_EXHAUSTED, f"WhatsApp send error: {e}")
+                logger.error(str(err))
 
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self._calculate_backoff(attempt)
@@ -585,6 +600,8 @@ class WhatsAppService:
 
         # All retries exhausted
         self._messages_failed += 1
+        err = GatewayError(ErrorCode.RETRY_EXHAUSTED, f"All {self.MAX_RETRIES} retries exhausted for WhatsApp send: {last_error}")
+        logger.error(str(err))
 
         return SendResult(
             success=False,
@@ -598,18 +615,24 @@ class WhatsAppService:
         min_delay: int = 0
     ) -> float:
         """
-        Calculate exponential backoff with jitter.
+        Calculate exponential backoff with jitter and hard cap.
 
-        Formula: max(min_delay, 2^attempt * base) + random(0, jitter)
+        Formula: min(MAX_BACKOFF, max(min_delay, 2^attempt * base)) + random(0, jitter)
+
+        The cap at 60s prevents a CPU death spiral on 0.5 CPU pods:
+        without it, linear/uncapped retries during an Infobip outage
+        tie up all semaphore slots with sleeping coroutines, starving
+        new messages.
         """
         exponential_delay = (2 ** attempt) * self.BASE_DELAY
+        capped = min(self.MAX_BACKOFF, max(min_delay, exponential_delay))
         jitter = random.uniform(0, self.MAX_JITTER)
 
-        return max(min_delay, exponential_delay) + jitter
+        return capped + jitter
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # BATCH SENDING (FOR FUTURE USE)
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
 
     async def send_batch(
         self,
@@ -635,9 +658,15 @@ class WhatsAppService:
 
         return results
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
     # STATS & HEALTH
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ---
+
+    async def close(self) -> None:
+        """Close the reusable HTTP client to release connections."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
     def get_stats(self) -> Dict[str, Any]:
         """Get service statistics."""

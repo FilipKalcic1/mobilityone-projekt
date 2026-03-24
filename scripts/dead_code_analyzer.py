@@ -1,6 +1,5 @@
 """
 Dead Code Analyzer for MobilityOne Bot
-Version: 1.0 - Python Static Analysis
 
 FEATURES:
 1. Vulture-style dead code detection
@@ -322,7 +321,7 @@ def main():
     report = analyzer.run_analysis(verbose=args.verbose)
 
     if args.output:
-        with open(args.output, 'w') as f:
+        with open(args.output, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2, default=str)
         print(f"\nReport saved to: {args.output}")
 

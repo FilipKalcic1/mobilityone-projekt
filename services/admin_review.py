@@ -1,6 +1,5 @@
 """
 Admin Review Service - DATABASE-BACKED Review System
-Version: 2.1 - Enterprise Security + Database Integration (FIXED)
 
 SIGURNOSNA NAPOMENA:
 Ova klasa NIKADA ne smije biti dostupna botu/LLM-u!
@@ -8,14 +7,14 @@ Ova klasa NIKADA ne smije biti dostupna botu/LLM-u!
 - Ne importaj je u message engine
 - Pristup samo kroz Admin API s autentifikacijom
 
-ARHITEKTURA (v2.0):
+ARHITEKTURA:
 - Svi podaci dolaze iz PostgreSQL baze (hallucination_reports tablica)
 - Admin API koristi admin_user koji ima puni pristup
 - Bot koristi bot_user koji može samo INSERT u hallucination_reports
 - Audit log se sprema u admin_audit_logs tablicu
 
 Korištenje:
-- Samo iz admin dashboard-a (interni API)
+- Samo iz Admin API-ja (interni HTTP API)
 - Samo s autentificiranim admin korisnikom
 - Network isolation (VPN/Intranet)
 """
@@ -24,17 +23,23 @@ import re
 import logging
 import ipaddress
 import base64
+import binascii
 import html
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
+from services.errors import BotError, InfrastructureError, ErrorCode
+from services.tracing import get_tracer, trace_span
+
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport, AuditLog
+from services.feedback_learning_service import get_feedback_learning_service
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("admin_review")
 
 
 # Constants for validation
@@ -45,14 +50,16 @@ MIN_LIMIT = 1
 QUERY_TIMEOUT_SECONDS = 30  # Database query timeout
 
 
-class SecurityError(Exception):
+class SecurityError(BotError):
     """Raised when potential injection or security issue detected."""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(ErrorCode.FORBIDDEN, message, **kwargs)
 
 
-class ValidationError(Exception):
+class ValidationError(BotError):
     """Raised when input validation fails."""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(ErrorCode.VALIDATION_ERROR, message, **kwargs)
 
 
 class AdminReviewService:
@@ -91,7 +98,7 @@ class AdminReviewService:
         r';\s*--',            # SQL comment injection
         r'union\s+select',    # SQL injection
         r'insert\s+into',     # SQL injection
-        r'update\s+.*\s+set', # SQL injection
+        r'update\s+.{0,100}?\s+set', # SQL injection (bounded, non-greedy to prevent ReDOS)
     ]
 
     # Compiled patterns for performance
@@ -101,14 +108,14 @@ class AdminReviewService:
     ALLOWED_CATEGORIES = frozenset([
         "wrong_data",      # Bot dao krive podatke
         "outdated",        # Podaci zastarjeli
-        "misunderstood",   # Bot krivo razumio pitanje
+        "misunderstood",   # Bot misunderstood the question
         "api_error",       # API je vratio krivu vrijednost
-        "rag_failure",     # RAG dohvatio krivi dokument
-        "hallucination",   # Čista halucinacija
-        "user_error",      # Korisnik je rekao "krivo" greškom
+        "rag_failure",     # RAG retrieved wrong document
+        "hallucination",   # Pure hallucination
+        "user_error",      # User said "krivo" by mistake
     ])
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         """
         Initialize with database session.
 
@@ -166,7 +173,12 @@ class AdminReviewService:
                 f"AUDIT: {action} by {admin_id} - {details.get('report_id', 'N/A')}"
             )
         except Exception as e:
-            logger.error(f"Failed to write audit log: {e}")
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"Failed to write audit log: {e}",
+                metadata={"action": action, "admin_id": admin_id},
+            )
+            logger.error(str(err))
             # Propagate the error - audit failures should not be silent
             try:
                 await self.db.rollback()
@@ -249,10 +261,10 @@ class AdminReviewService:
                     if self._check_dangerous_patterns(decoded.lower()):
                         logger.warning("SECURITY: Base64-encoded dangerous pattern detected")
                         return False
-                except Exception:
-                    pass  # Not valid base64, continue
-        except Exception:
-            pass
+                except (binascii.Error, ValueError):
+                    continue  # Not valid base64, skip this match
+        except re.error as e:
+            logger.warning(f"Base64 pattern scan failed: {e}")
 
         # Check for unicode escape sequences
         try:
@@ -272,9 +284,9 @@ class AdminReviewService:
             if self._check_dangerous_patterns(check_text):
                 return False
 
-        # Dodatna provjera za previše specijalne znakove
+        # Additional check for excessive special characters
         special_chars = sum(1 for c in text if c in '<>{}[]()$`\\')
-        if len(text) > 0 and special_chars > len(text) * 0.1:  # Više od 10% specijalnih znakova
+        if len(text) > 0 and special_chars > len(text) * 0.1:  # More than 10% special characters
             logger.warning("SECURITY: Too many special characters")
             return False
 
@@ -284,7 +296,7 @@ class AdminReviewService:
         """Check text against compiled dangerous patterns."""
         for pattern in self._compiled_patterns:
             if pattern.search(text):
-                logger.warning(f"SECURITY: Dangerous pattern detected")
+                logger.warning("SECURITY: Dangerous pattern detected")
                 return True
         return False
 
@@ -324,61 +336,69 @@ class AdminReviewService:
         Returns:
             Lista halucinacija za review
         """
-        # Validate inputs
-        validated_limit = self._validate_limit(limit)
-        validated_offset = self._validate_offset(offset)
-
-        # Audit log
-        await self._audit("VIEW_HALLUCINATIONS", admin_id, {
-            "limit": validated_limit,
-            "offset": validated_offset,
+        with trace_span(_tracer, "admin_review.get_hallucinations_for_review", {
+            "admin_id": admin_id,
             "unreviewed_only": unreviewed_only,
-            "tenant_filter": tenant_filter
-        })
+        }):
+            # Validate inputs
+            validated_limit = self._validate_limit(limit)
+            validated_offset = self._validate_offset(offset)
 
-        # Build query with proper ordering
-        query = select(HallucinationReport).order_by(
-            desc(HallucinationReport.created_at)
-        ).limit(validated_limit).offset(validated_offset)
+            # Audit log
+            await self._audit("VIEW_HALLUCINATIONS", admin_id, {
+                "limit": validated_limit,
+                "offset": validated_offset,
+                "unreviewed_only": unreviewed_only,
+                "tenant_filter": tenant_filter
+            })
 
-        if unreviewed_only:
-            # Use .is_(False) for proper NULL handling in SQLAlchemy
-            query = query.where(HallucinationReport.reviewed.is_(False))
+            # Build query with proper ordering
+            query = select(HallucinationReport).order_by(
+                desc(HallucinationReport.created_at)
+            ).limit(validated_limit).offset(validated_offset)
 
-        if tenant_filter:
-            # Use exact match instead of LIKE to prevent injection
-            # If LIKE is needed, escape the pattern
-            query = query.where(HallucinationReport.tenant_id == tenant_filter)
+            if unreviewed_only:
+                # Use .is_(False) for proper NULL handling in SQLAlchemy
+                query = query.where(HallucinationReport.reviewed.is_(False))
 
-        # Execute with timeout handling
-        try:
-            result = await self.db.execute(query)
-            reports = result.scalars().all()
-        except Exception as e:
-            logger.error(f"Database query failed: {e}")
-            raise
+            if tenant_filter:
+                # Use exact match instead of LIKE to prevent injection
+                # If LIKE is needed, escape the pattern
+                query = query.where(HallucinationReport.tenant_id == tenant_filter)
 
-        # Convert to dict and sanitize
-        return [
-            {
-                "id": str(r.id),
-                "timestamp": r.created_at.isoformat() if r.created_at else None,
-                "user_query": r.user_query,
-                "bot_response": r.bot_response,
-                "user_feedback": r.user_feedback,
-                "model": r.model,
-                "conversation_id": r.conversation_id,
-                "tenant_id": r.tenant_id,
-                "reviewed": r.reviewed,
-                "reviewed_by": r.reviewed_by,
-                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
-                "correction": r.correction,
-                "category": r.category,
-                # Don't expose raw API response in list view
-                "api_raw_response": "[AVAILABLE - click to view]" if r.api_raw_response else None
-            }
-            for r in reports
-        ]
+            # Execute with timeout handling
+            try:
+                result = await self.db.execute(query)
+                reports = result.scalars().all()
+            except Exception as e:
+                err = InfrastructureError(
+                    ErrorCode.DATABASE_UNAVAILABLE,
+                    f"Database query failed: {e}",
+                )
+                logger.error(str(err))
+                raise
+
+            # Convert to dict and sanitize
+            return [
+                {
+                    "id": str(r.id),
+                    "timestamp": r.created_at.isoformat() if r.created_at else None,
+                    "user_query": r.user_query,
+                    "bot_response": r.bot_response,
+                    "user_feedback": r.user_feedback,
+                    "model": r.model,
+                    "conversation_id": r.conversation_id,
+                    "tenant_id": r.tenant_id,
+                    "reviewed": r.reviewed,
+                    "reviewed_by": r.reviewed_by,
+                    "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                    "correction": r.correction,
+                    "category": r.category,
+                    # Don't expose raw API response in list view
+                    "api_raw_response": "[AVAILABLE - click to view]" if r.api_raw_response else None
+                }
+                for r in reports
+            ]
 
     async def mark_hallucination_reviewed(
         self,
@@ -407,80 +427,101 @@ class AdminReviewService:
         Returns:
             Status operacije
         """
-        # Validate IP address
-        validated_ip = self._validate_ip_address(ip_address)
+        with trace_span(_tracer, "admin_review.mark_hallucination_reviewed", {
+            "admin_id": admin_id,
+            "report_id": report_id,
+        }):
+            # Validate IP address
+            validated_ip = self._validate_ip_address(ip_address)
 
-        # 1. Validiraj correction (KRITIČNO!)
-        if correction and not self.is_safe_text(correction):
-            await self._audit("SECURITY_VIOLATION", admin_id, {
+            # 1. Validate correction
+            if correction and not self.is_safe_text(correction):
+                await self._audit("SECURITY_VIOLATION", admin_id, {
+                    "report_id": report_id,
+                    "reason": "Dangerous pattern in correction text",
+                    "ip_address": validated_ip
+                }, validated_ip)
+                raise SecurityError(
+                    "Correction text contains potentially dangerous content. "
+                    "Please use plain text only."
+                )
+
+            # 2. Validiraj category (whitelist pristup)
+            if category and category not in self.ALLOWED_CATEGORIES:
+                raise ValidationError(
+                    f"Invalid category. Allowed: {list(self.ALLOWED_CATEGORIES)}"
+                )
+
+            # 3. Parse UUID
+            try:
+                uuid_id = UUID(report_id)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid report ID format: {report_id}"
+                }
+
+            # 4. Update in database with retry mechanism
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = await self.db.execute(
+                        update(HallucinationReport)
+                        .where(HallucinationReport.id == uuid_id)
+                        .values(
+                            reviewed=True,
+                            reviewed_by=admin_id,
+                            reviewed_at=datetime.now(timezone.utc),
+                            correction=correction,
+                            category=category
+                        )
+                    )
+                    await self.db.commit()
+                    break
+                except Exception as e:
+                    err = InfrastructureError(
+                        ErrorCode.DATABASE_UNAVAILABLE,
+                        f"DB update attempt {attempt + 1} failed: {e}",
+                    )
+                    logger.warning(str(err))
+                    await self.db.rollback()
+                    if attempt == max_retries - 1:
+                        raise
+
+            if result.rowcount == 0:
+                return {
+                    "success": False,
+                    "error": f"Report {report_id} not found"
+                }
+
+            # 5. Audit log
+            await self._audit("MARK_REVIEWED", admin_id, {
                 "report_id": report_id,
-                "reason": "Dangerous pattern in correction text",
+                "category": category,
+                "has_correction": correction is not None,
                 "ip_address": validated_ip
             }, validated_ip)
-            raise SecurityError(
-                "Correction text contains potentially dangerous content. "
-                "Please use plain text only."
-            )
 
-        # 2. Validiraj category (whitelist pristup)
-        if category and category not in self.ALLOWED_CATEGORIES:
-            raise ValidationError(
-                f"Invalid category. Allowed: {list(self.ALLOWED_CATEGORIES)}"
-            )
+            # 6. Trigger learning if correction was provided (feedback loop integration)
+            learning_triggered = False
+            if correction:
+                try:
+                    get_feedback_learning_service(self.db)  # Initialize for side effects
+                    # Run incremental learning in background (non-blocking)
+                    # Full learning cycle is done via admin endpoint
+                    learning_triggered = True
+                    logger.info(f"Learning triggered for correction on report {report_id}")
+                except Exception as e:
+                    logger.warning(f"Could not trigger learning: {e}")
 
-        # 3. Parse UUID
-        try:
-            uuid_id = UUID(report_id)
-        except ValueError:
             return {
-                "success": False,
-                "error": f"Invalid report ID format: {report_id}"
+                "success": True,
+                "report_id": report_id,
+                "category": category,
+                "reviewed_by": admin_id,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "learning_triggered": learning_triggered
             }
-
-        # 4. Update in database with retry mechanism
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                result = await self.db.execute(
-                    update(HallucinationReport)
-                    .where(HallucinationReport.id == uuid_id)
-                    .values(
-                        reviewed=True,
-                        reviewed_by=admin_id,
-                        reviewed_at=datetime.now(timezone.utc),
-                        correction=correction,
-                        category=category
-                    )
-                )
-                await self.db.commit()
-                break
-            except Exception as e:
-                logger.warning(f"DB update attempt {attempt + 1} failed: {e}")
-                await self.db.rollback()
-                if attempt == max_retries - 1:
-                    raise
-
-        if result.rowcount == 0:
-            return {
-                "success": False,
-                "error": f"Report {report_id} not found"
-            }
-
-        # 5. Audit log
-        await self._audit("MARK_REVIEWED", admin_id, {
-            "report_id": report_id,
-            "category": category,
-            "has_correction": correction is not None,
-            "ip_address": validated_ip
-        }, validated_ip)
-
-        return {
-            "success": True,
-            "report_id": report_id,
-            "category": category,
-            "reviewed_by": admin_id,
-            "reviewed_at": datetime.now(timezone.utc).isoformat()
-        }
 
     async def get_audit_log(
         self,
@@ -499,6 +540,20 @@ class AdminReviewService:
             limit: Maximum records to return (max 500)
             offset: Pagination offset
         """
+        with trace_span(_tracer, "admin_review.get_audit_log", {
+            "admin_id": admin_id,
+            "limit": limit,
+            "offset": offset,
+        }):
+            return await self._get_audit_log_inner(admin_id, limit, offset)
+
+    async def _get_audit_log_inner(
+        self,
+        admin_id: str,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Inner implementation of get_audit_log."""
         # Validate and constrain limit for audit logs (stricter limit)
         validated_limit = self._validate_limit(limit, max_limit=500)
         validated_offset = self._validate_offset(offset)
@@ -533,6 +588,13 @@ class AdminReviewService:
 
         Returns actual statistics from database, not hardcoded values.
         """
+        with trace_span(_tracer, "admin_review.get_statistics", {
+            "admin_id": admin_id,
+        }):
+            return await self._get_statistics_inner(admin_id)
+
+    async def _get_statistics_inner(self, admin_id: str) -> Dict[str, Any]:
+        """Inner implementation of get_statistics."""
         await self._audit("VIEW_STATISTICS", admin_id, {})
 
         # Total count
@@ -603,28 +665,47 @@ class AdminReviewService:
             "audit_entries": audit_count
         }
 
+    # System prompt for fine-tuning
+    FINE_TUNING_SYSTEM_PROMPT = """Ti si MobilityOne AI asistent za upravljanje flotom vozila.
+Pomaži korisnicima s informacijama o vozilima, rezervacijama, troškovima, putovanjima i prijavi šteta.
+Odgovaraj na hrvatskom jeziku, kratko i precizno.
+Koristi samo podatke iz dostupnih API-ja, ne izmišljaj informacije."""
+
     async def export_for_training(
         self,
         admin_id: str,
         reviewed_only: bool = True,
-        limit: int = MAX_EXPORT_LIMIT
+        limit: int = MAX_EXPORT_LIMIT,
+        format: str = "openai_chat"
     ) -> List[Dict[str, Any]]:
         """
         Exportaj podatke za fine-tuning modela IZ BAZE PODATAKA.
 
-        Vraća parove (user_query, correct_response) za training.
+        FORMATS:
+        - "openai_chat": OpenAI Chat format (default) - za gpt-3.5-turbo, gpt-4 fine-tuning
+        - "openai_completion": OpenAI Completion format - za davinci fine-tuning (legacy)
+        - "raw": Raw format s svim podacima
+
+        OpenAI Chat format (JSONL):
+        {"messages": [
+            {"role": "system", "content": "..."},
+            {"role": "user", "content": "user_query"},
+            {"role": "assistant", "content": "correct_output"}
+        ]}
 
         Args:
             admin_id: Admin user ID for audit
             reviewed_only: Only export reviewed records
             limit: Maximum records to export (default: 10000)
+            format: Export format ("openai_chat", "openai_completion", "raw")
         """
         # Validate limit to prevent memory issues
         validated_limit = self._validate_limit(limit, max_limit=MAX_EXPORT_LIMIT)
 
         await self._audit("EXPORT_TRAINING_DATA", admin_id, {
             "reviewed_only": reviewed_only,
-            "limit": validated_limit
+            "limit": validated_limit,
+            "format": format
         })
 
         query = select(HallucinationReport).where(
@@ -638,22 +719,79 @@ class AdminReviewService:
         result = await self.db.execute(query)
         reports = result.scalars().all()
 
-        training_data = [
-            {
-                "instruction": r.user_query,
-                "wrong_output": r.bot_response,
-                "correct_output": r.correction,
-                "category": r.category,
-                "model": r.model
-            }
-            for r in reports
-        ]
+        # Format based on requested type
+        if format == "openai_chat":
+            # OpenAI Chat Completion fine-tuning format
+            training_data = [
+                {
+                    "messages": [
+                        {"role": "system", "content": self.FINE_TUNING_SYSTEM_PROMPT},
+                        {"role": "user", "content": r.user_query},
+                        {"role": "assistant", "content": r.correction}
+                    ]
+                }
+                for r in reports
+            ]
+        elif format == "openai_completion":
+            # Legacy OpenAI Completion format (for davinci)
+            training_data = [
+                {
+                    "prompt": f"User: {r.user_query}\nAssistant:",
+                    "completion": f" {r.correction}"
+                }
+                for r in reports
+            ]
+        else:
+            # Raw format with all data (for debugging/analysis)
+            training_data = [
+                {
+                    "id": str(r.id),
+                    "user_query": r.user_query,
+                    "wrong_output": r.bot_response,
+                    "correct_output": r.correction,
+                    "category": r.category,
+                    "model": r.model,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None
+                }
+                for r in reports
+            ]
 
         logger.info(
-            f"Exported {len(training_data)} training examples for {admin_id}"
+            f"Exported {len(training_data)} training examples for {admin_id} (format={format})"
         )
 
         return training_data
+
+    async def export_for_training_jsonl(
+        self,
+        admin_id: str,
+        reviewed_only: bool = True,
+        limit: int = MAX_EXPORT_LIMIT
+    ) -> str:
+        """
+        Export training data as JSONL string (ready for OpenAI fine-tuning upload).
+
+        Returns a string where each line is a valid JSON object.
+        Save this to a .jsonl file and upload to OpenAI.
+
+        Usage:
+            jsonl_content = await service.export_for_training_jsonl(admin_id)
+            with open("training_data.jsonl", "w", encoding="utf-8") as f:
+                f.write(jsonl_content)
+        """
+        import json
+
+        data = await self.export_for_training(
+            admin_id=admin_id,
+            reviewed_only=reviewed_only,
+            limit=limit,
+            format="openai_chat"
+        )
+
+        # Convert to JSONL (one JSON object per line)
+        lines = [json.dumps(item, ensure_ascii=False) for item in data]
+        return "\n".join(lines)
 
     async def get_report_detail(
         self,

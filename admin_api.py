@@ -1,6 +1,5 @@
 """
 Admin API - DATABASE-BACKED, Physically Isolated from Bot API
-Version: 2.2 - Enterprise Security + Database + Drift Detection + Cost Tracking
 
 SIGURNOSNA ARHITEKTURA:
 - Ovaj API radi na ZASEBNOM PORTU (8080)
@@ -27,13 +26,13 @@ import os
 import time
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Security, Depends, Request
+from fastapi import FastAPI, HTTPException, Security, Depends, Request, Query
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -41,21 +40,33 @@ from pydantic import BaseModel, Field, field_validator
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 import redis.asyncio as aioredis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import JSONResponse, Response
 
 # Load main .env (contains all config including admin tokens)
 env_path = Path(__file__).parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
-# Import database
+# CRITICAL SECURITY: Set admin service type BEFORE importing database
+# This ensures database.py uses admin connection string with full privileges
+os.environ["SERVICE_ROLE"] = "admin"
+
+from config import get_settings
 from database import AsyncSessionLocal, engine
 from services.admin_review import AdminReviewService, SecurityError
 from services.model_drift_detector import get_drift_detector
 from services.cost_tracker import CostTracker
 from services.conflict_resolver import ConflictResolver
+from services.feedback_analyzer import FeedbackAnalyzer
+from services.query_pattern_learner import QueryPatternLearner
+from services.quality_tracker import get_quality_tracker
+from services.feedback_learning_service import get_feedback_learning_service
+from services.gdpr_masking import GDPRMaskingService
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # Prometheus metrics for Admin API
 ADMIN_REQUESTS = Counter(
@@ -65,9 +76,9 @@ ADMIN_REQUESTS = Counter(
 )
 HALLUCINATIONS_PENDING = Gauge('hallucinations_pending', 'Pending hallucination reviews')
 
-# =============================================================================
+# ---
 # LIFESPAN (Database initialization)
-# =============================================================================
+# ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -82,7 +93,7 @@ async def lifespan(app: FastAPI):
     # Verify database connection
     try:
         async with AsyncSessionLocal() as session:
-            from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
         logger.info("Database connection verified (admin_user)")
     except Exception as e:
@@ -90,7 +101,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Cannot start without database")
 
     # Initialize Redis for drift detector
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    redis_url = settings.REDIS_URL
     try:
         app.state.redis = aioredis.from_url(
             redis_url,
@@ -124,10 +135,9 @@ async def lifespan(app: FastAPI):
         await app.state.redis.aclose()
     await engine.dispose()
 
-
-# =============================================================================
+# ---
 # APP CONFIGURATION
-# =============================================================================
+# ---
 
 app = FastAPI(
     title="MobilityOne Admin API",
@@ -139,31 +149,67 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Security headers
+from services.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 # CORS - Restrict to internal domains only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://admin.mobilityone.io",
-        "http://localhost:3000",
-        "http://localhost:8080",
-    ],
+    allow_origins=settings.ADMIN_CORS_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["X-Admin-Token", "Content-Type"],
 )
 
-# =============================================================================
+# ---
 # SECURITY
-# =============================================================================
+# ---
+
+import ipaddress
 
 admin_api_key = APIKeyHeader(name="X-Admin-Token", auto_error=True)
 
-# Valid admin tokens (in production, use database or vault)
-VALID_ADMIN_TOKENS = {
-    os.getenv("ADMIN_TOKEN_1", "dev-admin-token-12345"): os.getenv("ADMIN_TOKEN_1_USER", "admin_dev_1"),
-    os.getenv("ADMIN_TOKEN_2", "dev-admin-token-67890"): os.getenv("ADMIN_TOKEN_2_USER", "admin_dev_2"),
-}
+# Valid admin tokens - MUST be set via environment variables
+VALID_ADMIN_TOKENS = {}
+for i in range(1, 5):  # Support up to 4 admin tokens
+    token = os.environ.get(f"ADMIN_TOKEN_{i}")
+    user = os.environ.get(f"ADMIN_TOKEN_{i}_USER")
+    if token and user:
+        VALID_ADMIN_TOKENS[token] = user
 
+if not VALID_ADMIN_TOKENS:
+    logger.warning("ADMIN API: No admin tokens configured! Set ADMIN_TOKEN_1 + ADMIN_TOKEN_1_USER env vars.")
+
+# IP whitelist for admin API
+ADMIN_ALLOWED_IPS = None
+if settings.ADMIN_ALLOWED_IPS:
+    ADMIN_ALLOWED_IPS = []
+    for ip_str in settings.ADMIN_ALLOWED_IPS.split(","):
+        ip_str = ip_str.strip()
+        if ip_str:
+            try:
+                # Support both individual IPs and CIDR ranges
+                ADMIN_ALLOWED_IPS.append(ipaddress.ip_network(ip_str, strict=False))
+            except ValueError as e:
+                logger.error(f"Invalid IP in ADMIN_ALLOWED_IPS: {ip_str} - {e}")
+    if ADMIN_ALLOWED_IPS:
+        logger.info(f"Admin IP whitelist enabled: {len(ADMIN_ALLOWED_IPS)} entries")
+
+def is_ip_allowed(client_ip: str) -> bool:
+    """Check if client IP is in the whitelist."""
+    if ADMIN_ALLOWED_IPS is None:
+        return True  # No whitelist = all IPs allowed
+
+    try:
+        ip = ipaddress.ip_address(client_ip)
+        for network in ADMIN_ALLOWED_IPS:
+            if ip in network:
+                return True
+        return False
+    except ValueError:
+        logger.warning(f"Invalid client IP format: {client_ip}")
+        return False
 
 async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
     """Verify admin token and return admin_id."""
@@ -176,13 +222,14 @@ async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
         )
     return admin_id
 
-
-# =============================================================================
+# ---
 # RATE LIMITING
-# =============================================================================
+# ---
 
 class RedisRateLimiter:
     """Redis-based rate limiter for production."""
+
+    _MAX_FALLBACK_KEYS = 200  # Cap in-memory keys to prevent unbounded growth
 
     def __init__(self, requests_per_minute: int = 30):
         self.requests_per_minute = requests_per_minute
@@ -191,7 +238,7 @@ class RedisRateLimiter:
         self._init_redis()
 
     def _init_redis(self):
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        redis_url = settings.REDIS_URL
         try:
             self.redis = aioredis.from_url(redis_url, decode_responses=True)
             logging.info(f"Rate limiter connected to Redis: {redis_url}")
@@ -228,6 +275,16 @@ class RedisRateLimiter:
         now = time.time()
         minute_ago = now - 60
         self._fallback[key] = [ts for ts in self._fallback[key] if ts > minute_ago]
+        # Evict stale keys to prevent unbounded dict growth from many unique IPs
+        if len(self._fallback) > self._MAX_FALLBACK_KEYS:
+            stale = [k for k, v in self._fallback.items() if not v]
+            for k in stale:
+                del self._fallback[k]
+            # If still over limit, drop oldest-accessed keys
+            if len(self._fallback) > self._MAX_FALLBACK_KEYS:
+                oldest = sorted(self._fallback, key=lambda k: max(self._fallback[k], default=0))
+                for k in oldest[:len(self._fallback) - self._MAX_FALLBACK_KEYS]:
+                    del self._fallback[k]
         if len(self._fallback[key]) >= self.requests_per_minute:
             return False
         self._fallback[key].append(now)
@@ -241,26 +298,33 @@ class RedisRateLimiter:
                 await self.redis.zremrangebyscore(redis_key, 0, now - 60)
                 count = await self.redis.zcard(redis_key)
                 return max(0, self.requests_per_minute - count)
-            except Exception:
-                pass
+            except (ConnectionError, OSError) as e:
+                logging.debug(f"Redis unavailable for rate limit check, falling back to in-memory: {e}")
         now = time.time()
         count = sum(1 for ts in self._fallback[key] if ts > now - 60)
         return max(0, self.requests_per_minute - count)
 
-
 rate_limiter = RedisRateLimiter(
-    requests_per_minute=int(os.getenv("ADMIN_RATE_LIMIT_PER_MINUTE", "30"))
+    requests_per_minute=settings.ADMIN_RATE_LIMIT_PER_MINUTE
 )
-
 
 async def check_rate_limit(
     request: Request,
     admin_id: str = Depends(verify_admin_token)
 ) -> str:
-    """Rate limit middleware."""
+    """Rate limit and IP whitelist middleware."""
     client_ip = request.client.host if request.client else "unknown"
-    rate_key = f"{admin_id}:{client_ip}"
 
+    # Check IP whitelist FIRST (before rate limiting)
+    if not is_ip_allowed(client_ip):
+        logger.warning(f"Admin access denied for {admin_id} from non-whitelisted IP: {client_ip}")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. Your IP is not in the allowed list."
+        )
+
+    # Then check rate limit
+    rate_key = f"{admin_id}:{client_ip}"
     if not await rate_limiter.is_allowed(rate_key):
         remaining = await rate_limiter.get_remaining(rate_key)
         logger.warning(f"Rate limit exceeded for {admin_id} from {client_ip}")
@@ -272,10 +336,9 @@ async def check_rate_limit(
 
     return admin_id
 
-
-# =============================================================================
+# ---
 # DATABASE DEPENDENCY
-# =============================================================================
+# ---
 
 async def get_db() -> AsyncSession:
     """Get database session."""
@@ -285,17 +348,15 @@ async def get_db() -> AsyncSession:
         finally:
             await session.close()
 
-
 async def get_admin_service(
     db: AsyncSession = Depends(get_db)
 ) -> AdminReviewService:
     """Get AdminReviewService with database session."""
     return AdminReviewService(db)
 
-
-# =============================================================================
+# ---
 # SCHEMAS
-# =============================================================================
+# ---
 
 class ReviewUpdateSchema(BaseModel):
     """Schema for marking hallucination as reviewed."""
@@ -324,13 +385,11 @@ class ReviewUpdateSchema(BaseModel):
     @classmethod
     def sanitize_correction(cls, v):
         if v:
-            import re
             dangerous = ['<script', 'javascript:', 'onclick', 'onerror']
             for pattern in dangerous:
                 if pattern.lower() in v.lower():
                     raise ValueError("Correction contains prohibited content")
         return v
-
 
 class HallucinationResponse(BaseModel):
     """Response schema for hallucination report."""
@@ -343,7 +402,6 @@ class HallucinationResponse(BaseModel):
     category: Optional[str]
     correction: Optional[str]
 
-
 class StatisticsResponse(BaseModel):
     """Response schema for statistics."""
     total_errors: int
@@ -353,10 +411,9 @@ class StatisticsResponse(BaseModel):
     false_positives_skipped: int
     category_breakdown: Dict[str, int]
 
-
-# =============================================================================
+# ---
 # API ENDPOINTS
-# =============================================================================
+# ---
 
 @app.get("/health")
 async def health_check(request: Request):
@@ -365,7 +422,7 @@ async def health_check(request: Request):
     db_status = "disconnected"
     try:
         async with AsyncSessionLocal() as session:
-            from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
@@ -394,9 +451,23 @@ async def health_check(request: Request):
         "database": db_status,
         "redis": redis_status,
         "drift_detector": drift_status,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+@app.get("/ready")
+async def readiness_check(request: Request):
+    """Readiness probe - returns 200 only when database is available."""
+
+
+    try:
+        async with AsyncSessionLocal() as session:
+
+            await session.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.warning(f"Readiness check failed - database: {type(e).__name__}: {e}")
+        return JSONResponse(status_code=503, content={"ready": False, "reason": "database unavailable"})
+
+    return {"ready": True}
 
 @app.get("/metrics")
 async def metrics():
@@ -406,7 +477,6 @@ async def metrics():
         media_type=CONTENT_TYPE_LATEST
     )
 
-
 @app.get(
     "/admin/hallucinations",
     response_model=List[Dict[str, Any]],
@@ -414,13 +484,13 @@ async def metrics():
     description="Get list of hallucinations reported by users ('krivo' feedback)"
 )
 async def list_hallucinations(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=1000),
     unreviewed_only: bool = True,
     tenant_filter: Optional[str] = None,
     admin_id: str = Depends(check_rate_limit),
     service: AdminReviewService = Depends(get_admin_service)
 ):
-    """Dohvaća halucinacije za admin dashboard IZ BAZE PODATAKA."""
+    """Dohvaća halucinacije za admin pregled IZ BAZE PODATAKA."""
     try:
         reports = await service.get_hallucinations_for_review(
             admin_id=admin_id,
@@ -432,7 +502,6 @@ async def list_hallucinations(
     except Exception as e:
         logger.error(f"Error listing hallucinations: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.get(
     "/admin/hallucinations/{report_id}",
@@ -458,7 +527,6 @@ async def get_hallucination_detail(
     except Exception as e:
         logger.error(f"Error getting hallucination detail: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.post(
     "/admin/hallucinations/{report_id}/lock",
@@ -518,7 +586,6 @@ async def acquire_lock(
     except Exception as e:
         logger.error(f"Error acquiring lock: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.post(
     "/admin/hallucinations/{report_id}/review",
@@ -599,7 +666,6 @@ async def review_hallucination(
         logger.error(f"Error reviewing hallucination: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/statistics",
     response_model=StatisticsResponse,
@@ -618,14 +684,13 @@ async def get_statistics(
         logger.error(f"Error getting statistics: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/audit-log",
     summary="Get audit log",
     description="View admin actions audit trail"
 )
 async def get_audit_log(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=1000),
     admin_id: str = Depends(check_rate_limit),
     service: AdminReviewService = Depends(get_admin_service)
 ):
@@ -637,7 +702,6 @@ async def get_audit_log(
         logger.error(f"Error getting audit log: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.get(
     "/admin/export/training-data",
     summary="Export training data",
@@ -645,25 +709,84 @@ async def get_audit_log(
 )
 async def export_training_data(
     reviewed_only: bool = True,
+    format: str = "openai_chat",
     admin_id: str = Depends(check_rate_limit),
     service: AdminReviewService = Depends(get_admin_service)
 ):
-    """Exportaj podatke za fine-tuning modela IZ BAZE PODATAKA."""
+    """
+    Exportaj podatke za fine-tuning modela IZ BAZE PODATAKA.
+
+    Formats:
+    - openai_chat: OpenAI Chat format (default) - za gpt-3.5-turbo, gpt-4 fine-tuning
+    - openai_completion: OpenAI Completion format - za davinci (legacy)
+    - raw: Raw format s svim podacima
+    """
     try:
+        # Validate format
+        valid_formats = ["openai_chat", "openai_completion", "raw"]
+        if format not in valid_formats:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid format. Must be one of: {valid_formats}"
+            )
+
         data = await service.export_for_training(
             admin_id=admin_id,
-            reviewed_only=reviewed_only
+            reviewed_only=reviewed_only,
+            format=format
         )
         return {
             "count": len(data),
+            "format": format,
             "data": data,
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "exported_by": admin_id
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error exporting training data: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@app.get(
+    "/admin/export/training-data.jsonl",
+    summary="Download training data as JSONL file",
+    description="Download reviewed hallucinations as JSONL file ready for OpenAI fine-tuning upload"
+)
+async def download_training_data_jsonl(
+    reviewed_only: bool = True,
+    admin_id: str = Depends(check_rate_limit),
+    service: AdminReviewService = Depends(get_admin_service)
+):
+    """
+    Download training data as JSONL file.
+
+    This file can be directly uploaded to OpenAI for fine-tuning:
+    openai api fine_tunes.create -t training_data.jsonl -m gpt-3.5-turbo
+
+    Or via Python SDK:
+    openai.File.create(file=open("training_data.jsonl", "rb"), purpose="fine-tune")
+    """
+
+
+    try:
+        jsonl_content = await service.export_for_training_jsonl(
+            admin_id=admin_id,
+            reviewed_only=reviewed_only
+        )
+
+        # Return as downloadable file
+        filename = f"training_data_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl"
+        return Response(
+            content=jsonl_content,
+            media_type="application/x-ndjson",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error downloading training data JSONL: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/cost-stats",
@@ -700,19 +823,17 @@ async def get_cost_stats(
         return {
             "daily": {
                 "date": daily.date,
-                "total_requests": daily.total_requests,
-                "prompt_tokens": daily.total_prompt_tokens,
-                "completion_tokens": daily.total_completion_tokens,
-                "total_tokens": daily.total_tokens,
-                "estimated_cost_usd": round(daily.estimated_cost_usd, 4),
-                "by_model": daily.by_model,
-                "by_tenant": daily.by_tenant
+                "requests": daily.requests,
+                "prompt_tokens": daily.prompt_tokens,
+                "completion_tokens": daily.completion_tokens,
+                "total_tokens": daily.prompt_tokens + daily.completion_tokens,
+                "cost_usd": round(daily.cost_usd, 4)
             },
             "total": total,
             "session": session,
             "budget": {
                 "daily_limit_usd": tracker.daily_budget,
-                "remaining_usd": round(tracker.daily_budget - daily.estimated_cost_usd, 2)
+                "remaining_usd": round(tracker.daily_budget - daily.cost_usd, 2)
             }
         }
     except HTTPException:
@@ -720,7 +841,6 @@ async def get_cost_stats(
     except Exception as e:
         logger.error(f"Error getting cost stats: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @app.get(
     "/admin/drift-status",
@@ -746,36 +866,27 @@ async def get_drift_status(
         DriftReport s alertima i preporukama
     """
     try:
-        # Use drift detector from app state (initialized in lifespan)
         detector = request.app.state.drift_detector
         if not detector:
-            raise HTTPException(
-                status_code=503,
-                detail="Drift detector not initialized"
-            )
+            raise HTTPException(status_code=503, detail="Drift detector not initialized")
 
-        report = await detector.check_drift(force_refresh=force_refresh)
+        report = await detector.check_drift()
 
         return {
-            "report_id": report.report_id,
-            "generated_at": report.generated_at,
-            "model_version": report.model_version,
             "has_drift": report.has_drift,
-            "severity": report.overall_severity,
-            "alerts": [
-                {
-                    "type": a.drift_type,
-                    "severity": a.severity,
-                    "message": a.message,
-                    "current_value": a.current_value,
-                    "baseline_value": a.baseline_value,
-                    "deviation_percent": a.deviation_percent,
-                    "recommended_action": a.recommended_action
-                }
-                for a in report.alerts
-            ],
-            "metrics_summary": report.metrics_summary,
-            "recommendations": report.recommendations
+            "severity": report.severity,
+            "sample_count": report.sample_count,
+            "alerts": report.alerts,
+            "current": {
+                "error_rate": round(report.error_rate, 4),
+                "latency_ms": round(report.latency_ms, 1),
+                "hallucination_rate": round(report.hallucination_rate, 4)
+            },
+            "baseline": {
+                "error_rate": round(report.baseline_error_rate, 4),
+                "latency_ms": round(report.baseline_latency_ms, 1),
+                "hallucination_rate": round(report.baseline_hallucination_rate, 4)
+            }
         }
     except HTTPException:
         raise
@@ -783,10 +894,471 @@ async def get_drift_status(
         logger.error(f"Error checking drift status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# ---
+# FEEDBACK ANALYSIS ENDPOINTS
+# ---
 
-# =============================================================================
+@app.get(
+    "/admin/feedback/analyze",
+    summary="Analyze user feedback patterns",
+    description="Analyze hallucination reports to identify missing dictionary terms"
+)
+async def analyze_feedback(
+    min_occurrences: int = 2,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Analyze hallucination reports to find improvement opportunities.
+
+    This endpoint:
+    1. Reads hallucination_reports from database
+    2. Extracts Croatian terms from user queries
+    3. Identifies terms not covered by dictionaries
+    4. Generates suggestions for dictionary additions
+
+    Args:
+        min_occurrences: Minimum term frequency to generate suggestion
+        limit: Maximum reports to analyze
+
+    Returns:
+        Analysis result with suggestions
+    """
+    try:
+
+
+        analyzer = FeedbackAnalyzer(db)
+        result = await analyzer.analyze(
+            min_occurrences=min_occurrences,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error analyzing feedback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/feedback/stats",
+    summary="Get feedback quick stats",
+    description="Get quick statistics about hallucination reports"
+)
+async def get_feedback_stats(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get quick statistics about feedback reports."""
+    try:
+
+
+        analyzer = FeedbackAnalyzer(db)
+        stats = await analyzer.get_quick_stats()
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting feedback stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/feedback/analyze-comprehensive",
+    summary="Comprehensive feedback analysis with query learning",
+    description="v2.0 analysis including dictionary gaps, query→tool mappings, and recommendations"
+)
+async def analyze_feedback_comprehensive(
+    min_occurrences: int = 2,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Comprehensive feedback analysis.
+
+    This endpoint provides:
+    1. Dictionary gap analysis (missing Croatian terms)
+    2. Query→tool learning from corrections
+    3. Failure category analysis with root causes
+    4. Actionable recommendations
+
+    Args:
+        min_occurrences: Minimum term frequency for suggestions
+        limit: Maximum reports to analyze
+
+    Returns:
+        Comprehensive analysis with dictionary suggestions and query insights
+    """
+    try:
+
+
+        analyzer = FeedbackAnalyzer(db)
+        result = await analyzer.analyze_comprehensive(
+            min_occurrences=min_occurrences,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error in comprehensive feedback analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/feedback/learn-patterns",
+    summary="Learn query patterns from corrections",
+    description="Extract query→tool mappings from hallucination corrections"
+)
+async def learn_query_patterns(
+    min_occurrences: int = 1,
+    include_uncorrected: bool = False,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Learn query→tool patterns from hallucination reports.
+
+    This endpoint:
+    1. Analyzes reports with admin corrections
+    2. Extracts query patterns that led to wrong tool selection
+    3. Builds mappings for future improvement
+    4. Identifies confused query/tool pairs
+
+    Args:
+        min_occurrences: Minimum pattern occurrences to include
+        include_uncorrected: Also analyze reports without corrections
+        limit: Maximum reports to analyze
+
+    Returns:
+        Learning result with mappings and insights
+    """
+    try:
+
+
+        learner = QueryPatternLearner(db)
+        result = await learner.learn(
+            min_occurrences=min_occurrences,
+            include_uncorrected=include_uncorrected,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error learning query patterns: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/feedback/learning-stats",
+    summary="Get query learning statistics",
+    description="Statistics about learned query→tool mappings"
+)
+async def get_learning_stats(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get statistics about learned query patterns."""
+    try:
+
+
+        learner = QueryPatternLearner(db)
+        stats = await learner.get_statistics()
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting learning stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/quality/summary",
+    summary="Get quality tracking summary",
+    description="Get MRR/NDCG tracking summary and trends"
+)
+async def get_quality_summary(
+    admin_id: str = Depends(check_rate_limit)
+):
+    """
+    Get search quality tracking summary.
+
+    Returns:
+        - Current metrics (MRR, NDCG)
+        - Baseline comparison
+        - Quality trend (improving/degrading)
+        - History count
+    """
+    try:
+
+
+        tracker = get_quality_tracker()
+        summary = tracker.get_summary()
+
+        return summary
+
+    except Exception as e:
+        logger.error(f"Error getting quality summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/quality/trend",
+    summary="Analyze quality trend",
+    description="Compare current quality metrics against baseline"
+)
+async def get_quality_trend(
+    admin_id: str = Depends(check_rate_limit)
+):
+    """
+    Analyze quality trend over time.
+
+    Returns:
+        - MRR/NDCG changes
+        - Is improving or degrading
+        - Recommendations
+    """
+    try:
+
+
+        tracker = get_quality_tracker()
+        trend = tracker.analyze_trend()
+
+        if not trend:
+            return {
+                "status": "no_data",
+                "message": "No evaluation history found. Run evaluation first."
+            }
+
+        return trend.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error analyzing quality trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---
+# FEEDBACK LEARNING SERVICE ENDPOINTS
+# ---
+
+@app.post(
+    "/admin/learning/run-cycle",
+    summary="Run complete learning cycle",
+    description="Analyze feedback and apply learned patterns to search boosting"
+)
+async def run_learning_cycle(
+    min_occurrences: int = 2,
+    confidence_threshold: float = 0.70,
+    limit: int = 500,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Run a complete learning cycle.
+
+    This endpoint:
+    1. Analyzes hallucination reports with corrections
+    2. Extracts query→tool patterns
+    3. Applies high-confidence patterns as search boosts
+    4. Saves learned boosts to cache
+
+    Args:
+        min_occurrences: Minimum pattern occurrences to learn
+        confidence_threshold: Minimum confidence for auto-apply (0.0-1.0)
+        limit: Maximum reports to analyze
+
+    Returns:
+        Learning result with statistics
+    """
+    try:
+
+
+        service = get_feedback_learning_service(db)
+        result = await service.learn_and_apply(
+            min_occurrences=min_occurrences,
+            confidence_threshold=confidence_threshold,
+            limit=limit
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error running learning cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/admin/learning/statistics",
+    summary="Get learning statistics",
+    description="Statistics about learned patterns and search boosts"
+)
+async def get_learning_statistics(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get statistics about learned patterns."""
+    try:
+
+
+        service = get_feedback_learning_service(db)
+        stats = await service.get_statistics()
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting learning statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post(
+    "/admin/learning/export-documentation",
+    summary="Export learned patterns to documentation",
+    description="Export high-confidence patterns to tool_documentation.json"
+)
+async def export_to_documentation(
+    confidence_threshold: float = 0.85,
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Export learned patterns to tool documentation.
+
+    This enables automatic improvement of tool descriptions with
+    real user query examples.
+
+    Args:
+        confidence_threshold: Minimum confidence to export (0.0-1.0)
+
+    Returns:
+        Number of tools updated
+    """
+    try:
+
+
+        service = get_feedback_learning_service(db)
+        updates = await service.export_to_documentation(
+            confidence_threshold=confidence_threshold
+        )
+
+        return {
+            "success": True,
+            "tools_updated": updates,
+            "confidence_threshold": confidence_threshold,
+        }
+
+    except Exception as e:
+        logger.error(f"Error exporting to documentation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete(
+    "/admin/learning/clear",
+    summary="Clear all learned boosts",
+    description="Reset learning - use with caution"
+)
+async def clear_learned_boosts(
+    admin_id: str = Depends(check_rate_limit),
+    db: AsyncSession = Depends(get_db)
+):
+    """Clear all learned boosts (for testing/reset)."""
+    try:
+
+
+        service = get_feedback_learning_service(db)
+        service.clear_learned_boosts()
+
+        return {
+            "success": True,
+            "message": "All learned boosts cleared",
+        }
+
+    except Exception as e:
+        logger.error(f"Error clearing learned boosts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---
+# GDPR ERASURE
+# ---
+
+@app.post(
+    "/admin/gdpr/erase/{phone}",
+    summary="GDPR Article 17: Right to Erasure",
+    tags=["gdpr"],
+)
+async def gdpr_erase_user(
+    phone: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Erase all user data from database AND Redis.
+
+    This endpoint:
+    1. Anonymizes user records in PostgreSQL (user_mappings, messages, conversations)
+    2. Deletes all Redis keys for this user (conv_state, chat_history, user_context, tenant)
+    3. Scrubs DLQ entries containing the user's phone number
+
+    Returns a summary of all records affected.
+    """
+
+
+    gdpr = GDPRMaskingService()
+
+    try:
+        # 1. Database anonymization
+        db_result = await gdpr.anonymize_user_data(phone, db)
+
+        # 2. Redis state erasure
+        redis_result = {"keys_deleted": 0, "dlq_scrubbed": 0}
+        if request.app.state.redis:
+            redis_result = await gdpr.erase_redis_state(phone, request.app.state.redis)
+
+        return {
+            "success": True,
+            "user_hash": gdpr._hash_value(phone),
+            "database": db_result,
+            "redis": redis_result,
+        }
+
+    except Exception as e:
+        logger.error(f"GDPR erasure failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Erasure failed: {type(e).__name__}")
+
+
+# ---
+# GDPR DATA PORTABILITY
+# ---
+
+@app.get(
+    "/admin/gdpr/export/{phone}",
+    summary="GDPR Article 20: Right to Data Portability",
+    tags=["gdpr"],
+)
+async def gdpr_export_user(
+    phone: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Export all user data in structured, machine-readable JSON format.
+
+    GDPR Article 20 requires data controllers to provide users with their
+    personal data in a structured, commonly used, machine-readable format.
+
+    Returns: JSON with user profile, conversations, messages,
+    hallucination reports, and Redis ephemeral state.
+    """
+
+
+    gdpr = GDPRMaskingService()
+    redis_client = getattr(request.app.state, "redis", None)
+
+    try:
+        export = await gdpr.export_user_data(phone, db, redis_client=redis_client)
+        return export
+
+    except Exception as e:
+        logger.error(f"GDPR export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {type(e).__name__}")
+
+
+# ---
 # MAIN
-# =============================================================================
+# ---
 
 if __name__ == "__main__":
     import uvicorn
@@ -796,13 +1368,13 @@ if __name__ == "__main__":
         format="%(asctime)s [ADMIN-API] %(levelname)s: %(message)s"
     )
 
-    print("\n" + "=" * 60)
-    print("MOBILITYONE ADMIN API v2.1")
-    print("=" * 60)
-    print("Port: 8080")
-    print("Docs: http://localhost:8080/admin/docs")
-    print("Database: PostgreSQL (admin_user)")
-    print("=" * 60 + "\n")
+    logger.info("=" * 60)
+    logger.info("MOBILITYONE ADMIN API v2.1")
+    logger.info("=" * 60)
+    logger.info("Port: 8080")
+    logger.info("Docs: http://localhost:8080/admin/docs")
+    logger.info("Database: PostgreSQL (admin_user)")
+    logger.info("=" * 60)
 
     uvicorn.run(
         "admin_api:app",

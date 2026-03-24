@@ -43,15 +43,9 @@ conftest.py
 pytest.ini
 .pytest_cache
 
-# Scripts (keep only production-needed ones)
-scripts/autoscaler_load_test.py
-scripts/dead_code_analyzer.py
-scripts/add_training_examples.py
-scripts/add_more_training.py
-scripts/train_and_evaluate.py
-scripts/train_intensive.py
-scripts/test_*.py
-scripts/generate_documentation.py
+# Scripts (dev-only tools, not needed in production image)
+# Includes benchmarks, data generators, analyzers — 39 files, ~10K+ lines
+scripts/
 
 # Documentation
 *.md
@@ -81,6 +75,13 @@ dist/
 # Cache directories (will be mounted as volume)
 .cache/
 *.cache
+
+# Dev dependencies
+requirements-dev.txt
+pyproject.toml
+.editorconfig
+.pre-commit-config.yaml
+.ruff_cache
 
 # CI/CD
 .github

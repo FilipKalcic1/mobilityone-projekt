@@ -1,6 +1,5 @@
 """
 Error Translation Service
-Version: 1.0
 
 UNIFIED ERROR HANDLING - Consolidates all error translation logic.
 
@@ -17,15 +16,14 @@ into a dedicated, learnable service.
 import logging
 import re
 import json
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Optional, List
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 ERROR_PATTERNS_FILE = Path.cwd() / ".cache" / "error_patterns.json"
-
 
 @dataclass
 class ErrorPattern:
@@ -69,7 +67,6 @@ class ErrorPattern:
         feedback = feedback.replace("{error}", error[:200])
         return feedback
 
-
 class ErrorTranslator:
     """
     Unified error translation service.
@@ -97,7 +94,7 @@ class ErrorTranslator:
         self.patterns = [
             # Permission errors (403)
             ErrorPattern(
-                pattern=r"permission|403|forbidden|unauthorized|access denied",
+                pattern=r"permission|403|forbidden|access denied",
                 user_message_template=(
                     "❌ Nemate dozvolu za rezervaciju ovog vozila.\n\n"
                     "Mogući razlozi:\n"
@@ -264,7 +261,7 @@ class ErrorTranslator:
                             existing.resolution_hints = pattern_data["resolution_hints"]
                         break
 
-            logger.info(f"Loaded error patterns from cache")
+            logger.info("Loaded error patterns from cache")
 
         except Exception as e:
             logger.warning(f"Failed to load error patterns: {e}")
@@ -291,7 +288,7 @@ class ErrorTranslator:
             if pattern.matches(error, tool_name):
                 # Update stats
                 pattern.occurrence_count += 1
-                pattern.last_seen = datetime.utcnow().isoformat()
+                pattern.last_seen = datetime.now(timezone.utc).isoformat()
 
                 if for_user:
                     return pattern.format_user_message(error, tool_name)
@@ -349,7 +346,7 @@ class ErrorTranslator:
 
             data = {
                 "version": "1.0",
-                "saved_at": datetime.utcnow().isoformat(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
                 "learned_patterns": [
                     {
                         "pattern": p.pattern,
@@ -369,10 +366,8 @@ class ErrorTranslator:
         except Exception as e:
             logger.error(f"Failed to save error patterns: {e}")
 
-
 # Global instance
 _error_translator: Optional[ErrorTranslator] = None
-
 
 def get_error_translator() -> ErrorTranslator:
     """Get global error translator instance."""

@@ -1,6 +1,5 @@
 """
 Database Configuration
-Version: 11.0 - Enterprise Dual-User Architecture
 
 Async SQLAlchemy setup with proper connection pooling.
 DEPENDS ON: config.py only
@@ -17,7 +16,6 @@ CONNECTION POOLING (CRITICAL for production):
 - pool_pre_ping: Verify connection is alive before use
 """
 
-import os
 import logging
 from typing import AsyncGenerator
 
@@ -35,17 +33,17 @@ from base import Base  # Import shared Base
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# =============================================================================
+# ---
 # DUAL-USER DATABASE URLS
-# =============================================================================
+# ---
 # Bot uses limited user (can't see admin tables)
 # Admin uses full-access user
 
-BOT_DATABASE_URL = os.getenv("BOT_DATABASE_URL", settings.DATABASE_URL)
-ADMIN_DATABASE_URL = os.getenv("ADMIN_DATABASE_URL", settings.DATABASE_URL)
+BOT_DATABASE_URL = settings.BOT_DATABASE_URL or settings.DATABASE_URL
+ADMIN_DATABASE_URL = settings.ADMIN_DATABASE_URL or settings.DATABASE_URL
 
 # Detect which service we are (set in docker-compose environment)
-SERVICE_TYPE = os.getenv("SERVICE_TYPE", "api")  # api, worker, admin
+SERVICE_TYPE = settings.SERVICE_ROLE  # "bot" or "admin" (from config.py)
 
 
 def get_database_url() -> str:
@@ -94,16 +92,13 @@ def create_engine_with_pool(database_url: str) -> AsyncEngine:
         database_url,
         echo=settings.DEBUG,
 
-        # Connection pool settings (CRITICAL!)
         poolclass=AsyncAdaptedQueuePool,
-        pool_size=settings.DB_POOL_SIZE,          # Base connections (10)
-        max_overflow=settings.DB_MAX_OVERFLOW,    # Extra during peak (20)
-        pool_recycle=settings.DB_POOL_RECYCLE,    # Recycle after 1 hour
-        pool_pre_ping=True,                       # Verify connection is alive
-        pool_timeout=30,                          # Wait max 30s for connection
-
-        # Performance optimizations
-        pool_use_lifo=True,  # Reuse most recent connection (better cache)
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_recycle=settings.DB_POOL_RECYCLE,
+        pool_pre_ping=True,
+        pool_timeout=30,
+        pool_use_lifo=True,
     )
 
 

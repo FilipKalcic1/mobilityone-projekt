@@ -127,6 +127,54 @@ def test_value_patterns():
     print()
 
 
+def test_is_vin():
+    """Test VIN pattern matching (lines 181-183)."""
+    # Valid VIN
+    assert PatternRegistry.is_vin("1HGBH41JXMN109186") is True
+    assert PatternRegistry.is_vin("WVWZZZ3CZWE123456") is True
+
+    # Invalid VIN
+    assert PatternRegistry.is_vin("") is False
+    assert PatternRegistry.is_vin(None) is False
+    assert PatternRegistry.is_vin("too-short") is False
+
+
+def test_is_email():
+    """Test email pattern matching (lines 188-190)."""
+    # Valid emails
+    assert PatternRegistry.is_email("test@example.com") is True
+    assert PatternRegistry.is_email("user.name@domain.hr") is True
+
+    # Invalid emails
+    assert PatternRegistry.is_email("") is False
+    assert PatternRegistry.is_email(None) is False
+    assert PatternRegistry.is_email("not-an-email") is False
+
+
+def test_find_uuids_empty():
+    """Test find_uuids with empty input (line 144)."""
+    assert PatternRegistry.find_uuids("") == []
+    assert PatternRegistry.find_uuids(None) == []
+
+
+def test_find_plates_empty():
+    """Test find_plates with empty input (line 159)."""
+    assert PatternRegistry.find_plates("") == []
+    assert PatternRegistry.find_plates(None) == []
+
+
+def test_is_uuid_empty():
+    """Test is_uuid with empty input (line 168)."""
+    assert PatternRegistry.is_uuid("") is False
+    assert PatternRegistry.is_uuid(None) is False
+
+
+def test_is_croatian_plate_empty():
+    """Test is_croatian_plate with empty input (line 175)."""
+    assert PatternRegistry.is_croatian_plate("") is False
+    assert PatternRegistry.is_croatian_plate(None) is False
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("PATTERN REGISTRY TESTS")

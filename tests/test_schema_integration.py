@@ -9,10 +9,13 @@ Tests the complete flow:
 import json
 from pathlib import Path
 
+# Project root (relative to tests/ directory - works on both CI and local)
+PROJECT_ROOT = Path(__file__).parent.parent
+
 
 def test_config_loading():
     """Test that config file exists and is valid."""
-    config_path = Path.cwd() / "config" / "context_param_schemas.json"
+    config_path = PROJECT_ROOT / "config" / "context_param_schemas.json"
 
     assert config_path.exists(), "Config file not found"
 
@@ -37,7 +40,7 @@ def test_config_loading():
 
 def test_fallback_names_coverage():
     """Test that common parameter variations are covered."""
-    config_path = Path.cwd() / "config" / "context_param_schemas.json"
+    config_path = PROJECT_ROOT / "config" / "context_param_schemas.json"
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
@@ -79,7 +82,7 @@ def test_no_hardcoded_patterns():
     ]
 
     for file_path in files_to_check:
-        full_path = Path.cwd() / file_path
+        full_path = PROJECT_ROOT / file_path
         if not full_path.exists():
             continue
 
@@ -105,7 +108,7 @@ def test_schema_based_usage():
     ]
 
     for file_path in files_to_check:
-        full_path = Path.cwd() / file_path
+        full_path = PROJECT_ROOT / file_path
         if not full_path.exists():
             continue
 

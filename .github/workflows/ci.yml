@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  DATABASE_URL: "postgresql+asyncpg://test:test@localhost/test_db"
+  REDIS_URL: "redis://localhost:6379/1"
+  MOBILITY_API_URL: "https://test-api.example.com"
+  MOBILITY_AUTH_URL: "https://test-api.example.com/sso/connect/token"
+  MOBILITY_CLIENT_ID: "test_client"
+  MOBILITY_CLIENT_SECRET: "test_secret"
+  MOBILITY_TENANT_ID: "test-tenant-id"
+  AZURE_OPENAI_ENDPOINT: "https://test.openai.azure.com"
+  AZURE_OPENAI_API_KEY: "test-api-key"
+  APP_ENV: "testing"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install faiss-cpu
+
+      - name: Pre-import modules
+        run: |
+          python -c "from config import get_settings; s = get_settings(); print(f'Config OK: APP_ENV={s.APP_ENV}')"
+          python -c "from services.cost_tracker import get_cost_tracker; print('CostTracker OK')"
+          python -c "from services.registry import ToolRegistry; print('Registry OK')"
+
+      - name: Collect tests
+        run: pytest tests/ --collect-only -q 2>&1 | tail -5
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --tb=short \
+            --ignore=tests/test_booking_flow.py \
+            --ignore=tests/test_case_flow.py \
+            --ignore=tests/test_mileage_flow.py \
+            -m "not integration" \
+            --cov=services --cov=config \
+            --cov-report=term-missing \
+            --cov-fail-under=80 2>&1 | tee test_output.txt
+          RESULT=$?
+          if [ $RESULT -ne 0 ]; then
+            echo "=== LAST 50 LINES ==="
+            tail -50 test_output.txt
+          fi
+          exit $RESULT
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          tail -5 test_output.txt >> $GITHUB_STEP_SUMMARY || true
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff mypy
+
+      - name: Ruff check
+        run: ruff check . --output-format=github
+
+      - name: Ruff format check
+        run: ruff format --check --diff .
+        continue-on-error: true
+
+      - name: Mypy type check (informational)
+        run: mypy config.py services/ --no-error-summary 2>&1 | head -30 || true
+        continue-on-error: true
+
+      - name: Compile entry points
+        run: python -m py_compile config.py && python -m py_compile main.py && python -m py_compile worker.py && python -m py_compile admin_api.py
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt bandit pip-audit
+
+      - name: Bandit security scan
+        run: bandit -r services/ config.py main.py worker.py admin_api.py database.py -f json -o bandit-report.json --severity-level medium || true
+
+      - name: Bandit summary
+        if: always()
+        run: bandit -r services/ config.py main.py worker.py admin_api.py database.py --severity-level high
+
+      - name: Dependency audit
+        if: always()
+        run: pip-audit --strict --desc on 2>&1 | head -50 || true

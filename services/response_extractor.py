@@ -1,6 +1,5 @@
 """
 LLM Response Extractor - Intelligent data extraction from API responses.
-Version: 1.0
 
 Single responsibility: Use LLM to extract ONLY relevant data from API response.
 NEVER fabricate data - only return what exists in the response.
@@ -8,15 +7,14 @@ NEVER fabricate data - only return what exists in the response.
 
 import json
 import logging
-from typing import Dict, Any, Optional, List
-
-from openai import AsyncAzureOpenAI
+from typing import Dict, Any, Optional
 
 from config import get_settings
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 class LLMResponseExtractor:
     """
@@ -30,12 +28,9 @@ class LLMResponseExtractor:
     """
 
     def __init__(self):
-        """Initialize with OpenAI client."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        """Initialize with shared OpenAI client + circuit breaker."""
+        self.openai = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
 
     async def extract(
         self,
@@ -192,7 +187,9 @@ DOSTUPNI PODACI:
 Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         try:
-            response = await self.openai.chat.completions.create(
+            response = await self._circuit_breaker.call(
+                f"llm_extractor:{settings.AZURE_OPENAI_DEPLOYMENT_NAME}",
+                self.openai.chat.completions.create,
                 model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -208,6 +205,10 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
             self._validate_extraction(content, data, query)
 
             return content
+
+        except CircuitOpenError:
+            logger.warning("ResponseExtractor: circuit breaker OPEN, using fallback")
+            return self._format_fallback(data, query)
 
         except Exception as e:
             logger.error(f"LLM extraction error: {e}")
@@ -256,11 +257,11 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         # Try to match known patterns
         patterns = {
-            "kilometra": ["LastMileage", "Mileage", "CurrentMileage", "mileage"],
-            "registraci": ["RegistrationExpirationDate", "RegistrationExpiry", "ExpirationDate"],
-            "tablice": ["LicencePlate", "Plate", "RegistrationNumber"],
-            "vozilo": ["FullVehicleName", "Name", "VehicleName", "DisplayName"],
-            "lizing": ["LeasingProvider", "Leasing", "LeasingCompany"],
+            "kilometra": ["LastMileage", "Mileage"],
+            "registraci": ["PeriodicActivities"],
+            "tablice": ["LicencePlate"],
+            "vozilo": ["FullVehicleName", "DisplayName"],
+            "lizing": ["ProviderName", "SupplierName"],
         }
 
         for keyword, fields in patterns.items():
@@ -272,6 +273,18 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
                             readable_key = self._humanize_key(field)
                             formatted = self._format_value(key, value)
                             return f"**{readable_key}:** {formatted}"
+
+                # If no value found for this keyword pattern, return explicit message
+                if keyword == "lizing":
+                    return "Podaci o lizing kući nisu dostupni za vaše vozilo."
+                elif keyword == "registraci":
+                    # Check PeriodicActivities for registration
+                    activities = data.get("PeriodicActivities", {})
+                    if activities and "Registracija" in activities:
+                        reg = activities["Registracija"]
+                        expiry = reg.get("ExpiryDate", "N/A")
+                        return f"**Istek registracije:** {self._format_value('ExpiryDate', expiry)}"
+                    return "Podaci o registraciji nisu dostupni."
 
         # Generic fallback - show first 5 non-null fields
         lines = []
@@ -298,7 +311,6 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
             "FullVehicleName": "Vozilo",
             "VehicleName": "Vozilo",
             "Name": "Naziv",
-            "DisplayName": "Naziv",
             "LicencePlate": "Registarska oznaka",
             "Plate": "Tablica",
             "VIN": "VIN broj",
@@ -308,9 +320,9 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
             "RegistrationExpiry": "Istek registracije",
             "ExpirationDate": "Datum isteka",
 
-            # Leasing
-            "LeasingProvider": "Lizing kuća",
-            "LeasingCompany": "Lizing kuća",
+            # Leasing - use actual Swagger field names
+            "ProviderName": "Lizing kuća",
+            "SupplierName": "Dobavljač",
 
             # Person
             "PersonName": "Ime",
@@ -354,7 +366,7 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
                     parts = date_part.split("-")
                     if len(parts) == 3:
                         return f"{parts[2]}.{parts[1]}.{parts[0]}"
-                except:
+                except (ValueError, AttributeError, IndexError):
                     pass
             return str(value)
 
@@ -370,10 +382,8 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         return str(value)
 
-
 # Singleton instance
 _extractor = None
-
 
 def get_response_extractor() -> LLMResponseExtractor:
     """Get singleton instance of response extractor."""

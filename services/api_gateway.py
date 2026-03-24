@@ -1,14 +1,14 @@
 """
 API Gateway
-Version: 10.0
 
 Enterprise HTTP client for MobilityOne API.
 DEPENDS ON: token_manager.py, config.py
 """
 
 import asyncio
-import json
 import logging
+import random
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, Optional
@@ -17,11 +17,16 @@ from urllib.parse import quote
 import httpx
 
 from config import get_settings
+from services.errors import (
+    ErrorCode, GatewayError as StructuredGatewayError,
+    HTTP_STATUS_TO_ERROR_CODE, CircuitOpenError,
+)
 from services.token_manager import TokenManager
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("api_gateway")
 settings = get_settings()
-
 
 class HttpMethod(Enum):
     """HTTP methods."""
@@ -30,7 +35,6 @@ class HttpMethod(Enum):
     PUT = "PUT"
     PATCH = "PATCH"
     DELETE = "DELETE"
-
 
 @dataclass
 class APIResponse:
@@ -41,7 +45,7 @@ class APIResponse:
     error_message: Optional[str] = None
     error_code: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         if self.success:
@@ -57,22 +61,27 @@ class APIResponse:
             "status_code": self.status_code
         }
 
-
 class APIGateway:
     """
     Enterprise API Gateway.
-    
+
     Features:
     - Automatic authentication
     - Retry with exponential backoff
     - Tenant header management
     - Connection pooling
     """
-    
+
     DEFAULT_MAX_RETRIES = 2
-    DEFAULT_TIMEOUT = 30.0
+    DEFAULT_TIMEOUT = 15.0
     RETRY_STATUS_CODES = {408, 429, 500, 502, 503, 504}
-    
+
+    # Circuit breaker: after N consecutive failures, skip API calls for COOLDOWN seconds.
+    # Uses jittered exponential backoff to prevent thundering herd on recovery.
+    CIRCUIT_FAILURE_THRESHOLD = 3
+    CIRCUIT_BASE_COOLDOWN_SECONDS = 15
+    CIRCUIT_MAX_COOLDOWN_SECONDS = 120
+
     def __init__(
         self,
         base_url: Optional[str] = None,
@@ -81,7 +90,7 @@ class APIGateway:
     ):
         """
         Initialize API Gateway.
-        
+
         Args:
             base_url: Base URL (defaults to settings)
             tenant_id: Tenant ID (defaults to settings)
@@ -89,17 +98,21 @@ class APIGateway:
         """
         self.base_url = (base_url or settings.MOBILITY_API_URL).rstrip("/")
         self.tenant_id = tenant_id or settings.tenant_id
-        
+
         self.token_manager = TokenManager(redis_client)
-        
+
         self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.DEFAULT_TIMEOUT, connect=10.0),
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+            timeout=httpx.Timeout(self.DEFAULT_TIMEOUT, connect=3.0),
+            limits=httpx.Limits(max_keepalive_connections=40, max_connections=100),
             follow_redirects=True
         )
-        
+
+        # Circuit breaker state
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
         logger.info(f"APIGateway initialized: {self.base_url}")
-    
+
     async def execute(
         self,
         method: HttpMethod,
@@ -112,7 +125,7 @@ class APIGateway:
     ) -> APIResponse:
         """
         Execute HTTP request.
-        
+
         Args:
             method: HTTP method
             path: API path
@@ -121,89 +134,179 @@ class APIGateway:
             headers: Additional headers
             tenant_id: Override tenant ID
             max_retries: Override retry count
-            
+
         Returns:
             APIResponse
         """
+        with trace_span(_tracer, "api_gateway.execute", {
+            "http.method": method.value,
+            "http.path": path,
+        }):
+            return await self._execute_inner(method, path, params, body, headers, tenant_id, max_retries)
+
+    async def _execute_inner(
+        self,
+        method: HttpMethod,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        body: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        tenant_id: Optional[str] = None,
+        max_retries: Optional[int] = None
+    ) -> APIResponse:
+        """Inner implementation of execute, wrapped by tracing."""
+        # Ensure params is a dict
+        if params is None:
+            params = {}
+
+        # For GET requests, set a sensible default Rows limit if not specified
+        # Using 100 to reduce chance of missing data; response formatter
+        # should indicate if more results exist
+        if method == HttpMethod.GET:
+            # Case-insensitive check for 'Rows'
+            if not any(k.lower() == 'rows' for k in params):
+                params['Rows'] = 100
+                logger.debug("Default 'Rows=100' added for GET request.")
+
         url = self._build_url(path, params)
         effective_tenant = tenant_id or self.tenant_id
         retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
-        
+
+        # Circuit breaker: fail fast if API has been consistently failing.
+        # Half-open: allow one probe request when cooldown expires to test recovery.
+        now = time.monotonic()
+        if self._consecutive_failures >= self.CIRCUIT_FAILURE_THRESHOLD and now < self._circuit_open_until:
+            remaining = int(self._circuit_open_until - now)
+            err = CircuitOpenError(
+                path,
+                cooldown_seconds=float(remaining),
+                metadata={"consecutive_failures": self._consecutive_failures},
+            )
+            logger.warning(f"{err}")
+            return APIResponse(
+                success=False,
+                status_code=0,
+                data=None,
+                error_message=f"Circuit breaker open: API unavailable (retry in {remaining}s)",
+                error_code=ErrorCode.CIRCUIT_OPEN.value,
+            )
+
         last_error = None
-        
+
         for attempt in range(retries + 1):
             try:
                 # Get token
                 token = await self.token_manager.get_token()
-                
+
                 # Build headers
                 request_headers = {
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 }
-                
+
                 # CRITICAL: x-tenant header
                 if effective_tenant:
                     request_headers["x-tenant"] = effective_tenant
-                
+
                 if headers:
                     request_headers.update(headers)
-                
-                # DETAILED LOGGING for debugging
-                logger.info(f"🔍 API Request: {method.value} {url}")
-                if params:
-                    logger.info(f"🔍 Query params: {params}")
-                if body:
-                    logger.info(f"🔍 Body: {json.dumps(body)[:500]}")
-                
+
+                logger.debug(f"API: {method.value} {url} params={params}")
+
                 # Execute
                 response = await self._do_request(method, url, request_headers, body)
-                
-                # Handle 401
+
+                # Handle 401 - refresh token immediately (no delay)
                 if response.status_code == 401 and attempt < retries:
-                    logger.warning("401 - Refreshing token")
-                    self.token_manager.invalidate()
-                    await asyncio.sleep(0.5)
+                    err = StructuredGatewayError(
+                        ErrorCode.TOKEN_REFRESH_FAILED,
+                        "401 - Refreshing token",
+                        status_code=401,
+                        metadata={"url": url, "attempt": attempt + 1},
+                    )
+                    logger.warning(f"{err}")
+                    await self.token_manager.invalidate()
                     continue
-                
+
                 # Handle retryable errors
                 if response.status_code in self.RETRY_STATUS_CODES and attempt < retries:
                     delay = self._calculate_backoff(attempt)
                     logger.warning(f"Retryable error {response.status_code}, delay={delay}s")
                     await asyncio.sleep(delay)
                     continue
-                
+
+                # Reset circuit breaker only on actual success (2xx)
+                if 200 <= response.status_code < 300:
+                    self._consecutive_failures = 0
                 return self._parse_response(response)
-                
+
             except httpx.TimeoutException as e:
                 last_error = f"Timeout: {e}"
+                err = StructuredGatewayError(
+                    ErrorCode.TIMEOUT,
+                    f"API timeout on attempt {attempt + 1}/{retries + 1}",
+                    metadata={"url": url, "attempt": attempt + 1},
+                    cause=e,
+                )
+                logger.warning(f"{err}")
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.CIRCUIT_FAILURE_THRESHOLD:
+                    cooldown = self._calculate_circuit_cooldown()
+                    self._circuit_open_until = time.monotonic() + cooldown
+                    logger.warning(f"Circuit OPENED: {self._consecutive_failures} consecutive failures, cooldown {cooldown:.0f}s")
                 if attempt < retries:
                     await asyncio.sleep(self._calculate_backoff(attempt))
                     continue
-                    
+
             except httpx.RequestError as e:
                 last_error = f"Network error: {e}"
+                err = StructuredGatewayError(
+                    ErrorCode.SERVICE_UNAVAILABLE,
+                    f"API network error on attempt {attempt + 1}/{retries + 1}",
+                    metadata={"url": url, "attempt": attempt + 1},
+                    cause=e,
+                )
+                logger.warning(f"{err}")
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.CIRCUIT_FAILURE_THRESHOLD:
+                    cooldown = self._calculate_circuit_cooldown()
+                    self._circuit_open_until = time.monotonic() + cooldown
+                    logger.warning(f"Circuit OPENED: {self._consecutive_failures} consecutive failures, cooldown {cooldown:.0f}s")
                 if attempt < retries:
                     await asyncio.sleep(self._calculate_backoff(attempt))
                     continue
-                    
+
             except Exception as e:
                 last_error = f"Error: {e}"
-                logger.error(f"API call error: {e}")
+                err = StructuredGatewayError(
+                    ErrorCode.SERVER_ERROR,
+                    f"API call error: {e}",
+                    metadata={"url": url, "attempt": attempt + 1},
+                    cause=e,
+                )
+                logger.error(f"{err}")
                 if attempt < retries:
                     await asyncio.sleep(self._calculate_backoff(attempt))
                     continue
-        
-        logger.error(f"All retries exhausted: {last_error}")
+
+        err = StructuredGatewayError(
+            ErrorCode.RETRY_EXHAUSTED,
+            f"All {retries} retries exhausted" if retries > 0 else "Request failed (no retries configured)",
+            metadata={"url": url, "retries": retries, "last_error": last_error},
+        )
+        if retries > 0:
+            logger.error(f"{err}")
+        else:
+            logger.warning(f"{err}")
         return APIResponse(
             success=False,
             status_code=0,
             data=None,
             error_message=last_error or "Request failed",
-            error_code="RETRY_EXHAUSTED"
+            error_code=ErrorCode.RETRY_EXHAUSTED.value,
         )
-    
+
     async def _do_request(
         self,
         method: HttpMethod,
@@ -212,13 +315,27 @@ class APIGateway:
         body: Optional[Dict[str, Any]]
     ) -> httpx.Response:
         """Execute raw HTTP request using dispatch pattern."""
+        with trace_span(_tracer, "api_gateway.http_request", {
+            "http.method": method.value,
+            "http.url_preview": url[:80],
+        }):
+            return await self._do_request_inner(method, url, headers, body)
+
+    async def _do_request_inner(
+        self,
+        method: HttpMethod,
+        url: str,
+        headers: Dict[str, str],
+        body: Optional[Dict[str, Any]]
+    ) -> httpx.Response:
+        """Inner implementation of _do_request."""
         # Dispatch table - maps HttpMethod to client method
         dispatch = {
             HttpMethod.GET: lambda: self.client.get(url, headers=headers),
             HttpMethod.POST: lambda: self.client.post(url, headers=headers, json=body),
             HttpMethod.PUT: lambda: self.client.put(url, headers=headers, json=body),
             HttpMethod.PATCH: lambda: self.client.patch(url, headers=headers, json=body),
-            HttpMethod.DELETE: lambda: self.client.delete(url, headers=headers),
+            HttpMethod.DELETE: lambda: self.client.delete(url, headers=headers, **({"json": body} if body else {})),
         }
 
         handler = dispatch.get(method)
@@ -226,7 +343,7 @@ class APIGateway:
             raise ValueError(f"Unsupported HTTP method: {method}")
 
         return await handler()
-    
+
     def _build_url(self, path: str, params: Optional[Dict[str, Any]]) -> str:
         """
         Build URL with smart detection.
@@ -234,34 +351,45 @@ class APIGateway:
         CRITICAL FIX: If path is already a complete URL (starts with http),
         don't prepend base_url - just use it as-is.
         """
-        # If path is already a complete URL, use it directly
+        # If path is already a complete URL, validate it matches our base domain
         if path.startswith("http://") or path.startswith("https://"):
+            from urllib.parse import urlparse
+            base_host = urlparse(self.base_url).hostname
+            path_host = urlparse(path).hostname
+            if path_host != base_host:
+                err = StructuredGatewayError(
+                    ErrorCode.SSRF_BLOCKED,
+                    f"SSRF blocked: {path} does not match base domain {base_host}",
+                    metadata={"path_host": path_host, "base_host": base_host},
+                )
+                logger.warning(f"{err}")
+                raise ValueError(f"URL host mismatch: expected {base_host}")
             url = path
         else:
             # Relative path - prepend base_url
             if not path.startswith("/"):
                 path = "/" + path
             url = f"{self.base_url}{path}"
-        
+
         if params:
             clean = {k: v for k, v in params.items() if v is not None}
             if clean:
                 parts = []
                 for k, v in clean.items():
                     if k == "Filter":
-                        # KLJUČNO: Ne enkodiramo '=' u '%3D' jer API to ne priznaje
-                        # safe='=' ostavlja znak jednakosti 'sirovim'
+                        # Don't encode '=' as '%3D' because the API rejects it
+                        # safe='=' keeps the equals sign unencoded
                         parts.append(f"{k}={quote(str(v), safe='=')}")
                     else:
                         parts.append(f"{k}={quote(str(v), safe='')}")
                 url = f"{url}?{'&'.join(parts)}"
         return url
-    
+
     def _parse_response(self, response: httpx.Response) -> APIResponse:
         """
         Parse HTTP response with FIREWALL protection.
 
-        MASTER PROMPT v3.1: JSON ENFORCEMENT
+        JSON ENFORCEMENT
         - Only JSON responses allowed (Content-Type: application/json)
         - HTML responses BLOCKED (auth redirects, nginx errors)
         - User NEVER sees HTML tags or raw error codes
@@ -277,39 +405,42 @@ class APIGateway:
         )
 
         if is_html:
-            logger.error(
-                f"🚨 HTML LEAKAGE BLOCKED: Status={response.status_code}, "
-                f"Content-Type={content_type}"
+            err = StructuredGatewayError(
+                ErrorCode.HTML_RESPONSE_LEAKED,
+                f"HTML LEAKAGE BLOCKED: Status={response.status_code}, Content-Type={content_type}",
+                status_code=response.status_code,
+                metadata={"content_type": content_type},
             )
+            logger.error(f"{err}")
 
-            # MASTER PROMPT v3.1: User-facing clean error messages
+            # User-facing clean error messages
             if response.status_code == 200:
                 # Even with 200, HTML means auth redirect or wrong endpoint
                 error_msg = (
                     "Trenutno ne mogu dohvatiti te podatke zbog tehničkih poteškoća sa servisom. "
                     "API je vratio UI/Login stranicu umjesto podataka."
                 )
-                error_code = "HTML_RESPONSE_AUTH_ERROR"
+                error_code = ErrorCode.HTML_RESPONSE_LEAKED.value
                 status = 401  # Treat as auth error
             elif response.status_code == 404:
                 error_msg = (
                     "Trenutno ne mogu dohvatiti te podatke zbog tehničkih poteškoća sa servisom. "
                     "Traženi resurs nije pronađen."
                 )
-                error_code = "NOT_FOUND"
+                error_code = ErrorCode.NOT_FOUND.value
                 status = 404
             elif response.status_code == 405:
                 error_msg = (
                     "Trenutno ne mogu dohvatiti te podatke zbog tehničkih poteškoća sa servisom. "
                     "Greška u konfiguraciji API zahtjeva."
                 )
-                error_code = "METHOD_NOT_ALLOWED"
+                error_code = ErrorCode.METHOD_NOT_ALLOWED.value
                 status = 405
             else:
                 error_msg = (
                     "Trenutno ne mogu dohvatiti te podatke zbog tehničkih poteškoća sa servisom."
                 )
-                error_code = "HTML_RESPONSE_ERROR"
+                error_code = ErrorCode.HTML_RESPONSE_LEAKED.value
                 status = response.status_code
 
             return APIResponse(
@@ -324,9 +455,17 @@ class APIGateway:
         # FIREWALL GATE 2: Normal error handling (non-HTML)
         if response.status_code >= 400:
             error_msg = self._extract_error_message(response)
-            error_code = self._map_status_code(response.status_code)
+            structured_code = HTTP_STATUS_TO_ERROR_CODE.get(
+                response.status_code, ErrorCode.SERVER_ERROR
+            )
+            error_code = structured_code.value
 
-            logger.warning(f"API error: {response.status_code} - {error_msg[:200]}")
+            err = StructuredGatewayError(
+                structured_code,
+                f"API error: {response.status_code} - {error_msg[:200]}",
+                status_code=response.status_code,
+            )
+            logger.warning(f"{err}")
 
             return APIResponse(
                 success=False,
@@ -343,7 +482,11 @@ class APIGateway:
         except Exception as e:
             # JSON parsing failed - might be empty response or plain text
             logger.warning(f"JSON parsing failed: {e}")
-            data = response.text if response.text else None
+            data = response.text if response.text else {}
+
+        # Ensure data is never None (downstream code expects dict/list)
+        if data is None:
+            data = {}
 
         return APIResponse(
             success=True,
@@ -351,7 +494,7 @@ class APIGateway:
             data=data,
             headers=headers_dict
         )
-    
+
     def _extract_error_message(self, response: httpx.Response) -> str:
         """Extract error message from response."""
         try:
@@ -362,52 +505,51 @@ class APIGateway:
             if isinstance(data, dict):
                 return str(data)[:500]
             return response.text[:500]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error message extraction failed (non-JSON response): {e}")
             return f"HTTP {response.status_code}: {response.text[:500]}"
-    
-    def _map_status_code(self, status: int) -> str:
-        """Map status code to error code."""
-        mapping = {
-            400: "BAD_REQUEST",
-            401: "UNAUTHORIZED",
-            403: "FORBIDDEN",
-            404: "NOT_FOUND",
-            405: "METHOD_NOT_ALLOWED",
-            422: "VALIDATION_ERROR",
-            429: "RATE_LIMITED",
-            500: "SERVER_ERROR",
-            502: "BAD_GATEWAY",
-            503: "SERVICE_UNAVAILABLE"
-        }
-        return mapping.get(status, f"HTTP_{status}")
-    
+
     def _calculate_backoff(self, attempt: int) -> float:
-        """Calculate exponential backoff."""
-        import random
+        """Calculate exponential backoff with jitter for retries."""
         base = 2 ** attempt
         jitter = random.uniform(0, 0.5)
         return min(base + jitter, 30)
-    
+
+    def _calculate_circuit_cooldown(self) -> float:
+        """
+        Calculate jittered exponential cooldown for circuit breaker.
+
+        Uses 'decorrelated jitter' to spread recovery probes across time,
+        preventing thundering herd when multiple workers' circuits close simultaneously.
+        Backoff grows with consecutive failures: 15s, 30s, 60s, 120s max.
+        """
+        failures_above_threshold = self._consecutive_failures - self.CIRCUIT_FAILURE_THRESHOLD
+        base = self.CIRCUIT_BASE_COOLDOWN_SECONDS * (2 ** max(0, failures_above_threshold))
+        capped = min(base, self.CIRCUIT_MAX_COOLDOWN_SECONDS)
+        # Jitter: 0.5x to 1.5x of base cooldown
+        return random.uniform(capped * 0.5, capped * 1.5)
+
     # === CONVENIENCE METHODS ===
-    
+
     async def get(self, path: str, params: Optional[Dict] = None, **kwargs) -> APIResponse:
         """GET request."""
         return await self.execute(HttpMethod.GET, path, params=params, **kwargs)
-    
+
     async def post(self, path: str, body: Optional[Dict] = None, **kwargs) -> APIResponse:
         """POST request."""
         return await self.execute(HttpMethod.POST, path, body=body, **kwargs)
-    
+
     async def put(self, path: str, body: Optional[Dict] = None, **kwargs) -> APIResponse:
         """PUT request."""
         return await self.execute(HttpMethod.PUT, path, body=body, **kwargs)
-    
+
     async def delete(self, path: str, **kwargs) -> APIResponse:
         """DELETE request."""
         return await self.execute(HttpMethod.DELETE, path, **kwargs)
-    
+
     async def close(self) -> None:
-        """Close HTTP client."""
+        """Close HTTP client and token manager."""
         if self.client:
             await self.client.aclose()
-            logger.info("APIGateway closed")
+        await self.token_manager.close()
+        logger.info("APIGateway closed")

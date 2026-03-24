@@ -1,6 +1,5 @@
 """
 End-to-End Car Booking Integration Test
-Version: 1.0
 
 Comprehensive test simulating a real car booking scenario:
 1. User wants to book a car for a specific time
@@ -535,7 +534,6 @@ class TestCostTracking:
 
         # Simulate AI calls during booking flow
         await tracker.record_usage(
-            model="gpt-4o-mini",
             prompt_tokens=150,
             completion_tokens=50,
             tenant_id="tenant-001"
@@ -543,7 +541,6 @@ class TestCostTracking:
 
         # Second call for confirmation
         await tracker.record_usage(
-            model="gpt-4o-mini",
             prompt_tokens=100,
             completion_tokens=30,
             tenant_id="tenant-001"
@@ -554,17 +551,13 @@ class TestCostTracking:
         assert stats["session_completion_tokens"] == 80
 
     def test_cost_calculation(self):
-        """Test cost calculation for different models."""
-        from services.cost_tracker import ModelPricing
+        """Test cost calculation with V2 simplified pricing."""
+        from services.cost_tracker import CostTracker, INPUT_PRICE, OUTPUT_PRICE
 
-        # GPT-4o-mini pricing
-        cost = ModelPricing.calculate_cost(
-            model="gpt-4o-mini",
-            prompt_tokens=1000,
-            completion_tokens=500
-        )
+        tracker = CostTracker(MagicMock())
+        cost = tracker._calculate_cost(1000, 500)
         assert cost > 0
-        assert isinstance(cost, (int, float))
+        assert isinstance(cost, float)
 
 
 # ============================================================================

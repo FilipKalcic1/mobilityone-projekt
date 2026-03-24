@@ -1,6 +1,5 @@
 """
 Ghost Variables Test
-Version: 1.0
 
 Tests for detecting undefined/unused variables in the fixed service files.
 Performs static analysis on Python source code.

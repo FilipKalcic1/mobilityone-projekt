@@ -1,6 +1,5 @@
 """
 GDPR Data Masking Service
-Version: 2.1 - PII Detection & Anonymization (FIXED)
 
 LEGAL REQUIREMENT:
 - GDPR Article 17: Right to Erasure
@@ -30,7 +29,6 @@ SECURITY:
     - Minimum salt length: 32 characters
 """
 
-import os
 import re
 import hmac
 import hashlib
@@ -41,7 +39,11 @@ from typing import Dict, List, Optional, Set, FrozenSet
 from dataclasses import dataclass, field
 from enum import Enum
 
+from services.tracing import get_tracer, trace_span
+from services.errors import InfrastructureError, ErrorCode
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("gdpr_masking")
 
 # Thread-safe singleton lock
 _singleton_lock = threading.Lock()
@@ -172,7 +174,7 @@ class GDPRMaskingService:
         self,
         use_hashing: bool = True,
         hash_salt: Optional[str] = None
-    ):
+    ) -> None:
         """
         Initialize masking service.
 
@@ -186,11 +188,12 @@ class GDPRMaskingService:
         """
         self.use_hashing = use_hashing
 
-        # CRITICAL: Load salt from environment, never hardcode!
+        # CRITICAL: Load salt from config, never hardcode!
         if hash_salt:
             self.hash_salt = hash_salt
         else:
-            self.hash_salt = os.getenv("GDPR_HASH_SALT")
+            from config import get_settings
+            self.hash_salt = get_settings().GDPR_HASH_SALT
             if not self.hash_salt:
                 # Generate a secure random salt for this session
                 # WARNING: This means hashes won't be consistent across restarts!
@@ -217,8 +220,8 @@ class GDPRMaskingService:
         )
 
         logger.info(
-            "GDPRMaskingService initialized (salt from env: %s)",
-            "yes" if os.getenv("GDPR_HASH_SALT") else "no"
+            "GDPRMaskingService initialized (salt provided: %s)",
+            "yes" if hash_salt else "from config"
         )
 
     def _compile_patterns(self) -> None:
@@ -336,7 +339,7 @@ class GDPRMaskingService:
         # Additional check: don't match obvious non-OIB patterns
         # OIB shouldn't be all same digits or sequential
         if len(set(oib)) == 1:  # All same digit like 11111111111
-            logger.debug(f"Rejected OIB candidate: all same digits")
+            logger.debug("Rejected OIB candidate: all same digits")
             return False
 
         # MOD 11,10 validation
@@ -394,40 +397,43 @@ class GDPRMaskingService:
         Returns:
             MaskingResult with masked text and detected PII
         """
-        if not text:
-            return MaskingResult(
-                original_text="",
-                masked_text="",
-                pii_found=[],
-                pii_count=0
+        with trace_span(_tracer, "gdpr_masking.mask_pii", {
+            "text_length": len(text) if text else 0,
+        }):
+            if not text:
+                return MaskingResult(
+                    original_text="",
+                    masked_text="",
+                    pii_found=[],
+                    pii_count=0
+                )
+
+            matches = self.detect_pii(text)
+            masked_text = text
+
+            # Replace from end to start (to preserve positions)
+            for match in matches:
+                masked_text = (
+                    masked_text[:match.start] +
+                    match.masked +
+                    masked_text[match.end:]
+                )
+
+            result = MaskingResult(
+                original_text=text,
+                masked_text=masked_text,
+                pii_found=matches,
+                pii_count=len(matches)
             )
 
-        matches = self.detect_pii(text)
-        masked_text = text
+            if matches:
+                # Mask the log message itself to avoid logging PII
+                logger.info(
+                    f"GDPR: Masked {len(matches)} PII items: "
+                    f"{[m.pii_type.value for m in matches]}"
+                )
 
-        # Replace from end to start (to preserve positions)
-        for match in matches:
-            masked_text = (
-                masked_text[:match.start] +
-                match.masked +
-                masked_text[match.end:]
-            )
-
-        result = MaskingResult(
-            original_text=text,
-            masked_text=masked_text,
-            pii_found=matches,
-            pii_count=len(matches)
-        )
-
-        if matches:
-            # Mask the log message itself to avoid logging PII
-            logger.info(
-                f"GDPR: Masked {len(matches)} PII items: "
-                f"{[m.pii_type.value for m in matches]}"
-            )
-
-        return result
+            return result
 
     async def mask_pii_async(self, text: str) -> MaskingResult:
         """
@@ -462,40 +468,44 @@ class GDPRMaskingService:
         Returns:
             Dictionary with masked values
         """
-        if not data or not isinstance(data, dict):
-            return data
+        with trace_span(_tracer, "gdpr_masking.mask_dict", {
+            "field_count": len(data) if data and isinstance(data, dict) else 0,
+            "current_depth": _current_depth,
+        }):
+            if not data or not isinstance(data, dict):
+                return data
 
-        # Prevent infinite recursion
-        if _current_depth >= max_depth:
-            logger.warning(f"GDPR masking: max depth {max_depth} reached, stopping recursion")
-            return data
+            # Prevent infinite recursion
+            if _current_depth >= max_depth:
+                logger.warning(f"GDPR masking: max depth {max_depth} reached, stopping recursion")
+                return data
 
-        result = {}
+            result = {}
 
-        # Use frozenset for O(1) lookup
-        if fields_to_mask:
-            fields_lower: FrozenSet[str] = frozenset(f.lower() for f in fields_to_mask)
-        else:
-            fields_lower = self._mask_fields_lower
-
-        for key, value in data.items():
-            key_lower = key.lower() if isinstance(key, str) else str(key).lower()
-
-            if isinstance(value, str) and key_lower in fields_lower:
-                mask_result = self.mask_pii(value)
-                result[key] = mask_result.masked_text
-            elif isinstance(value, dict):
-                result[key] = self.mask_dict(
-                    value, fields_to_mask, max_depth, _current_depth + 1
-                )
-            elif isinstance(value, list):
-                result[key] = self._mask_list(
-                    value, fields_to_mask, max_depth, _current_depth + 1
-                )
+            # Use frozenset for O(1) lookup
+            if fields_to_mask:
+                fields_lower: FrozenSet[str] = frozenset(f.lower() for f in fields_to_mask)
             else:
-                result[key] = value
+                fields_lower = self._mask_fields_lower
 
-        return result
+            for key, value in data.items():
+                key_lower = key.lower() if isinstance(key, str) else str(key).lower()
+
+                if isinstance(value, str) and key_lower in fields_lower:
+                    mask_result = self.mask_pii(value)
+                    result[key] = mask_result.masked_text
+                elif isinstance(value, dict):
+                    result[key] = self.mask_dict(
+                        value, fields_to_mask, max_depth, _current_depth + 1
+                    )
+                elif isinstance(value, list):
+                    result[key] = self._mask_list(
+                        value, fields_to_mask, max_depth, _current_depth + 1
+                    )
+                else:
+                    result[key] = value
+
+            return result
 
     def _mask_list(
         self,
@@ -602,7 +612,7 @@ class GDPRMaskingService:
 
             if user_mapping:
                 # Find conversations for this user and anonymize associated reports
-                from models import Conversation
+                from models import Conversation, Message
                 conv_result = await db_session.execute(
                     select(Conversation.id).where(
                         Conversation.user_id == user_mapping
@@ -611,7 +621,18 @@ class GDPRMaskingService:
                 conversation_ids = [str(c) for c in conv_result.scalars().all()]
 
                 if conversation_ids:
-                    # Anonymize reports for these conversations
+                    # 2a. Anonymize messages in those conversations
+                    msg_result = await db_session.execute(
+                        update(Message)
+                        .where(Message.conversation_id.in_(conversation_ids))
+                        .values(
+                            content="[GDPR DELETED]",
+                            metadata=None
+                        )
+                    )
+                    anonymized["messages"] = msg_result.rowcount
+
+                    # 2b. Anonymize hallucination reports for these conversations
                     report_result = await db_session.execute(
                         update(HallucinationReport)
                         .where(HallucinationReport.conversation_id.in_(conversation_ids))
@@ -622,6 +643,28 @@ class GDPRMaskingService:
                         )
                     )
                     anonymized["hallucination_reports"] = report_result.rowcount
+
+                # 2c. Anonymize conversations themselves
+                conv_anon_result = await db_session.execute(
+                    update(Conversation)
+                    .where(Conversation.user_id == user_mapping)
+                    .values(state="anonymized")
+                )
+                anonymized["conversations"] = conv_anon_result.rowcount
+
+            # 3. Mark user mapping as anonymized with timestamp
+            from datetime import datetime, timezone as tz
+            await db_session.execute(
+                update(UserMapping)
+                .where(UserMapping.phone_number == user_id)
+                .values(
+                    phone_number=f"[GDPR:{hashed_id[:12]}]",
+                    display_name="[GDPR DELETED]",
+                    is_active=False,
+                    gdpr_anonymized_at=datetime.now(tz.utc)
+                )
+            )
+            anonymized["user_mapping"] = 1
 
             await db_session.commit()
 
@@ -635,8 +678,254 @@ class GDPRMaskingService:
 
         except Exception as e:
             await db_session.rollback()
-            logger.error(f"GDPR erasure failed: {e}")
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"GDPR erasure failed: {e}",
+                metadata={"user_hash": self._hash_value(user_id)},
+                cause=e,
+            )
+            logger.error(str(err))
             raise
+
+    async def erase_redis_state(self, user_id: str, redis_client) -> Dict:
+        """
+        GDPR Article 17: Erase all user state from Redis.
+
+        Deletes conversation state, chat history, user context, tenant cache,
+        and scrubs DLQ entries containing this user's phone number.
+
+        Args:
+            user_id: User phone number
+            redis_client: Async Redis client
+
+        Returns:
+            Summary of deleted keys
+        """
+        erased = {"keys_deleted": 0, "dlq_scrubbed": 0}
+
+        # Generate all phone variations for key lookup
+        digits = "".join(c for c in user_id if c.isdigit())
+        phone_variants = {user_id, digits}
+        if digits.startswith("385"):
+            phone_variants.add("0" + digits[3:])
+            phone_variants.add("+" + digits)
+        elif digits.startswith("0"):
+            phone_variants.add("385" + digits[1:])
+
+        try:
+            # 1. Delete known Redis key patterns for this user
+            key_patterns = [
+                "conv_state:{phone}",
+                "chat_history:{phone}",
+                "user_context:{phone}",
+                "tenant:{phone}",
+            ]
+
+            for phone in phone_variants:
+                for pattern in key_patterns:
+                    key = pattern.format(phone=phone)
+                    deleted = await redis_client.delete(key)
+                    erased["keys_deleted"] += deleted
+
+            # 2. Scrub DLQ entries containing this user's data
+            dlq_key = "dlq:webhook"
+            dlq_len = await redis_client.llen(dlq_key)
+            if dlq_len > 0:
+                # Read all DLQ entries, remove those matching user
+                entries = await redis_client.lrange(dlq_key, 0, -1)
+                to_remove = []
+                for entry in entries:
+                    try:
+                        entry_str = entry if isinstance(entry, str) else entry.decode("utf-8")
+                        if any(phone in entry_str for phone in phone_variants):
+                            to_remove.append(entry)
+                    except Exception:
+                        continue
+
+                for entry in to_remove:
+                    await redis_client.lrem(dlq_key, 1, entry)
+                    erased["dlq_scrubbed"] += 1
+
+            hashed = self._hash_value(user_id)
+            logger.warning(
+                f"GDPR REDIS ERASURE: User {hashed} — "
+                f"{erased['keys_deleted']} keys deleted, "
+                f"{erased['dlq_scrubbed']} DLQ entries scrubbed"
+            )
+
+        except Exception as e:
+            err = InfrastructureError(
+                ErrorCode.REDIS_UNAVAILABLE,
+                f"GDPR Redis erasure failed: {e}",
+                metadata={"user_hash": self._hash_value(user_id)},
+                cause=e,
+            )
+            logger.error(str(err))
+            raise
+
+        return erased
+
+    async def export_user_data(
+        self,
+        user_id: str,
+        db_session,
+        redis_client=None
+    ) -> Dict:
+        """
+        GDPR Article 20: Right to Data Portability.
+
+        Export all user data in a structured, machine-readable JSON format.
+        Pulls from BOTH Postgres AND Redis for complete portability.
+
+        Args:
+            user_id: User identifier (phone number)
+            db_session: Database session
+            redis_client: Optional async Redis client for ephemeral state export
+
+        Returns:
+            Dict with all user data (user_mappings, conversations, messages,
+            tool_executions, hallucination_reports, redis_state)
+        """
+        from sqlalchemy import select
+        from models import UserMapping, Conversation, Message, HallucinationReport
+
+        export = {
+            "gdpr_export_version": "1.1",
+            "export_type": "GDPR Article 20 — Right to Data Portability",
+            "user_identifier_hash": self._hash_value(user_id),
+            "user_profile": None,
+            "conversations": [],
+            "hallucination_reports": [],
+            "redis_state": None,
+        }
+
+        try:
+            # 1. User profile
+            user_result = await db_session.execute(
+                select(UserMapping).where(UserMapping.phone_number == user_id)
+            )
+            user = user_result.scalar_one_or_none()
+
+            if not user:
+                logger.info(f"GDPR export: no user found for hash {self._hash_value(user_id)}")
+                return export
+
+            export["user_profile"] = {
+                "phone_number": user.phone_number,
+                "display_name": user.display_name,
+                "tenant_id": user.tenant_id,
+                "is_active": user.is_active,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "gdpr_consent_given": user.gdpr_consent_given,
+                "gdpr_consent_at": user.gdpr_consent_at.isoformat() if user.gdpr_consent_at else None,
+            }
+
+            # 2. Conversations + messages
+            conv_result = await db_session.execute(
+                select(Conversation).where(Conversation.user_id == user.id)
+            )
+            conversations = conv_result.scalars().all()
+
+            for conv in conversations:
+                msg_result = await db_session.execute(
+                    select(Message)
+                    .where(Message.conversation_id == conv.id)
+                    .order_by(Message.timestamp)
+                )
+                messages = msg_result.scalars().all()
+
+                conv_data = {
+                    "conversation_id": str(conv.id),
+                    "started_at": conv.started_at.isoformat() if conv.started_at else None,
+                    "ended_at": conv.ended_at.isoformat() if conv.ended_at else None,
+                    "status": conv.status,
+                    "flow_type": conv.flow_type,
+                    "messages": [
+                        {
+                            "role": msg.role,
+                            "content": msg.content,
+                            "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+                            "tool_name": msg.tool_name,
+                        }
+                        for msg in messages
+                    ],
+                }
+                export["conversations"].append(conv_data)
+
+            # 3. Hallucination reports for user's conversations
+            conv_ids = [str(c.id) for c in conversations]
+            if conv_ids:
+                report_result = await db_session.execute(
+                    select(HallucinationReport)
+                    .where(HallucinationReport.conversation_id.in_(conv_ids))
+                    .order_by(HallucinationReport.created_at)
+                )
+                reports = report_result.scalars().all()
+
+                export["hallucination_reports"] = [
+                    {
+                        "user_query": r.user_query,
+                        "bot_response": r.bot_response,
+                        "user_feedback": r.user_feedback,
+                        "model": r.model,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "category": r.category,
+                        "correction": r.correction,
+                    }
+                    for r in reports
+                ]
+
+            # 4. Redis ephemeral state (conv_state, chat_history, user_context)
+            if redis_client:
+                redis_state = {}
+                digits = "".join(c for c in user_id if c.isdigit())
+                phone_variants = {user_id, digits}
+                if digits.startswith("385"):
+                    phone_variants.add("0" + digits[3:])
+                    phone_variants.add("+" + digits)
+                elif digits.startswith("0"):
+                    phone_variants.add("385" + digits[1:])
+
+                key_prefixes = ["conv_state", "chat_history", "user_context"]
+                for phone in phone_variants:
+                    for prefix in key_prefixes:
+                        key = f"{prefix}:{phone}"
+                        try:
+                            val = await redis_client.get(key)
+                            if val:
+                                val_str = val if isinstance(val, str) else val.decode("utf-8")
+                                try:
+                                    import json as _json
+                                    redis_state[key] = _json.loads(val_str)
+                                except (ValueError, TypeError):
+                                    redis_state[key] = val_str
+                        except Exception:
+                            continue
+
+                if redis_state:
+                    export["redis_state"] = redis_state
+
+            hashed = self._hash_value(user_id)
+            redis_keys = len(export.get("redis_state") or {})
+            logger.info(
+                f"GDPR DATA EXPORT: User {hashed} — "
+                f"{len(export['conversations'])} conversations, "
+                f"{sum(len(c['messages']) for c in export['conversations'])} messages, "
+                f"{len(export['hallucination_reports'])} hallucination reports, "
+                f"{redis_keys} redis keys"
+            )
+
+        except Exception as e:
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"GDPR data export failed: {e}",
+                metadata={"user_hash": self._hash_value(user_id)},
+                cause=e,
+            )
+            logger.error(str(err))
+            raise
+
+        return export
 
     def mask_log_message(self, message: str) -> str:
         """

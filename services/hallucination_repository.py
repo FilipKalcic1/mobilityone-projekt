@@ -1,6 +1,5 @@
 """
 Hallucination Repository - Database persistence for feedback loop.
-Version: 1.1 (FIXED)
 
 Handles CRUD operations for HallucinationReport in PostgreSQL.
 Separates DB logic from business logic in ErrorLearningService.
@@ -58,7 +57,7 @@ class HallucinationRepository:
     functionality. It's meant for simple CRUD operations only.
     """
 
-    def __init__(self, db: AsyncSession, gdpr_masking_service=None):
+    def __init__(self, db: AsyncSession, gdpr_masking_service=None) -> None:
         """
         Initialize repository.
 
@@ -224,12 +223,14 @@ class HallucinationRepository:
         query = select(HallucinationReport).where(
             # Use .is_(False) for proper NULL handling
             HallucinationReport.reviewed.is_(False)
-        ).order_by(
-            desc(HallucinationReport.created_at)
-        ).limit(validated_limit).offset(validated_offset)
+        )
 
         if tenant_id:
             query = query.where(HallucinationReport.tenant_id == tenant_id)
+
+        query = query.order_by(
+            desc(HallucinationReport.created_at)
+        ).limit(validated_limit).offset(validated_offset)
 
         try:
             result = await self.db.execute(query)
@@ -260,10 +261,8 @@ class HallucinationRepository:
         validated_offset = self._validate_offset(offset)
         validated_category = self._validate_category(category)
 
-        # Build query with ORDER BY for deterministic pagination
-        query = select(HallucinationReport).order_by(
-            desc(HallucinationReport.created_at)
-        ).limit(validated_limit).offset(validated_offset)
+        # Build query with filters BEFORE pagination for correct results
+        query = select(HallucinationReport)
 
         if tenant_id:
             query = query.where(HallucinationReport.tenant_id == tenant_id)
@@ -272,6 +271,10 @@ class HallucinationRepository:
         if reviewed_only:
             # Use .is_(True) for proper NULL handling
             query = query.where(HallucinationReport.reviewed.is_(True))
+
+        query = query.order_by(
+            desc(HallucinationReport.created_at)
+        ).limit(validated_limit).offset(validated_offset)
 
         try:
             result = await self.db.execute(query)

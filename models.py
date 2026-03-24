@@ -1,11 +1,7 @@
 """
 Database Models
-Version: 10.1
 
-SQLAlchemy ORM models.
-DEPENDS ON: database.py
-
-FIXED: Replaced deprecated datetime.utcnow() with timezone-aware datetime.now(timezone.utc)
+SQLAlchemy ORM models with timezone-aware timestamps.
 """
 
 import uuid
@@ -45,6 +41,12 @@ class UserMapping(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # GDPR consent tracking
+    gdpr_consent_given = Column(Boolean, default=False)
+    gdpr_consent_at = Column(DateTime(timezone=True), nullable=True)
+    gdpr_data_retention_days = Column(Integer, default=365)
+    gdpr_anonymized_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_user_phone_active", "phone_number", "is_active"),

@@ -1,6 +1,5 @@
 """
 Tool Handler - Tool execution and dependency chaining.
-Version: 1.0
 
 Single responsibility: Execute tools with automatic dependency resolution.
 """
@@ -12,6 +11,7 @@ from typing import Dict, Any, Optional, List
 from services.api_capabilities import get_capability_registry
 from services.error_translator import get_error_translator
 from services.tool_evaluator import get_tool_evaluator
+from services.context import UserContextManager
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class ToolHandler:
         conv_manager,
         sender: str,
         chain_depth: int = 0,
-        user_query: Optional[str] = None  # NEW v10.1: For intent-aware formatting
+        user_query: Optional[str] = None  # For intent-aware formatting
     ) -> Dict[str, Any]:
         """
         Execute tool call with automatic dependency chaining.
@@ -187,7 +187,7 @@ class ToolHandler:
         tool_name: str,
         parameters: Dict[str, Any],
         conv_manager,
-        user_query: Optional[str] = None  # NEW v10.1: For intent-aware formatting
+        user_query: Optional[str] = None  # For intent-aware formatting
     ) -> Dict[str, Any]:
         """Handle successful tool execution."""
         result_dict = {
@@ -199,11 +199,11 @@ class ToolHandler:
         # DEBUG: Log raw API response for debugging data extraction issues
         try:
             raw_json = json.dumps(exec_result.data, default=str, ensure_ascii=False)
-            logger.info(f"RAW API RESPONSE [{tool_name}]: {raw_json[:1500]}")
+            logger.debug(f"RAW API RESPONSE [{tool_name}]: {raw_json[:1500]}")
         except Exception as e:
             logger.warning(f"Could not serialize API response: {e}")
 
-        # NEW v10.1: Pass user_query for intent-aware formatting
+        # Pass user_query for intent-aware formatting
         response = self.formatter.format_result(result_dict, tool, user_query=user_query)
 
         # Prepend entity feedback if available
@@ -259,13 +259,15 @@ class ToolHandler:
             params_used=parameters
         )
 
+        # Use UserContextManager for validated access
+        ctx = UserContextManager(user_context)
         await self.error_learning.record_error(
             error_code=error_code,
             operation_id=tool_name,
             error_message=error,
             context={
                 "parameters": list(parameters.keys()),
-                "user_id": user_context.get("person_id"),
+                "user_id": ctx.person_id,
                 "chain_depth": chain_depth
             },
             was_corrected=False
@@ -312,7 +314,8 @@ class ToolHandler:
         if tool.method != "GET":
             return parameters
 
-        person_id = user_context.get("person_id")
+        # Use UserContextManager for validated access
+        person_id = UserContextManager(user_context).person_id
         if not person_id:
             return parameters
 
@@ -410,7 +413,31 @@ class ToolHandler:
 
         return None
 
-    def requires_confirmation(self, tool_name: str) -> bool:
-        """Check if tool requires user confirmation."""
-        confirm_patterns = ["calendar", "booking", "case", "delete", "create", "update"]
-        return any(p in tool_name.lower() for p in confirm_patterns)
+    def requires_confirmation(self, tool_name: str, method: Optional[str] = None) -> bool:
+        """
+        Check if tool requires user confirmation.
+
+        NEW: ALL mutation operations (POST/PUT/PATCH/DELETE) require confirmation.
+        This ensures user explicitly approves any data-changing operation.
+        """
+        # Method 1: Check HTTP method (most reliable)
+        MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+        if method and method.upper() in MUTATION_METHODS:
+            return True
+
+        # Method 2: Try to get method from registry
+        if self.registry:
+            tool = self.registry.get_tool(tool_name)
+            if tool and hasattr(tool, 'method'):
+                if tool.method.upper() in MUTATION_METHODS:
+                    return True
+
+        # Method 3: Infer from tool name prefix (fallback)
+        tool_lower = tool_name.lower()
+        if tool_lower.startswith(('post_', 'put_', 'patch_', 'delete_')):
+            return True
+
+        # Method 4: Pattern matching for known mutation tools (legacy support)
+        confirm_patterns = ["calendar", "booking", "case", "addmileage", "addcase"]
+        return any(p in tool_lower for p in confirm_patterns)

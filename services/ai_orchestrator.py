@@ -3,19 +3,58 @@ import asyncio
 import json
 import logging
 import random
-import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
-from openai import AsyncAzureOpenAI, RateLimitError, APIStatusError, APITimeoutError
+from openai import RateLimitError, APIStatusError, APITimeoutError
+from prometheus_client import Counter as PromCounter, Histogram, Gauge
 
 from config import get_settings
-from services.sanitizer import sanitize
 from services.patterns import PatternRegistry
+from services.context import UserContextManager
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
+from services.errors import GatewayError, ErrorCode
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("ai_orchestrator")
 settings = get_settings()
+
+# Prometheus LLM metrics
+LLM_REQUEST_DURATION = Histogram(
+    'llm_request_duration_seconds',
+    'LLM API call duration in seconds',
+    ['model', 'operation'],
+    buckets=[0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0]
+)
+LLM_TOKENS_USED = PromCounter(
+    'llm_tokens_total',
+    'Total LLM tokens used',
+    ['model', 'type']  # type: prompt | completion
+)
+LLM_REQUESTS_TOTAL = PromCounter(
+    'llm_requests_total',
+    'Total LLM API requests',
+    ['model', 'status']  # status: success | error | rate_limit | timeout
+)
+LLM_COST_USD = PromCounter(
+    'llm_cost_usd_total',
+    'Estimated LLM cost in USD',
+    ['model']
+)
+LLM_RATE_LIMIT_HITS = PromCounter(
+    'llm_rate_limit_hits_total',
+    'Total LLM rate limit hits',
+    ['model']
+)
+LLM_CIRCUIT_OPEN = Gauge(
+    'llm_circuit_breaker_open',
+    'Whether LLM circuit breaker is open (1=open, 0=closed)',
+    ['model']
+)
 
 try:
     import tiktoken
@@ -24,19 +63,24 @@ except ImportError:
 
 
 # Token budgeting constants
-SINGLE_TOOL_THRESHOLD = 0.98
-MAX_TOOLS_FOR_LLM = 10
-MAX_HISTORY_MESSAGES = 20
-MAX_TOKEN_LIMIT = 8000
+MAX_TOOLS_FOR_LLM = getattr(settings, 'MAX_TOOLS_FOR_LLM', 25)
+MIN_TOOLS_FOR_LLM = 5
+# History budget: 10 messages max, 2000 tokens max for conversation history.
+# At 20 concurrent requests, worst case = 20 × 2000 tokens × ~4 bytes = 160KB.
+# Remaining token budget (6000) for system prompt + tools + response.
+MAX_HISTORY_MESSAGES = 10
+MAX_HISTORY_TOKEN_LIMIT = 2000  # Token cap for conversation history portion only
+MAX_TOKEN_LIMIT = 8000          # Total budget including system prompt + tools
 
-# LOW FIX v12.2: Token counting overhead constants
+# Token counting overhead constants
+CROATIAN_CHARS_PER_TOKEN = 4.6
 MESSAGE_TOKEN_OVERHEAD = 3  # Tokens added per message (OpenAI format overhead)
 FINAL_TOKEN_OVERHEAD = 3    # Final overhead added to total count
 
 # System prompts
 DEFAULT_SYSTEM_PROMPT = "Ti si MobilityOne AI asistent. Odgovaraj na hrvatskom. Budi koncizan."
 RATE_LIMIT_ERROR_MSG = "Sustav je trenutno preopterećen. Pokušajte ponovno za minutu."
-TIMEOUT_ERROR_MSG = "Sustav nije odgovorio na vrijeme. Pokušajte ponovno." 
+TIMEOUT_ERROR_MSG = "Sustav nije odgovorio na vrijeme. Pokušajte ponovno."
 
 
 
@@ -48,9 +92,9 @@ class AIOrchestrator:
     - Tool calling with forced execution
     - Parameter extraction
     - Response generation
-    - NEW v12.0: Token budgeting & tracking
-    - NEW v12.0: Exponential backoff for rate limits
-    - NEW v12.0: Smart history management
+    - Token budgeting & tracking
+    - Exponential backoff for rate limits
+    - Smart history management
     """
 
     # Retry configuration
@@ -58,24 +102,16 @@ class AIOrchestrator:
     BASE_DELAY = 1.0
     MAX_JITTER = 0.5
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize AI orchestrator."""
-        # CRITICAL v12.1: Disable SDK's internal retry mechanism
-        # SDK default is 60s wait which is too long!
-        # We use our own exponential backoff (1-4 seconds)
-        self.client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-            max_retries=0,  # Disable SDK retry - we handle it ourselves
-            timeout=30.0    # 30 second timeout
-        )   
-        
-
+        # Shared client: rate limiting + connection pooling across all services
+        # SDK retries disabled - we use our own exponential backoff (1-4 seconds)
+        self.client = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
 
         self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
 
-        # NEW v12.0: Token tracking
+        # Token tracking
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
         self._total_requests = 0
@@ -88,17 +124,14 @@ class AIOrchestrator:
             except Exception as e:
                 logger.warning(f"Tokenizer initialization error: {e}")
                 logger.info("Falling back to approximate token counting.")
-    
+
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """Azure-safe token counting."""
-        
+
         if not self.tokenizer:
-            # MEDIUM FIX v12.2: Improved fallback for Croatian language
-            # Croatian avg word ~6 chars, ~1.3 tokens/word
-            # Approx: chars ÷ 6 × 1.3 = chars ÷ 4.6
+            # Fallback token counting for Croatian language (when tiktoken unavailable)
             total_chars = sum(len(m.get("content", "")) for m in messages)
-            # Add per-message overhead
-            return int(total_chars / 4.6) + len(messages) * MESSAGE_TOKEN_OVERHEAD
+            return int(total_chars / CROATIAN_CHARS_PER_TOKEN) + len(messages) * MESSAGE_TOKEN_OVERHEAD
 
         num_tokens = 0
         for message in messages:
@@ -111,24 +144,21 @@ class AIOrchestrator:
         return num_tokens
 
 
-            
+
     async def analyze(
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
         system_prompt: Optional[str] = None,
-        forced_tool: Optional[str] = None,
         tool_scores: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
 
-        # NEW v12.0: Apply Smart History (sliding window)
+        # Apply Smart History (sliding window)
         filtered_conversation = self._apply_smart_history(messages)
 
         # Build final message list with system prompt first
         final_messages = []
 
-        # CRITICAL FIX v12.2: Prevent duplicate system prompts
-        # _apply_smart_history may already include a system message
         has_system_in_filtered = (
             filtered_conversation and
             len(filtered_conversation) > 0 and
@@ -140,9 +170,7 @@ class AIOrchestrator:
 
         final_messages.extend(filtered_conversation)
 
-        # NEW v12.0: Apply Token Budgeting (trim tools if top match is excellent)
-        # CRITICAL FIX v15.1: Pass forced_tool to prevent mismatch
-        trimmed_tools = self._apply_token_budgeting(tools, tool_scores, forced_tool)
+        trimmed_tools = self._apply_token_budgeting(tools, tool_scores)
 
         call_args = {
             "model": self.model,
@@ -153,40 +181,45 @@ class AIOrchestrator:
 
         if trimmed_tools:
             call_args["tools"] = trimmed_tools
+            call_args["tool_choice"] = "auto"
 
-            # ACTION-FIRST PROTOCOL: Force specific tool if similarity >= ACTION_THRESHOLD
-            # CRITICAL FIX v15.1: Validate forced_tool is actually in trimmed_tools
-            if forced_tool:
-                # Check if forced_tool exists in trimmed_tools
-                tool_names_in_list = [t.get("function", {}).get("name") for t in trimmed_tools]
-
-                if forced_tool in tool_names_in_list:
-                    call_args["tool_choice"] = {
-                        "type": "function",
-                        "function": {"name": forced_tool}
-                    }
-                    logger.info(f"Forced tool call: {forced_tool} (similarity >= {settings.ACTION_THRESHOLD})")
-                else:
-                    # Forced tool not in trimmed list - fall back to auto
-                    logger.warning(
-                        f"Forced tool '{forced_tool}' not in trimmed tools list "
-                        f"({tool_names_in_list}). Falling back to 'auto' selection."
-                    )
-                    call_args["tool_choice"] = "auto"
-            else:
-                call_args["tool_choice"] = "auto"
-
-        # NEW v12.0: Retry with exponential backoff
+        # Retry with exponential backoff + circuit breaker
         last_error = None
 
         for attempt in range(self.MAX_RETRIES):
+            _start = time.monotonic()
             try:
-                response = await self.client.chat.completions.create(**call_args)
+                # Circuit breaker: fail-fast if LLM is down
+                response = await self._circuit_breaker.call(
+                    f"llm:{self.model}",
+                    self.client.chat.completions.create,
+                    **call_args
+                )
+                _elapsed = time.monotonic() - _start
                 self._total_requests += 1
 
+                # Prometheus metrics
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(_elapsed)
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="success").inc()
+                LLM_CIRCUIT_OPEN.labels(model=self.model).set(0)
+
+                usage_data = None
                 if hasattr(response, 'usage') and response.usage:
                     self._total_prompt_tokens += response.usage.prompt_tokens
                     self._total_completion_tokens += response.usage.completion_tokens
+
+                    # Token and cost metrics
+                    LLM_TOKENS_USED.labels(model=self.model, type="prompt").inc(response.usage.prompt_tokens)
+                    LLM_TOKENS_USED.labels(model=self.model, type="completion").inc(response.usage.completion_tokens)
+                    cost = (response.usage.prompt_tokens * settings.LLM_INPUT_PRICE_PER_1K +
+                            response.usage.completion_tokens * settings.LLM_OUTPUT_PRICE_PER_1K) / 1000
+                    LLM_COST_USD.labels(model=self.model).inc(cost)
+
+                    usage_data = {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.prompt_tokens + response.usage.completion_tokens
+                    }
 
                     logger.debug(
                         f"Tokens: prompt={response.usage.prompt_tokens}, "
@@ -195,40 +228,52 @@ class AIOrchestrator:
                     )
 
                 if not response.choices:
-                    logger.error("Empty AI response")
-                    return {"type": "error", "content": "AI returned empty response"}
+                    err = GatewayError(ErrorCode.SERVER_ERROR, "Empty AI response")
+                    logger.error(str(err))
+                    return {"type": "error", "content": "AI sustav nije vratio odgovor. Pokusajte ponovno."}
 
                 message = response.choices[0].message
 
-                # Tool call
-                # Extract usage for cost tracking
-                usage_data = None
-                if hasattr(response, 'usage') and response.usage:
-                    usage_data = {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "total_tokens": response.usage.prompt_tokens + response.usage.completion_tokens
-                    }
-
                 if message.tool_calls and len(message.tool_calls) > 0:
-                    tool_call = message.tool_calls[0]
+                    # Parse ALL tool calls from LLM response
+                    all_calls = []
+                    for tc in message.tool_calls:
+                        try:
+                            arguments = json.loads(tc.function.arguments)
+                        except json.JSONDecodeError:
+                            err = GatewayError(ErrorCode.VALIDATION_ERROR, f"Invalid tool arguments: {tc.function.arguments[:100]}")
+                            logger.warning(str(err))
+                            arguments = {}
+                        all_calls.append({
+                            "tool": tc.function.name,
+                            "parameters": arguments,
+                            "tool_call_id": tc.id,
+                        })
 
-                    try:
-                        arguments = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid tool arguments: {tool_call.function.arguments[:100]}")
-                        arguments = {}
+                    if len(all_calls) > 1:
+                        logger.info(
+                            f"LLM returned {len(all_calls)} parallel tool calls: "
+                            f"{[c['tool'] for c in all_calls]}"
+                        )
 
-                    logger.debug(f"Tool call: {tool_call.function.name}")
+                    # Always return first call in legacy format for compatibility
+                    # Additional calls included in "additional_calls" field
+                    first = all_calls[0]
+                    logger.debug(f"Tool call: {first['tool']}")
 
-                    return {
+                    result = {
                         "type": "tool_call",
-                        "tool": tool_call.function.name,
-                        "parameters": arguments,
-                        "tool_call_id": tool_call.id,
+                        "tool": first["tool"],
+                        "parameters": first["parameters"],
+                        "tool_call_id": first["tool_call_id"],
                         "raw_message": message,
-                        "usage": usage_data  # For cost tracking
+                        "usage": usage_data
                     }
+
+                    if len(all_calls) > 1:
+                        result["additional_calls"] = all_calls[1:]
+
+                    return result
 
                 content = message.content or ""
                 logger.debug(f"Text response: {len(content)} chars")
@@ -236,6 +281,9 @@ class AIOrchestrator:
                 return {"type": "text", "content": content, "usage": usage_data}
 
             except RateLimitError as e:
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="rate_limit").inc()
+                LLM_RATE_LIMIT_HITS.labels(model=self.model).inc()
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                 last_error = e
                 result = await self._handle_rate_limit(attempt, "RateLimitError")
                 if result:
@@ -244,28 +292,48 @@ class AIOrchestrator:
 
             except APIStatusError as e:
                 if e.status_code == 429:
+                    LLM_REQUESTS_TOTAL.labels(model=self.model, status="rate_limit").inc()
+                    LLM_RATE_LIMIT_HITS.labels(model=self.model).inc()
+                    LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                     last_error = e
                     result = await self._handle_rate_limit(attempt, "APIStatusError 429")
                     if result:
                         return result
                     continue
 
-                logger.error(f"API error {e.status_code}: {e.message}")
-                return {"type": "error", "content": f"API greška: {e.message}"}
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="error").inc()
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
+                err = GatewayError.from_status(e.status_code, f"API error {e.status_code}: {e.message}")
+                logger.error(str(err))
+                return {"type": "error", "content": "Doslo je do greske u komunikaciji. Pokusajte ponovno."}
 
             except APITimeoutError as e:
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="timeout").inc()
+                LLM_REQUEST_DURATION.labels(model=self.model, operation="analyze").observe(time.monotonic() - _start)
                 last_error = e
                 result = await self._handle_timeout(attempt)
                 if result:
                     return result
                 continue
 
+            except CircuitOpenError as e:
+                LLM_REQUESTS_TOTAL.labels(model=self.model, status="circuit_open").inc()
+                LLM_CIRCUIT_OPEN.labels(model=self.model).set(1)
+                logger.warning(f"Circuit breaker OPEN - LLM unavailable: {e}")
+                return {
+                    "type": "error",
+                    "content": "AI sustav je trenutno nedostupan. Pokusajte ponovno za minutu."
+                }
+
             except Exception as e:
-                logger.error(f"AI error: {e}", exc_info=True)
-                return {"type": "error", "content": f"Greška: {e}"}
+                err = GatewayError(ErrorCode.SERVER_ERROR, f"AI error: {e}")
+                logger.error(str(err), exc_info=True)
+                return {"type": "error", "content": "Doslo je do neocekivane greske. Pokusajte ponovno."}
 
         # Should not reach here, but just in case
-        return {"type": "error", "content": f"Greška: {last_error}"}
+        err = GatewayError(ErrorCode.RETRY_EXHAUSTED, f"All {self.MAX_RETRIES} AI retries exhausted, last_error={last_error}")
+        logger.error(str(err))
+        return {"type": "error", "content": "Doslo je do greske. Pokusajte ponovno."}
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff with jitter."""
@@ -274,8 +342,13 @@ class AIOrchestrator:
         return exponential_delay + jitter
 
     async def _handle_rate_limit(self, attempt: int, error_type: str) -> Optional[Dict[str, Any]]:
-        """Handle rate limit errors with retry logic."""
+        """
+        Handle rate limit errors with retry logic.
+
+        P1 FIX: Now includes retry_status in return for caller visibility.
+        """
         self._rate_limit_hits += 1
+        self._current_retry_status = f"⏳ Provjeravam dostupnost... (pokušaj {attempt + 1}/{self.MAX_RETRIES})"
 
         if attempt < self.MAX_RETRIES - 1:
             delay = self._calculate_backoff(attempt)
@@ -288,10 +361,17 @@ class AIOrchestrator:
             return None
 
         logger.error(f"Rate limit exceeded after {self.MAX_RETRIES} retries")
+        self._current_retry_status = None
         return {"type": "error", "content": RATE_LIMIT_ERROR_MSG}
 
     async def _handle_timeout(self, attempt: int) -> Optional[Dict[str, Any]]:
-        """Handle timeout errors with retry logic."""
+        """
+        Handle timeout errors with retry logic.
+
+        P1 FIX: Now includes retry_status for caller visibility.
+        """
+        self._current_retry_status = f"⏳ Sustav je zauzet... (pokušaj {attempt + 1}/{self.MAX_RETRIES})"
+
         if attempt < self.MAX_RETRIES - 1:
             delay = self._calculate_backoff(attempt)
             logger.warning(f"API timeout. Retry {attempt + 1}/{self.MAX_RETRIES} after {delay:.2f}s")
@@ -299,32 +379,24 @@ class AIOrchestrator:
             return None
 
         logger.error(f"API timeout after {self.MAX_RETRIES} retries")
+        self._current_retry_status = None
         return {"type": "error", "content": TIMEOUT_ERROR_MSG}
+
+    def get_retry_status(self) -> Optional[str]:
+        """Get current retry status message (P1 FIX for user feedback)."""
+        return getattr(self, '_current_retry_status', None)
 
     def _apply_token_budgeting(
         self,
         tools: Optional[List[Dict]],
         tool_scores: Optional[List[Dict]],
-        forced_tool: Optional[str] = None
     ) -> Optional[List[Dict]]:
         """
-        Apply token budgeting - trim tools if top match is excellent.
-
-        NEW v12.0: If best tool score >= SINGLE_TOOL_THRESHOLD (0.98),
-        send only that tool to LLM. This saves ~80% of token cost for tool descriptions.
-
-        CRITICAL FIX v15.1: If forced_tool is specified and differs from best_match,
-        don't apply SINGLE TOOL MODE to ensure forced_tool is in the list.
-
-        CRITICAL REQUIREMENTS:
-        1. tools and tool_scores MUST be in the SAME ORDER (sorted by score DESC)
-        2. tool_scores MUST contain 'name' and 'score' fields
-        3. tools MUST be OpenAI tool schemas with structure: {"type": "function", "function": {"name": "..."}}
+        Apply token budgeting - trim tool list to MAX_TOOLS_FOR_LLM.
 
         Args:
             tools: List of tool schemas (sorted by score DESC)
             tool_scores: List of {name, score, ...} dicts (sorted by score DESC)
-            forced_tool: Optional tool name that will be forced in execution
 
         Returns:
             Trimmed list of tools (maintains sort order)
@@ -333,86 +405,20 @@ class AIOrchestrator:
             return tools
 
         if not tool_scores:
-            # No scores, apply simple limit
             if len(tools) > MAX_TOOLS_FOR_LLM:
                 logger.info(
-                    f" Token budget: Trimming {len(tools)} → {MAX_TOOLS_FOR_LLM} tools"
+                    f"Token budget: Trimming {len(tools)} -> {MAX_TOOLS_FOR_LLM} tools"
                 )
                 return tools[:MAX_TOOLS_FOR_LLM]
             return tools
 
-        # VALIDATION: Ensure tools and tool_scores are aligned
-        # MEDIUM FIX v12.2: Return early to prevent misaligned tool selection
         if len(tools) != len(tool_scores):
             logger.error(
                 f"Token budgeting: tools count ({len(tools)}) != "
                 f"tool_scores count ({len(tool_scores)}). "
                 f"Returning tools without budgeting to avoid mismatch."
             )
-            return tools  # STOP processing - don't continue with misaligned data
-
-        # Find best score (tool_scores should already be sorted DESC by message_engine)
-        best = tool_scores[0] if tool_scores else None
-
-        if best and best.get("score", 0) >= SINGLE_TOOL_THRESHOLD:
-            best_name = best.get("name")
-
-            # CRITICAL FIX v15.1: Check if forced_tool conflicts with best match
-            if forced_tool and forced_tool != best_name:
-                logger.info(
-                    f" Token budget: Skipping SINGLE TOOL MODE - forced_tool '{forced_tool}' "
-                    f"differs from best_match '{best_name}' (score={best.get('score'):.3f})"
-                )
-                # Don't apply SINGLE TOOL MODE - let it fall through to normal trimming
-            else:
-                # Excellent match - send only this tool
-                # (or forced_tool matches best, so it's safe)
-                single_tool = next(
-                    (t for t in tools if t.get("function", {}).get("name") == best_name),
-                    None
-                )
-
-                if single_tool:
-                    logger.info(
-                        f" Token budget: SINGLE TOOL MODE - "
-                        f"{best_name} (score={best.get('score'):.3f} >= {SINGLE_TOOL_THRESHOLD})"
-                    )
-                    return [single_tool]
-                else:
-                    logger.error(
-                        f" Token budgeting: Best tool '{best_name}' not found in tools list! "
-                        f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
-                    )
-
-        # Apply limit (tools already sorted by score DESC)
-        # CRITICAL FIX v15.1: Ensure forced_tool is included if specified
-        if forced_tool:
-            # Check if forced_tool is in the list
-            tool_names = [t.get("function", {}).get("name") for t in tools]
-
-            if forced_tool in tool_names:
-                forced_tool_obj = next(
-                    (t for t in tools if t.get("function", {}).get("name") == forced_tool),
-                    None
-                )
-
-                if forced_tool_obj:
-                    # Ensure forced_tool is in the trimmed list
-                    trimmed = tools[:MAX_TOOLS_FOR_LLM]
-
-                    if forced_tool_obj not in trimmed:
-                        # Replace last tool with forced_tool to ensure it's included
-                        logger.info(
-                            f" Token budget: Adding forced_tool '{forced_tool}' to trimmed list"
-                        )
-                        trimmed = trimmed[:-1] + [forced_tool_obj]
-
-                    return trimmed
-            else:
-                logger.warning(
-                    f"Token budgeting: forced_tool '{forced_tool}' not found in tools list. "
-                    f"Available: {tool_names}"
-                )
+            return tools
 
         if len(tools) > MAX_TOOLS_FOR_LLM:
             logger.info(
@@ -423,79 +429,84 @@ class AIOrchestrator:
 
         return tools
 
-    
+
     def _apply_smart_history(
         self,
         messages: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
+        """
+        Sliding window on conversation history.
 
-        # 1. IZDVAJANJE SYSTEM PROMPTA
+        Strategy (middle-out truncation):
+        1. Keep system prompt intact
+        2. Keep first message (establishes user identity/intent)
+        3. Keep last N messages (recent context)
+        4. If middle exceeds MAX_HISTORY_TOKEN_LIMIT, summarize it
+        5. Hard cap: conversation history never exceeds 2000 tokens
 
+        This prevents linear RAM growth from long-running chat sessions
+        at 1GB pod limit.
+        """
+        # 1. Extract system prompt
         system_message = None
         if messages and messages[0]["role"] == "system":
             system_message = messages[0]
-            conversation = messages[1:] # Ostatak razgovora
+            conversation = messages[1:]
         else:
             conversation = messages
 
-        # 2. PROVJERA TOKENA (Preciznije od broja poruka)
+        # 2. Enforce message count cap
+        if len(conversation) > MAX_HISTORY_MESSAGES:
+            conversation = conversation[-MAX_HISTORY_MESSAGES:]
 
-        current_tokens = self._count_tokens(messages)
-        
-        # Ako smo ispod limita, ne diraj ništa
-        if current_tokens <= MAX_TOKEN_LIMIT:
-            return messages
+        # 3. Check token budget for conversation portion only
+        conv_tokens = self._count_tokens(conversation)
 
-        # 3. REZANJE KONTEKSTA
-        split_index = max(0, len(conversation) - MAX_HISTORY_MESSAGES)
-        
-        to_summarize = conversation[:split_index]
-        recent_history = conversation[split_index:]
+        if conv_tokens <= MAX_HISTORY_TOKEN_LIMIT:
+            # Under budget — return as-is
+            result = []
+            if system_message:
+                result.append(system_message)
+            result.extend(conversation)
+            return result
 
-        # 4. SAŽIMANJE (Bolje od samih entiteta)
+        # 4. Over budget — middle-out truncation
+        # Keep first message + last 4 messages, summarize the middle
+        keep_recent = min(4, len(conversation))
+        recent_history = conversation[-keep_recent:]
+        to_summarize = conversation[:-keep_recent] if keep_recent < len(conversation) else []
+
+        final_messages = []
+        if system_message:
+            final_messages.append(system_message)
+
         if to_summarize:
-
             summary_text = self._summarize_conversation(to_summarize)
-            
-            # Ubacujemo sažetak KAO SYSTEM poruku, ali ODMAH NAKON glavnog system prompta
-            context_message = {
-                "role": "system", 
+            final_messages.append({
+                "role": "system",
                 "content": f"Sažetak prethodnog razgovora: {summary_text}"
-            }
-            
-            # 5. REKONSTRUKCIJA
+            })
+
+        final_messages.extend(recent_history)
+
+        # 5. Final safety check — if still over total budget, hard-trim
+        final_tokens = self._count_tokens(final_messages)
+        if final_tokens > MAX_TOKEN_LIMIT:
+            logger.warning(
+                f"History still over total limit ({final_tokens} > {MAX_TOKEN_LIMIT}). "
+                f"Hard-trimming to last 3 messages"
+            )
             final_messages = []
             if system_message:
                 final_messages.append(system_message)
-            
-            final_messages.append(context_message)
-            final_messages.extend(recent_history)
+            final_messages.extend(recent_history[-3:])
 
-            # CRITICAL FIX v12.2: Re-check token count after summarization
-            # Summary might still push us over the limit
-            final_tokens = self._count_tokens(final_messages)
-            if final_tokens > MAX_TOKEN_LIMIT:
-                logger.warning(
-                    f"Summary still over limit ({final_tokens} > {MAX_TOKEN_LIMIT}). "
-                    f"Trimming recent_history further (20 → 10 messages)"
-                )
-                # Fallback: Keep only last 10 messages instead of 20
-                recent_history = recent_history[-10:]
-                final_messages = []
-                if system_message:
-                    final_messages.append(system_message)
-                final_messages.append(context_message)
-                final_messages.extend(recent_history)
-
-            return final_messages
-
-        return messages
+        return final_messages
 
     def _extract_entities(self, messages: List[Dict[str, str]]) -> Dict[str, List[str]]:
         """
         Extract entity references from messages.
 
-        CRITICAL FIX v12.2: Changed to store lists of entities instead of single values.
         Prevents data loss when multiple UUIDs/plates are mentioned.
 
         Returns:
@@ -539,7 +550,6 @@ class AIOrchestrator:
         """
         Format extracted entities as context string.
 
-        CRITICAL FIX v12.2: Updated to handle lists of entities.
 
         Args:
             entities: Dict mapping entity types to lists of values
@@ -558,11 +568,10 @@ class AIOrchestrator:
         entities = self._extract_entities(messages)
         summary_parts = []
 
-        if entities:
+        if any(entities.values()):
             summary_parts.append(f"Ranije entiteti: {self._format_entity_context(entities)}")
 
         role_counts = Counter(m.get("role") for m in messages)
-        # CRITICAL FIX v12.2: Use .get() to prevent KeyError if role is missing
         summary_parts.append(
             f"Prethodnih {len(messages)} poruka "
             f"({role_counts.get('user', 0)} user, {role_counts.get('assistant', 0)} assistant, {role_counts.get('tool', 0)} tool calls)"
@@ -570,7 +579,6 @@ class AIOrchestrator:
 
         return ". ".join(summary_parts)
 
-    # TODO: Expose via /admin/token-stats endpoint for monitoring
     def get_token_stats(self) -> Dict[str, Any]:
         """Get token usage statistics."""
         return {
@@ -593,23 +601,38 @@ class AIOrchestrator:
     ) -> Dict[str, Any]:
         """
         Extract parameters from user input.
-        
+
         Args:
             user_input: User message
             required_params: [{name, type, description}]
             context: Additional context
-            
+
         Returns:
             Extracted parameters
         """
+        with trace_span(_tracer, "ai.extract_parameters", {
+            "ai.param_count": len(required_params),
+            "ai.input_length": len(user_input),
+        }):
+            return await self._extract_parameters_inner(
+                user_input, required_params, context
+            )
+
+    async def _extract_parameters_inner(
+        self,
+        user_input: str,
+        required_params: List[Dict[str, str]],
+        context: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Inner implementation of extract_parameters."""
         param_desc = "\n".join([
             f"- {p['name']} ({p['type']}): {p.get('description', '')}"
             for p in required_params
         ])
-        
+
         today = datetime.now()
         tomorrow = today + timedelta(days=1)
-        
+
         system = f"""Izvuci parametre iz korisnikove poruke.
 Vrati JSON objekt s vrijednostima. Koristi null za nedostajuće parametre.
 
@@ -642,40 +665,67 @@ VAŽNO: Ako korisnik daje samo vrijeme/datum kao odgovor (npr. "17:00" ili "prek
 to je vjerojatno odgovor na prethodno pitanje. Koristi taj datum/vrijeme za traženi parametar.
 
 Vrati SAMO JSON, bez drugog teksta."""
-        
+
         if context:
             system += f"\n\nDodatni kontekst: {context}"
-        
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_input}
-                ],
-                temperature=0.1,
-                max_tokens=300
-            )
-            
-            content = response.choices[0].message.content or "{}"
-            
-            # Clean markdown
-            content = content.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
+
+        # Retry loop with backoff for rate limits + circuit breaker
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                response = await self._circuit_breaker.call(
+                    f"llm:{self.model}",
+                    self.client.chat.completions.create,
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_input}
+                    ],
+                    temperature=0.1,
+                    max_tokens=300
+                )
+
+                content = response.choices[0].message.content or "{}"
+
+                # Clean markdown
                 content = content.strip()
-            
-            return json.loads(content)
-            
-        except json.JSONDecodeError:
-            logger.warning("Parameter extraction JSON error")
-            return {}
-        except Exception as e:
-            logger.error(f"Parameter extraction error: {e}")
-            return {}
-    
+                if content.startswith("```"):
+                    content = content.split("```")[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                    content = content.strip()
+
+                return json.loads(content)
+
+            except json.JSONDecodeError:
+                err = GatewayError(ErrorCode.VALIDATION_ERROR, "Parameter extraction JSON error")
+                logger.warning(str(err))
+                return {}
+            except CircuitOpenError:
+                logger.warning("Circuit breaker OPEN - skipping parameter extraction")
+                return {}
+            except RateLimitError:
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self._calculate_backoff(attempt)
+                    logger.warning(f"Rate limit in extract_parameters. Retry {attempt + 1}/{self.MAX_RETRIES} after {delay:.2f}s")
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Rate limit exceeded in extract_parameters")
+                return {}
+            except APITimeoutError:
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self._calculate_backoff(attempt)
+                    logger.warning(f"Timeout in extract_parameters. Retry {attempt + 1}/{self.MAX_RETRIES} after {delay:.2f}s")
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Timeout exceeded in extract_parameters")
+                return {}
+            except Exception as e:
+                err = GatewayError(ErrorCode.SERVER_ERROR, f"Parameter extraction error: {e}")
+                logger.error(str(err))
+                return {}
+
+        return {}
+
     def build_system_prompt(
         self,
         user_context: Dict[str, Any],
@@ -683,69 +733,58 @@ Vrati SAMO JSON, bez drugog teksta."""
     ) -> str:
         """
         Build system prompt with context.
-        
+
         Args:
             user_context: User info
             flow_context: Current flow state
-            
+
         Returns:
             System prompt
         """
-        name = user_context.get("display_name", "Korisnik")
-        person_id = user_context.get("person_id", "")
-        vehicle = user_context.get("vehicle", {})
-        
+        ctx = UserContextManager(user_context)
+        name = ctx.display_name
+        person_id = ctx.person_id or ""
+        vehicle = ctx.vehicle
+
         today = datetime.now()
-        
+
         prompt = f"""Ti si MobilityOne AI asistent za upravljanje voznim parkom.
         Komuniciraj na HRVATSKOM jeziku. Budi KONCIZAN i JASAN.
 
-        ═══════════════════════════════════════════════
+        ---
         KORISNIK
-        ═══════════════════════════════════════════════
+        ---
         - Ime: {name}
         - ID: {person_id[:12]}...
         - Datum: {today.strftime('%d.%m.%Y')} ({today.strftime('%A')})
         """
 
-        if vehicle and vehicle.get("plate"):
-            prompt += f"""- Vozilo: {vehicle.get('name', 'N/A')} ({vehicle.get('plate', 'N/A')})
-        - Kilometraža: {vehicle.get('mileage', 'N/A')} km
+        if vehicle and vehicle.plate:
+            prompt += f"""- Vozilo: {vehicle.name or 'N/A'} ({vehicle.plate or 'N/A'})
+        - Kilometraža: {vehicle.mileage or 'N/A'} km
         """
 
         prompt += """
-        ═══════════════════════════════════════════════
-        MOGUĆNOSTI I ODABIR ALATA
-        ═══════════════════════════════════════════════
-        Imaš pristup API funkcijama. Sustav koristi semantičku
-        pretragu i SORTIRA alate po relevantnosti.
+        ---
+        TVOJ POSAO
+        ---
+        Sustav automatski odabire pravi alat. Tvoj posao je:
+        1. IZVUĆI parametre iz korisnikove poruke
+        2. POZVATI alat s ispravnim parametrima
+        3. FORMATIRATI odgovor korisniku
 
-        KRITIČNO - ODABIR ALATA:
-        - Alati su sortirani po RELEVANTNOSTI za korisnikov upit
-        - PRVI alat u listi je NAJBOLJI match - koristi ga!
-        - Ako nisi siguran, UVIJEK odaberi PRVI alat
-        - NE koristi POST/PUT/DELETE ako korisnik pita za podatke (koristi GET)
-        - "moje vozilo" → koristi get_MasterData, NE get_Vehicles
-        - "koja je kilometraža" → koristi alat koji vraća podatke, NE calendar
-
-        TVOJ POSAO:
-        1. RAZUMJETI što korisnik želi
-        2. ODABRATI PRVI alat ako odgovara upitu
-        3. IZVUĆI parametre iz poruke
-        4. POZVATI alat s ispravnim parametrima
-
-        ═══════════════════════════════════════════════
+        ---
         PRAVILA ZA DATUME
-        ═══════════════════════════════════════════════
+        ---
         - "sutra" = sutrašnji datum
         - "danas" = današnji datum
         - ISO 8601 format: YYYY-MM-DDTHH:MM:SS
         - "od 9 do 17" = FromTime: ...T09:00:00, ToTime: ...T17:00:00
 
-        ═══════════════════════════════════════════════
+        ---
         KRITIČNO: ZABRANJENO IZMIŠLJANJE PODATAKA!
-        ═══════════════════════════════════════════════
-        NIKADA ne izmišljaj NIŠTA - SVE mora doći iz API-ja! 
+        ---
+        NIKADA ne izmišljaj NIŠTA - SVE mora doći iz API-ja!
 
         ZABRANJENO izmišljati:
         -ime automobila/vozila
@@ -776,9 +815,9 @@ Vrati SAMO JSON, bez drugog teksta."""
         - Ako API ne vrati polje "LeasingProvider" → reci "Nemam tu informaciju"
         - NIKADA ne izmišljaj naziv leasing kuće!
 
-        ═══════════════════════════════════════════════
+        ---
         REZERVACIJA VOZILA (BOOKING FLOW)
-        ═══════════════════════════════════════════════
+        ---
         Kada korisnik traži vozilo ili želi rezervirati:
 
         !!! KRITIČNO - ZABRANJENO IZMIŠLJANJE !!!
@@ -824,9 +863,9 @@ Vrati SAMO JSON, bez drugog teksta."""
 
         6. Potvrdi uspješnu rezervaciju ili javi grešku
 
-        ═══════════════════════════════════════════════
+        ---
         STIL
-        ═══════════════════════════════════════════════
+        ---
         - KRATKI odgovori na hrvatskom
         - SVE informacije MORAJU doći iz API odgovora!
         - NE izmišljaj podatke - koristi alate!
@@ -836,9 +875,9 @@ Vrati SAMO JSON, bez drugog teksta."""
 
         if flow_context and flow_context.get("current_flow"):
             prompt += f"""
-        ═══════════════════════════════════════════════
+        ---
         TRENUTNI TOK
-        ═══════════════════════════════════════════════
+        ---
         - Flow: {flow_context.get('current_flow')}
         - Stanje: {flow_context.get('state')}
         - Parametri: {flow_context.get('parameters', {})}

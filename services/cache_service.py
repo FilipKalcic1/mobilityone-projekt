@@ -1,30 +1,60 @@
 """
 Cache Service
-Version: 10.0
 
-Redis caching layer.
+Redis caching layer with resilience.
 NO DEPENDENCIES on other services.
+
+Phase 4:
+- Custom JSON serializer for datetime/UUID
+- set_json() with explicit JSON handling
+- invalidate() method for cache busting
+- Fail-Open design (returns None/False, never crashes)
 """
 
 import json
 import logging
+from datetime import datetime, date
 from typing import Any, Optional, Callable, Awaitable
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
+class SafeJSONEncoder(json.JSONEncoder):
+    """
+    Custom JSON encoder for datetime and UUID objects.
+
+    Handles:
+    - datetime -> ISO format string
+    - date -> ISO format string
+    - UUID -> string
+    - Other objects -> str() fallback
+    """
+
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, UUID):
+            return str(obj)
+        # Fallback for unknown types
+        try:
+            return str(obj)
+        except Exception:
+            return super().default(obj)
 
 class CacheService:
     """Redis cache wrapper."""
-    
-    def __init__(self, redis_client):
+
+    def __init__(self, redis_client) -> None:
         """
         Initialize cache service.
-        
+
         Args:
             redis_client: Redis async client
         """
         self.redis = redis_client
-    
+
     async def get(self, key: str) -> Optional[str]:
         """Get value from cache."""
         try:
@@ -32,7 +62,7 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache get failed: {e}")
             return None
-    
+
     async def get_json(self, key: str) -> Optional[Any]:
         """Get JSON value from cache."""
         try:
@@ -43,28 +73,50 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache get_json failed: {e}")
             return None
-    
+
     async def set(self, key: str, value: Any, ttl: int = 300) -> bool:
         """
         Set value with TTL.
-        
+
         Args:
             key: Cache key
             value: Value to store (will be JSON encoded if not string)
             ttl: Time to live in seconds
-            
+
         Returns:
             True if successful
         """
         try:
             if not isinstance(value, (str, bytes)):
-                value = json.dumps(value)
+                value = json.dumps(value, cls=SafeJSONEncoder)
             await self.redis.setex(key, ttl, value)
             return True
         except Exception as e:
             logger.warning(f"Cache set failed: {e}")
             return False
-    
+
+    async def set_json(self, key: str, value: Any, ttl: int = 300) -> bool:
+        """
+        Set JSON value with TTL and safe serialization.
+
+        Uses SafeJSONEncoder to handle datetime/UUID objects.
+
+        Args:
+            key: Cache key
+            value: Value to store (will be JSON encoded)
+            ttl: Time to live in seconds
+
+        Returns:
+            True if successful
+        """
+        try:
+            serialized = json.dumps(value, cls=SafeJSONEncoder)
+            await self.redis.setex(key, ttl, serialized)
+            return True
+        except Exception as e:
+            logger.warning(f"Cache set_json failed: {e}")
+            return False
+
     async def delete(self, key: str) -> bool:
         """Delete key from cache."""
         try:
@@ -73,14 +125,53 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache delete failed: {e}")
             return False
-    
+
+    async def invalidate(self, key: str) -> bool:
+        """
+        Invalidate cache key.
+
+        Alias for delete() - semantic naming for cache busting.
+
+        Args:
+            key: Cache key to invalidate
+
+        Returns:
+            True if successful
+        """
+        return await self.delete(key)
+
+    async def invalidate_pattern(self, pattern: str) -> int:
+        """
+        Invalidate all keys matching pattern.
+
+        CAUTION: Use sparingly - SCAN can be slow on large datasets.
+
+        Args:
+            pattern: Redis key pattern (e.g., "user:*", "context:*")
+
+        Returns:
+            Number of keys deleted
+        """
+        try:
+            deleted = 0
+            async for key in self.redis.scan_iter(match=pattern, count=100):
+                await self.redis.delete(key)
+                deleted += 1
+            if deleted > 0:
+                logger.info(f"Invalidated {deleted} keys matching '{pattern}'")
+            return deleted
+        except Exception as e:
+            logger.warning(f"Cache invalidate_pattern failed: {e}")
+            return 0
+
     async def exists(self, key: str) -> bool:
         """Check if key exists."""
         try:
             return await self.redis.exists(key) > 0
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Cache exists check failed: {e}")
             return False
-    
+
     async def get_or_compute(
         self,
         key: str,
@@ -89,12 +180,12 @@ class CacheService:
     ) -> Any:
         """
         Get from cache or compute value.
-        
+
         Args:
             key: Cache key
             compute_fn: Async function to compute value if not cached
             ttl: Time to live
-            
+
         Returns:
             Cached or computed value
         """
@@ -102,24 +193,24 @@ class CacheService:
         cached = await self.get_json(key)
         if cached is not None:
             return cached
-        
+
         # Compute value
         result = await compute_fn()
-        
-        # Cache result
+
+        # Cache result (set_json matches get_json read path)
         if result is not None:
-            await self.set(key, result, ttl)
-        
+            await self.set_json(key, result, ttl)
+
         return result
-    
-    async def increment(self, key: str, ttl: int = None) -> int:
+
+    async def increment(self, key: str, ttl: Optional[int] = None) -> int:
         """
         Increment counter.
-        
+
         Args:
             key: Counter key
             ttl: Optional TTL for first increment
-            
+
         Returns:
             New value
         """

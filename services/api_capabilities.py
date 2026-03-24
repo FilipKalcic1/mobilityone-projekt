@@ -1,6 +1,5 @@
 """
 API Capabilities Discovery
-Version: 1.0
 
 DYNAMIC API CAPABILITY DETECTION - No hardcoding!
 
@@ -23,9 +22,10 @@ With DYNAMIC detection:
 - If tool returns 500 with "Unknown filter field" → doesn't support that filter
 """
 
+import asyncio
 import logging
 import json
-from typing import Dict, List, Set, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
@@ -34,14 +34,12 @@ logger = logging.getLogger(__name__)
 
 CAPABILITIES_CACHE_FILE = Path.cwd() / ".cache" / "api_capabilities.json"
 
-
 class ParameterSupport(Enum):
     """How a tool supports a parameter."""
     NATIVE = "native"           # Has direct parameter (e.g., personId in query)
     FILTER = "filter"           # Supports via Filter parameter (e.g., Filter=PersonId(=)xxx)
     NOT_SUPPORTED = "not_supported"  # Doesn't support this parameter
     UNKNOWN = "unknown"         # Not yet tested
-
 
 @dataclass
 class ToolCapability:
@@ -100,7 +98,6 @@ class ToolCapability:
             last_error=data.get("last_error"),
             learned_patterns=data.get("learned_patterns", {})
         )
-
 
 class APICapabilityRegistry:
     """
@@ -359,9 +356,12 @@ class APICapabilityRegistry:
         if not CAPABILITIES_CACHE_FILE.exists():
             return False
 
-        try:
+        def _read():
             with open(CAPABILITIES_CACHE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                return json.load(f)
+
+        try:
+            data = await asyncio.to_thread(_read)
 
             for cap_dict in data.get("capabilities", []):
                 cap = ToolCapability.from_dict(cap_dict)
@@ -382,8 +382,11 @@ class APICapabilityRegistry:
                 "capabilities": [cap.to_dict() for cap in self.capabilities.values()]
             }
 
-            with open(CAPABILITIES_CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            def _write():
+                with open(CAPABILITIES_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+
+            await asyncio.to_thread(_write)
 
             logger.info(f"Saved {len(self.capabilities)} capabilities to cache")
         except Exception as e:
@@ -393,15 +396,12 @@ class APICapabilityRegistry:
         """Public method to persist learned capabilities."""
         await self._save_cache()
 
-
 # Global instance (initialized by worker)
 _capability_registry: Optional[APICapabilityRegistry] = None
-
 
 def get_capability_registry() -> Optional[APICapabilityRegistry]:
     """Get global capability registry instance."""
     return _capability_registry
-
 
 async def initialize_capability_registry(tool_registry) -> APICapabilityRegistry:
     """

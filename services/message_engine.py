@@ -1,6 +1,5 @@
 """
 Message Engine - Backward Compatibility Shim
-Version: 14.0
 
 This file maintains backward compatibility for existing imports.
 All functionality has been refactored into services/engine/ module.

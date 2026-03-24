@@ -13,7 +13,7 @@
 # =============================================================================
 # STAGE 1: BUILDER - Compile dependencies
 # =============================================================================
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 # Build environment
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -41,7 +41,7 @@ RUN pip install --upgrade pip && \
 # =============================================================================
 # STAGE 2: RUNTIME - Minimal production image
 # =============================================================================
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 # Runtime environment
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -74,12 +74,24 @@ COPY --chown=appuser:appgroup . .
 # Make init script executable if exists
 RUN chmod +x /app/docker/init-db.sh 2>/dev/null || true
 
+# Force retrain ALL ML models with fresh training data
+# This ensures models match current training data after each build
+# Removes both intent and query_type models to prevent stale Windows-built pickles
+RUN rm -f /app/models/intent/*.pkl /app/models/query_type/*.pkl && \
+    python -c "from services.intent_classifier import IntentClassifier, get_query_type_classifier_ml; \
+               c = IntentClassifier(algorithm='tfidf_lr'); \
+               m = c.train(); \
+               print(f'Intent model trained: {m.get(\"accuracy\", 0):.1%} accuracy'); \
+               qt = get_query_type_classifier_ml(); \
+               print('QueryType model trained')" && \
+    chown -R appuser:appgroup /app/models
+
 # Switch to non-root user
 USER appuser
 
-# Healthcheck
+# Healthcheck (uses /ready for full dependency check)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8000/ready || exit 1
 
 # Entrypoint with tini for proper signal handling
 ENTRYPOINT ["/usr/bin/tini", "--"]

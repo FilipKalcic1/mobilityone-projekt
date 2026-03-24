@@ -1,6 +1,5 @@
 """
 Tool Registry - Backward Compatibility Shim
-Version: 2.1
 
 This file maintains backward compatibility for existing imports.
 All functionality has been refactored into services/registry/ module.

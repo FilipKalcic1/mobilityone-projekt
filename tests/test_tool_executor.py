@@ -1,6 +1,5 @@
 """
 Tests for ToolExecutor
-Version: 12.0 - Updated for new API
 
 Tests tool execution with UnifiedToolDefinition and ToolExecutionContext.
 """
@@ -352,3 +351,219 @@ class TestToolExecutor:
 
         assert result.execution_time_ms is not None
         assert result.execution_time_ms >= 0
+
+
+class TestToolExecutorValidation:
+    """Test _validate_http_request method."""
+
+    @pytest.fixture
+    def executor(self, mock_gateway):
+        """Create executor without registry."""
+        return ToolExecutor(gateway=mock_gateway)
+
+    def test_invalid_method_raises(self, executor):
+        """Test invalid HTTP method raises error (line 376)."""
+        with pytest.raises(ParameterValidationError):
+            executor._validate_http_request(
+                method="INVALID",
+                url="/api/test",
+                query_params=None,
+                body=None,
+                operation_id="test_op"
+            )
+
+    def test_empty_url_raises(self, executor):
+        """Test empty URL raises error (lines 382-386)."""
+        with pytest.raises(ParameterValidationError):
+            executor._validate_http_request(
+                method="GET",
+                url="/",
+                query_params=None,
+                body=None,
+                operation_id="test_op"
+            )
+
+    def test_get_with_body_logs_warning(self, executor):
+        """Test GET with body logs warning (lines 389-393)."""
+        executor._validate_http_request(
+            method="GET",
+            url="/api/test",
+            query_params=None,
+            body={"key": "value"},
+            operation_id="test_op"
+        )
+
+    def test_post_without_body_logs_warning(self, executor):
+        """Test POST without body logs warning (lines 395-399)."""
+        executor._validate_http_request(
+            method="POST",
+            url="/api/test",
+            query_params=None,
+            body=None,
+            operation_id="test_op"
+        )
+
+
+class TestToolExecutorBuildUrl:
+    """Test _build_url method."""
+
+    @pytest.fixture
+    def executor(self, mock_gateway):
+        """Create executor."""
+        return ToolExecutor(gateway=mock_gateway)
+
+    def test_absolute_url_returned(self, executor):
+        """Test absolute URL returned as-is (lines 431-433)."""
+        tool = MagicMock()
+        tool.swagger_name = ""
+        tool.path = "https://external.api.com/test"
+        tool.service_url = ""
+
+        result = executor._build_url(tool)
+        assert result == "https://external.api.com/test"
+
+    def test_swagger_name_used(self, executor):
+        """Test URL built with swagger_name (lines 436-442)."""
+        tool = MagicMock()
+        tool.swagger_name = "TestService"
+        tool.path = "/api/endpoint"
+        tool.service_url = ""
+
+        result = executor._build_url(tool)
+        assert result == "/TestService/api/endpoint"
+
+    def test_service_url_absolute(self, executor):
+        """Test absolute service_url (lines 450-453)."""
+        tool = MagicMock()
+        tool.swagger_name = ""
+        tool.path = "/endpoint"
+        tool.service_url = "https://api.example.com"
+
+        result = executor._build_url(tool)
+        assert result == "https://api.example.com/endpoint"
+
+    def test_service_url_relative(self, executor):
+        """Test relative service_url (lines 456-458)."""
+        tool = MagicMock()
+        tool.swagger_name = ""
+        tool.path = "/endpoint"
+        tool.service_url = "/automation"
+
+        result = executor._build_url(tool)
+        assert result == "/automation/endpoint"
+
+    def test_path_only_fallback(self, executor):
+        """Test fallback to path only (lines 460-462)."""
+        tool = MagicMock()
+        tool.swagger_name = ""
+        tool.path = "/api/test"
+        tool.service_url = ""
+        tool.operation_id = "test_op"
+
+        result = executor._build_url(tool)
+        assert result == "/api/test"
+
+
+class TestToolExecutorExtractOutput:
+    """Test _extract_output_values method."""
+
+    @pytest.fixture
+    def executor(self, mock_gateway):
+        """Create executor."""
+        return ToolExecutor(gateway=mock_gateway)
+
+    def test_empty_response(self, executor):
+        """Test empty response returns empty dict (line 506)."""
+        result = executor._extract_output_values(None, ["Id"])
+        assert result == {}
+
+    def test_case_insensitive_match(self, executor):
+        """Test case-insensitive key matching (lines 516-519)."""
+        data = {"id": "123", "NAME": "Test"}
+        result = executor._extract_output_values(data, ["Id", "Name"])
+        assert result["Id"] == "123"
+        assert result["Name"] == "Test"
+
+    def test_nested_data_extraction(self, executor):
+        """Test extraction from nested data field (lines 522-525)."""
+        data = {"success": True, "data": {"Id": "123", "Name": "Test"}}
+        result = executor._extract_output_values(data, ["Id", "Name"])
+        assert result["Id"] == "123"
+        assert result["Name"] == "Test"
+
+    def test_list_response_first_item(self, executor):
+        """Test extraction from list response (lines 527-533)."""
+        data = [{"Id": "123", "Name": "First"}, {"Id": "456", "Name": "Second"}]
+        result = executor._extract_output_values(data, ["Id", "Name"])
+        assert result["Id"] == "123"
+        assert result["Name"] == "First"
+
+
+class TestToolExecutorCircuitBreaker:
+    """Test circuit breaker integration."""
+
+    @pytest.fixture
+    def mock_gateway(self):
+        """Mock API gateway."""
+        gateway = MagicMock()
+        response = APIResponse(
+            success=True,
+            status_code=200,
+            data={"result": "ok"}
+        )
+        gateway.execute = AsyncMock(return_value=response)
+        return gateway
+
+    @pytest.fixture
+    def sample_tool(self):
+        """Sample tool definition."""
+        return UnifiedToolDefinition(
+            operation_id="get_Test",
+            service_name="test",
+            swagger_name="test",
+            service_url="/test",
+            path="/api/test",
+            method="GET",
+            description="Test",
+            parameters={}
+        )
+
+    @pytest.fixture
+    def sample_context(self):
+        """Sample execution context."""
+        return ToolExecutionContext(
+            user_context={"person_id": "12345678-1234-1234-1234-123456789012"},
+            tool_outputs={},
+            conversation_state={}
+        )
+
+    @pytest.mark.asyncio
+    async def test_circuit_open_error_handled(self, mock_gateway, sample_tool, sample_context):
+        """Test CircuitOpenError is caught (lines 306-316)."""
+        from services.circuit_breaker import CircuitBreaker, CircuitOpenError
+
+        cb = MagicMock(spec=CircuitBreaker)
+        cb.call = AsyncMock(side_effect=CircuitOpenError("Service unavailable"))
+
+        executor = ToolExecutor(gateway=mock_gateway, circuit_breaker=cb)
+
+        result = await executor.execute(sample_tool, {}, sample_context)
+
+        assert result.success is False
+        assert result.error_code == "CIRCUIT_OPEN"
+
+    @pytest.mark.asyncio
+    async def test_general_exception_handled(self, mock_gateway, sample_tool, sample_context):
+        """Test general exception is caught (lines 318-333)."""
+        from services.circuit_breaker import CircuitBreaker
+
+        cb = MagicMock(spec=CircuitBreaker)
+        cb.call = AsyncMock(side_effect=Exception("Unexpected error"))
+
+        executor = ToolExecutor(gateway=mock_gateway, circuit_breaker=cb)
+
+        result = await executor.execute(sample_tool, {}, sample_context)
+
+        assert result.success is False
+        assert result.error_code == "EXECUTION_ERROR"
+        assert "Neočekivana greška" in result.ai_feedback

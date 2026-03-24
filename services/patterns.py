@@ -7,7 +7,6 @@ Previously duplicated in:
 - dependency_resolver.py (lines 145-174)
 - tool_registry.py (various locations)
 
-Version: 1.0
 """
 
 import re
@@ -42,9 +41,9 @@ class PatternRegistry:
         plates = PatternRegistry.find_plates(text)
     """
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # UUID PATTERNS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Standard UUID format: 8-4-4-4-12 hex characters
     UUID_PATTERN_STR = r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
@@ -53,9 +52,9 @@ class PatternRegistry:
     # UUID with capture group (for extraction)
     UUID_CAPTURE = re.compile(f'({UUID_PATTERN_STR})', re.IGNORECASE)
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # LICENSE PLATE PATTERNS (Croatian)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Croatian plates: ZG-1234-AB, ZG 1234 AB, ZG1234AB
     # Supports Croatian diacritics: Č, Ć, Ž, Š, Đ
@@ -65,17 +64,17 @@ class PatternRegistry:
     # For finding plates in text (with capture group)
     CROATIAN_PLATE_CAPTURE = re.compile(f'({CROATIAN_PLATE_STR})', re.IGNORECASE)
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VIN PATTERNS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Vehicle Identification Number: 17 alphanumeric (no I, O, Q)
     VIN_PATTERN_STR = r'[A-HJ-NPR-Z0-9]{17}'
     VIN_PATTERN = re.compile(f'^{VIN_PATTERN_STR}$')
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # CONTACT PATTERNS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     # Email address
     EMAIL_PATTERN_STR = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
@@ -85,9 +84,9 @@ class PatternRegistry:
     CROATIAN_PHONE_STR = r'(\+385|00385|0)?[1-9]\d{7,8}'
     CROATIAN_PHONE = re.compile(f'^{CROATIAN_PHONE_STR}$')
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # VALUE PATTERNS (for parameter resolution)
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     @classmethod
     def get_value_patterns(cls) -> List[ValuePattern]:
@@ -125,9 +124,9 @@ class PatternRegistry:
             ),
         ]
 
-    # ═══════════════════════════════════════════════════════════════
+    # ---
     # HELPER METHODS
-    # ═══════════════════════════════════════════════════════════════
+    # ---
 
     @classmethod
     def find_uuids(cls, text: str) -> List[str]:
@@ -190,9 +189,12 @@ class PatternRegistry:
         return bool(cls.EMAIL_PATTERN.match(text.strip()))
 
 
-# ═══════════════════════════════════════════════════════════════
+# Module-level export for convenience
+UUID_PATTERN = PatternRegistry.UUID_PATTERN
+
+# ---
 # NAMING CONVENTIONS
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
 # There are THREE naming layers, each serving a different purpose:
 #
@@ -268,98 +270,12 @@ def normalize_context_key(param_name: str) -> str:
     return CONTEXT_KEY_CANONICAL.get(param_name.lower())
 
 
-# ═══════════════════════════════════════════════════════════════
-# INTENT DETECTION PATTERNS (Croatian + English)
-# ═══════════════════════════════════════════════════════════════
+# ---
+# INTENT DETECTION - NOW USES ML CLASSIFIER
+# ---
 #
-# Used by tool_registry.py for intent disambiguation.
-# Centralized here to avoid hardcoding in multiple places.
-
-# Patterns indicating READ intent (questions, show commands)
-READ_INTENT_PATTERNS = [
-    # Croatian questions (with flexible word order)
-    r'^koj[aei]?\b',           # koja, koje, koji at start
-    r'\bkoj[aei]?\s+\w+\s+su', # koja vozila su, koje stvari su
-    r'\bkoj[aei]?\s+\w+\s+je', # koja tablica je, koji broj je
-    r'što\s+je', r'sto\s+je',  # what is
-    r'^koliko\b',              # koliko at start (how much/many)
-    r'koliko?\s+je', r'kolika?\s+je',  # how much is
-    r'kakv[aoi]?\s+je',        # what kind is
-    r'koliko\s+ima',           # how many are there
-    r'kako\s+se\s+zove',       # what is it called
-    r'gdje\s+je', r'di\s+je',  # where is
-    r'kada\s+je', r'kad\s+je', # when is
-    # Croatian commands for reading
-    r'\bprikaži\b', r'\bpokaži\b', r'\bdaj\s+mi\b', r'\breci\s+mi\b',
-    r'\bpronađi\b', r'\bnađi\b', r'\btraži\b', r'\bpretraži\b',
-    r'\bprikazi\b', r'\bpokazi\b',  # Without diacritics
-    r'\bprovjeri\b', r'\bprovjeriti\b',  # check
-    r'\bdohvati\b', r'\bučitaj\b',  # fetch, load
-    # Availability questions
-    r'\bslobodn[aio]\b',       # slobodna, slobodno, slobodni
-    r'\bdostupn[aio]\b',       # dostupna, dostupno, dostupni
-    r'\bima\s+li\b',           # is there
-    # User's own data (possessive + noun = READ)
-    r'\bmoje?\s+rezervacij',   # moje rezervacije
-    r'\bmoje?\s+vozil',        # moje vozilo
-    r'\bmoja\s+',              # moja (anything)
-    # Status/expiry questions
-    r'\bisti[cč]e\b',          # istice/ističe (expires)
-    r'\btrenutn[aio]\b',       # trenutna/trenutno/trenutni (current)
-    r'\bstanje\b',             # stanje (status/state)
-    r'\bstatus\b',             # status
-    # Mileage/distance questions
-    r'\bkilometra[zž]\b',      # kilometraža
-    r'\bkm\b',                 # km
-    # English questions
-    r'what\s+is', r'what\s+are', r'how\s+much', r'how\s+many',
-    r'show\s+me', r'tell\s+me', r'get\s+me', r'find',
-    r'list', r'display', r'view', r'check',
-    # Common question patterns
-    r'\?$',  # Ends with question mark
-    r'^ima\s+li', r'^postoji\s+li',  # Croatian questions
-    r'^is\s+there', r'^are\s+there',  # English questions
-]
-
-# Patterns indicating MUTATION intent (delete, create, update)
-MUTATION_INTENT_PATTERNS = [
-    # Delete/cancel patterns
-    r'obri[sš]i', r'izbri[sš]i', r'ukloni', r'makni',  # Croatian delete
-    r'otka[zž]i', r'poni[sš]ti',   # cancel, annul
-    r'delete', r'remove', r'erase', r'destroy', r'cancel',  # English
-    # Create patterns
-    r'dodaj', r'kreiraj', r'napravi', r'stvori',  # Croatian create
-    r'add', r'create', r'make', r'new',  # English create
-    r'unesi', r'upi[sš]i', r'unos',  # Croatian input (with/without diacritics)
-    r'moram\s+upisati', r'moram\s+unijeti',  # must enter
-    # Update patterns
-    r'promijeni', r'a[zž]uriraj', r'izmijeni', r'uredi',  # Croatian update
-    r'update', r'change', r'modify', r'edit',  # English update
-    # Report/submit patterns
-    r'\bprijavi\b', r'\bprijava\b',  # report
-    r'\bpo[sš]alji\b', r'\bsend\b', # send
-    r'\bzapi[sš]i\b', r'\bbook\b',  # record, book
-    r'\brezerviraj\b',              # reserve
-    # Booking intent
-    r'\btrebam\s+auto\b',           # need a car
-    r'\btrebam\s+vozilo\b',         # need a vehicle
-    r'\btrebam\s+rezerv',           # need to reserve (trebam rezervirati)
-    r'rezervirati',                 # to reserve
-    # Explicit intent
-    r'[zž]elim\s+obrisati', r'ho[cć]u\s+obrisati',
-    r'[zž]elim\s+prijaviti', r'ho[cć]u\s+prijaviti',
-    r'trebam\s+prijaviti',
-    # Damage/accident descriptions (implicit report intent)
-    r'imam\s+kvar', r'imam\s+[sš]tet',
-    r'dogodila.*nesre[cć]', r'imao.*sudar',
-    r'\budario\b', r'\budarila\b',  # hit (masculine/feminine)
-    r'\bogrebao\b', r'\bogrebala\b', r'\bogrebotina\b',  # scratched
-    r'\bo[sš]tetio\b', r'\bo[sš]tetila\b',  # damaged
-    r'\bslomio\b', r'\bslomila\b',  # broke
-    r'\bproblem[aei]?\b.*\bmotor',   # problem/problema with engine
-    r'\bne\s+radi\b',               # doesn't work
-    r'\bpokvario\b', r'\bpokvarilo\b',  # broke down
-]
+# ML-based detection via IntentClassifier replaces regex patterns.
+# Handles Croatian and English naturally, including typos and diacritics.
 
 # Patterns indicating USER-SPECIFIC intent ("my vehicle", "moje vozilo")
 USER_SPECIFIC_PATTERNS = [
@@ -383,26 +299,29 @@ USER_SPECIFIC_PATTERNS = [
     r'do\s+i\s+have', r'i\s+have',
 ]
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # PRE-COMPILED PATTERNS (Performance optimization)
-# ═══════════════════════════════════════════════════════════════
+# ---
 # Compiled once at module load, reused on every call
 
-READ_INTENT_COMPILED = [re.compile(p, re.IGNORECASE) for p in READ_INTENT_PATTERNS]
-MUTATION_INTENT_COMPILED = [re.compile(p, re.IGNORECASE) for p in MUTATION_INTENT_PATTERNS]
 USER_SPECIFIC_COMPILED = [re.compile(p, re.IGNORECASE) for p in USER_SPECIFIC_PATTERNS]
 
 
 def is_read_intent(query: str) -> bool:
-    """Check if query indicates READ intent using pre-compiled patterns."""
-    query_lower = query.lower().strip()
-    return any(pattern.search(query_lower) for pattern in READ_INTENT_COMPILED)
+    """Check if query indicates READ intent using ML classifier."""
+    from services.intent_classifier import detect_action_intent, ActionIntent
+    result = detect_action_intent(query)
+    return result.intent == ActionIntent.READ
 
 
 def is_mutation_intent(query: str) -> bool:
-    """Check if query indicates MUTATION intent using pre-compiled patterns."""
-    query_lower = query.lower().strip()
-    return any(pattern.search(query_lower) for pattern in MUTATION_INTENT_COMPILED)
+    """Check if query indicates MUTATION intent using ML classifier."""
+    from services.intent_classifier import detect_action_intent, ActionIntent
+    result = detect_action_intent(query)
+    return result.intent in (
+        ActionIntent.CREATE, ActionIntent.UPDATE,
+        ActionIntent.PATCH, ActionIntent.DELETE
+    )
 
 
 def is_user_specific(query: str) -> bool:
@@ -422,9 +341,9 @@ USER_FILTER_PARAMS = {
     'createdby', 'created_by',
 }
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # PERSON ID INJECTION SKIP PATTERNS
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
 # Tools matching these patterns should NOT have PersonId auto-injected
 # because they don't operate on user-specific data.
@@ -456,9 +375,9 @@ def should_skip_person_id_injection(tool_id: str) -> bool:
     return any(pattern in tool_lower for pattern in PERSON_ID_SKIP_PATTERNS)
 
 
-# ═══════════════════════════════════════════════════════════════
+# ---
 # INJECTABLE CONTEXT KEYS
-# ═══════════════════════════════════════════════════════════════
+# ---
 #
 # Canonical context keys that should be injected into nested objects.
 # Used by parameter_manager.py for automatic context injection.
@@ -495,3 +414,64 @@ def get_injectable_context(user_context: Dict[str, Any]) -> Dict[str, Any]:
             result[canonical] = value
 
     return result
+
+
+# ---
+# QUERY INTENT DETECTION - ML-BASED
+# ---
+
+from enum import Enum
+
+class QueryIntent(Enum):
+    """Detected intent of user query."""
+    READ = "read"           # Getting data: show, list, what is
+    WRITE = "write"         # Creating/updating: add, create, report
+    DELETE = "delete"       # Removing: delete, cancel, remove
+    UNKNOWN = "unknown"     # Cannot determine
+
+
+def detect_intent(query: str) -> QueryIntent:
+    """
+    Detect user intent using ML classifier with rule-based fallback.
+
+    Version 2.1: Uses trained ML model with rule-based fallback for
+    high-confidence Croatian action keywords.
+    """
+    from services.intent_classifier import detect_action_intent, ActionIntent
+
+    query_lower = query.lower()
+
+    # Rule-based detection for high-confidence Croatian action keywords
+    # These keywords have unambiguous intent meaning
+    WRITE_KEYWORDS = [
+        "rezerviraj", "unesi", "prijavi", "dodaj", "kreiraj", "napravi",
+        "ažuriraj", "azuriraj", "promijeni", "promjeni", "zakaži", "zakazi",
+        "upiši", "upisi", "stavi", "otvori", "zauzmi",
+    ]
+    DELETE_KEYWORDS = [
+        "obriši", "obrisi", "otkaži", "otkazi", "ukloni", "makni",
+        "izbriši", "izbrisi", "izbaci", "poništi", "ponisti",
+    ]
+
+    # Check for keywords first (high-confidence rule-based)
+    for keyword in DELETE_KEYWORDS:
+        if keyword in query_lower:
+            return QueryIntent.DELETE
+
+    for keyword in WRITE_KEYWORDS:
+        if keyword in query_lower:
+            return QueryIntent.WRITE
+
+    # Fall back to ML classifier
+    result = detect_action_intent(query)
+
+    # Map ML ActionIntent to QueryIntent
+    if result.intent == ActionIntent.DELETE:
+        return QueryIntent.DELETE
+    elif result.intent in (ActionIntent.CREATE, ActionIntent.UPDATE, ActionIntent.PATCH):
+        return QueryIntent.WRITE
+    elif result.intent == ActionIntent.READ:
+        return QueryIntent.READ
+
+    # Default to READ for unknown (safer - read doesn't modify data)
+    return QueryIntent.READ

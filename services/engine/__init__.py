@@ -1,83 +1,73 @@
 """
 Message Engine - Public API facade.
-Version: 19.2 (Full Observability Stack)
 
-This module provides backward-compatible interface to the refactored engine.
-All existing imports from services.message_engine should work unchanged.
+Coordinates message processing through:
+- User identification and context
+- Conversation state management (Redis-backed)
+- AI routing and tool execution
+- Cost tracking and observability
 
-New in v19.2:
-- COST TRACKING - Token usage and budget monitoring
-- CostTracker integrated in _instrumented_ai_call
-- /admin/cost-stats endpoint for cost visibility
-
-New in v19.1:
-- MODEL DRIFT DETECTION - Closed feedback loop
-- ErrorLearningService connected to ModelDriftDetector
-- Automatic metrics collection for every LLM interaction
-- Drift alerts via /admin/drift-status endpoint
-
-New in v19.0:
-- UNIFIED LLM ROUTER - Single decision point for ALL routing
-- Handles flow exit detection ("ne želim", "odustani")
-- Correctly distinguishes READ vs WRITE intent
-- Uses training data for few-shot examples
-- 100% pass rate on production scenarios
-
-New in v17.0:
-- FILTER-THEN-SEARCH architecture for semantic search
-- Intent detection (READ vs WRITE) filters by HTTP method first
-- Category detection narrows search space from 900+ to ~20-50 tools
-
-New in v16.2:
-- Full flow support: simple, booking, mileage_input, list, case_creation
-- Graceful fallback to LLM when deterministic path fails
-
-New in v16.1:
-- QueryRouter for deterministic pattern-based routing
-- Direct response for greetings, thanks, help
-
-New in v16.0:
-- ChainPlanner for multi-step execution plans with fallbacks
-- ExecutorWithFallback for automatic retry and alternative tools
-- LLMResponseExtractor for intelligent data extraction
+This module has been refactored into smaller components:
+- user_handler.py: User identification and greeting
+- hallucination_handler.py: Hallucination feedback detection
+- deterministic_executor.py: Fast path execution without LLM
+- flow_executors.py: Multi-step flow handling
+- tool_handler.py: Tool execution with validation
+- flow_handler.py: Flow state management
 """
 
-import json
+import asyncio
 import logging
-import time
-from typing import Dict, Any, Optional, List
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Any, Optional
 
 from config import get_settings
 from services.conversation_manager import ConversationManager, ConversationState
 from services.tool_executor import ToolExecutor
 from services.ai_orchestrator import AIOrchestrator
 from services.response_formatter import ResponseFormatter
-from services.user_service import UserService
 from services.dependency_resolver import DependencyResolver
 from services.error_learning import ErrorLearningService
-from services.model_drift_detector import ModelDriftDetector, get_drift_detector
-from services.cost_tracker import CostTracker, get_cost_tracker
-from services.reasoning import Planner, ExecutionPlan, PlanStep
-
-# NEW v16.0: Advanced components for 100% reliability
-from services.chain_planner import ChainPlanner, get_chain_planner
-from services.executor_fallback import ExecutorWithFallback, get_executor_with_fallback
-from services.response_extractor import LLMResponseExtractor, get_response_extractor
-
-# NEW v16.1: Deterministic query routing - NO LLM guessing for known patterns
-from services.query_router import QueryRouter, get_query_router, RouteResult
-
-# NEW v18.0: Intelligent category-based routing for unmatched queries
-from services.intelligent_router import IntelligentRouter, FlowType, RoutingDecision
-
-# NEW v19.0: Unified LLM router - single decision point
-from services.unified_router import UnifiedRouter, RouterDecision, get_unified_router
+from services.model_drift_detector import get_drift_detector
+from services.cost_tracker import CostTracker
+from services.response_extractor import get_response_extractor
+from services.query_router import get_query_router, RouteResult
+from services.unified_router import get_unified_router
 
 from .tool_handler import ToolHandler
 from .flow_handler import FlowHandler
+from .user_handler import UserHandler
+from .hallucination_handler import HallucinationHandler
+from .deterministic_executor import DeterministicExecutor
+from .flow_executors import FlowExecutors
+from services.context import (
+    UserContextManager,
+    MissingContextError,
+    VehicleSelectionRequired,
+)
+from services.flow_phrases import (
+    matches_show_more,
+    matches_confirm_yes,
+    matches_confirm_no,
+    matches_item_selection,
+    GDPR_CONSENT_MESSAGE,
+    GDPR_CONSENT_DECLINED,
+    GDPR_CONSENT_REPEAT,
+    CONSENT_ACCEPT_KEYWORDS,
+    CONSENT_DECLINE_KEYWORDS,
+)
+from services.user_service import UserService
+from services.errors import ConversationError, ErrorCode, InfrastructureError
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("message_engine")
 settings = get_settings()
+
+# Bounded pool for CPU-bound ML predictions (TF-IDF predict_proba).
+# 2 threads is enough — the GIL serializes numpy anyway, but releasing
+# the event loop prevents coroutine starvation at concurrency > 5.
+_ml_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ml_route")
 
 __all__ = ['MessageEngine']
 
@@ -95,8 +85,6 @@ class MessageEngine:
     This is a facade that coordinates the refactored components.
     """
 
-    MAX_ITERATIONS = 6
-
     def __init__(
         self,
         gateway,
@@ -109,7 +97,7 @@ class MessageEngine:
         """Initialize engine with all services."""
         self.gateway = gateway
         self.registry = registry
-        self.executor = ToolExecutor(gateway)
+        self.executor = ToolExecutor(gateway, registry=registry)
         self.context = context_service
         self.queue = queue_service
         self.cache = cache_service
@@ -120,42 +108,39 @@ class MessageEngine:
         self.dependency_resolver = DependencyResolver(registry)
         self.error_learning = ErrorLearningService(redis_client=self.redis)
 
-        # Model drift detection - closes the feedback loop
+        # Model drift detection
         self.drift_detector = get_drift_detector(
             redis_client=self.redis,
             db_session=self.db
         )
         self.error_learning.set_drift_detector(self.drift_detector)
 
-        # Cost tracking - token usage and budget alerts
+        # Cost tracking
         self.cost_tracker: Optional[CostTracker] = None
         if self.redis:
             try:
-                import asyncio
                 self.cost_tracker = CostTracker(redis_client=self.redis)
                 logger.info("CostTracker initialized")
             except Exception as e:
-                logger.warning(f"CostTracker init failed: {e}")
+                err = InfrastructureError(
+                    ErrorCode.REDIS_UNAVAILABLE,
+                    f"CostTracker init failed: {e}",
+                    cause=e,
+                )
+                logger.warning(f"{err}")
 
         self.ai = AIOrchestrator()
         self.formatter = ResponseFormatter()
-        self.planner = Planner()
-
-        # NEW v16.0: Advanced components
-        self.chain_planner = get_chain_planner()
+        # Response extraction for API results
         self.response_extractor = get_response_extractor()
-        # Note: executor_fallback initialized lazily when search_engine is available
 
-        # NEW v16.1: Deterministic query router
+        # Deterministic query router
         self.query_router = get_query_router()
 
-        # NEW v18.0: Intelligent category-based router (for unmatched queries)
-        self.intelligent_router = IntelligentRouter(registry)
-        self._intelligent_router_initialized = False
-
-        # NEW v19.0: Unified LLM router - makes ALL routing decisions
-        self.unified_router: Optional[UnifiedRouter] = None
+        # Unified LLM router
+        self.unified_router = None
         self._unified_router_initialized = False
+        self._unified_router_lock = asyncio.Lock()
 
         # Refactored handlers
         self._tool_handler = ToolHandler(
@@ -172,95 +157,35 @@ class MessageEngine:
             formatter=self.formatter
         )
 
-        logger.info("MessageEngine initialized (v19.2 with full observability)")
+        # New modular handlers
+        self._user_handler = UserHandler(db_session, gateway, cache_service)
+        self._hallucination_handler = HallucinationHandler(
+            context_service=context_service,
+            error_learning=self.error_learning,
+            ai_model=self.ai.model
+        )
+        self._deterministic_executor = DeterministicExecutor(
+            registry=registry,
+            executor=self.executor,
+            formatter=self.formatter,
+            query_router=self.query_router,
+            response_extractor=self.response_extractor,
+            dependency_resolver=self.dependency_resolver,
+            flow_handler=self._flow_handler
+        )
+        self._flow_executors = FlowExecutors(
+            gateway=gateway,
+            flow_handler=self._flow_handler
+        )
 
-    async def _instrumented_ai_call(
-        self,
-        messages: List[Dict],
-        tools: Optional[List[Dict]] = None,
-        system_prompt: Optional[str] = None,
-        forced_tool: Optional[str] = None,
-        tool_scores: Optional[List[Dict]] = None,
-        user_context: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """
-        Wrapper around AI analyze() that records metrics for drift detection and cost tracking.
-
-        This CLOSES THE FEEDBACK LOOP by sending every LLM interaction to:
-        1. Drift detector - for statistical analysis
-        2. Cost tracker - for budget monitoring
-        """
-        start_time = time.perf_counter()
-        error_type = None
-        success = True
-        tools_called = []
-        usage_data = None
-
-        try:
-            result = await self.ai.analyze(
-                messages=messages,
-                tools=tools,
-                system_prompt=system_prompt,
-                forced_tool=forced_tool,
-                tool_scores=tool_scores
-            )
-
-            # Determine success and extract metadata
-            if result.get("type") == "error":
-                success = False
-                error_type = "llm_error"
-            elif result.get("type") == "tool_call":
-                tools_called = [result.get("tool", "unknown")]
-
-            # Extract usage data for cost tracking
-            usage_data = result.get("usage")
-
-            return result
-
-        except Exception as e:
-            success = False
-            error_type = type(e).__name__
-            raise
-
-        finally:
-            # Calculate latency
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            tenant_id = user_context.get("tenant_id") if user_context else "default"
-
-            # 1. Record interaction for DRIFT DETECTION
-            try:
-                await self.drift_detector.record_interaction(
-                    model_version=self.ai.model,
-                    latency_ms=latency_ms,
-                    success=success,
-                    error_type=error_type,
-                    confidence_score=None,
-                    tools_called=tools_called,
-                    hallucination_reported=False,
-                    tenant_id=tenant_id
-                )
-            except Exception as e:
-                logger.warning(f"Failed to record drift metrics: {e}")
-
-            # 2. Record usage for COST TRACKING
-            if self.cost_tracker and usage_data:
-                try:
-                    await self.cost_tracker.record_usage(
-                        prompt_tokens=usage_data.get("prompt_tokens", 0),
-                        completion_tokens=usage_data.get("completion_tokens", 0),
-                        model=self.ai.model,
-                        tenant_id=tenant_id,
-                        latency_ms=latency_ms,
-                        success=success
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to record cost metrics: {e}")
+        logger.info("MessageEngine initialized (v20.0 modular)")
 
     async def process(
         self,
         sender: str,
         text: str,
-        message_id: Optional[str] = None
+        message_id: Optional[str] = None,
+        db_session=None
     ) -> str:
         """
         Process incoming message.
@@ -269,51 +194,98 @@ class MessageEngine:
             sender: User phone number
             text: Message text
             message_id: Optional message ID
+            db_session: Database session for this request (concurrency-safe)
 
         Returns:
             Response text
         """
+        with trace_span(_tracer, "engine.process", {
+            "engine.sender_suffix": sender[-4:] if sender else "",
+            "engine.query_preview": (text or "")[:80],
+        }) as span:
+            result = await self._process_inner(sender, text, message_id, db_session)
+            span.set_attribute("engine.response_length", len(result))
+            return result
+
+    async def _process_inner(
+        self,
+        sender: str,
+        text: str,
+        message_id: Optional[str] = None,
+        db_session=None
+    ) -> str:
+        """Inner implementation of process(), wrapped by OTel span."""
+        import time as _time
+        _t0 = _time.perf_counter()
         logger.info(f"Processing: {sender[-4:]} - {text[:50]}")
 
-        try:
-            # 1. Identify user
-            user_context = await self._identify_user(sender)
+        # Early validation: empty/whitespace-only messages
+        if not text or not text.strip():
+            return "Molim napišite poruku."
 
+        try:
+            # 1. Identify user (delegated to UserHandler)
+            # Always returns a context (guest context if not in MobilityOne)
+            user_context = await self._user_handler.identify_user(sender, db_session=db_session)
             if not user_context:
-                return (
-                    "Vas broj nije pronaden u sustavu MobilityOne.\n"
-                    "Molimo kontaktirajte administratora."
+                err = ConversationError(
+                    ErrorCode.CONTEXT_MISSING,
+                    f"identify_user returned None for {sender[-4:]}",
+                    metadata={"sender_suffix": sender[-4:]},
                 )
+                logger.error(f"{err}")
+                user_context = {
+                    "person_id": None, "phone": sender,
+                    "tenant_id": settings.tenant_id,
+                    "display_name": "Korisnik", "vehicle": {},
+                    "is_new": True, "is_guest": True
+                }
+            _t1 = _time.perf_counter()
+            logger.info(f"TIMING identify_user: {int((_t1-_t0)*1000)}ms")
+
+            # 1.5 GDPR Consent Gate — ALL users must accept before any processing
+            consent_result = await self._check_gdpr_consent(
+                sender, text, user_context, db_session
+            )
+            if consent_result is not None:
+                return consent_result
 
             # 2. Load conversation state
             conv_manager = await ConversationManager.load_for_user(sender, self.redis)
 
             # 3. Check timeout
             if conv_manager.is_timed_out():
+                err = ConversationError(ErrorCode.FLOW_TIMEOUT, f"Flow timed out for {sender[-4:]} after {conv_manager.FLOW_TIMEOUT_SECONDS}s")
+                logger.warning(str(err))
                 await conv_manager.reset()
 
             # 4. Add to history
             await self.context.add_message(sender, "user", text)
 
-            # 4.5 Check for hallucination feedback ("krivo", "nije točno", etc.)
-            hallucination_result = await self._check_hallucination_feedback(
+            # 4.5 Check for hallucination feedback (delegated to HallucinationHandler)
+            hallucination_result = await self._hallucination_handler.check_hallucination_feedback(
                 text=text,
                 sender=sender,
                 user_context=user_context,
                 conv_manager=conv_manager
             )
             if hallucination_result:
-                # User reported "krivo" - return follow-up question
                 return hallucination_result
 
-            # 5. Handle new user greeting
-            if user_context.get("is_new"):
-                greeting = self._build_greeting(user_context)
+            _t2 = _time.perf_counter()
+            logger.info(f"TIMING pre-processing: {int((_t2-_t0)*1000)}ms")
+
+            # 5. Handle new user greeting (delegated to UserHandler)
+            if UserContextManager(user_context).is_new:
+                greeting = self._user_handler.build_greeting(user_context)
                 await self.context.add_message(sender, "assistant", greeting)
 
                 response = await self._process_with_state(
                     sender, text, user_context, conv_manager
                 )
+
+                _t3 = _time.perf_counter()
+                logger.info(f"TIMING total (new user): {int((_t3-_t0)*1000)}ms")
 
                 full_response = f"{greeting}\n\n---\n\n{response}"
                 await self.context.add_message(sender, "assistant", response)
@@ -324,175 +296,154 @@ class MessageEngine:
                 sender, text, user_context, conv_manager
             )
 
+            _t3 = _time.perf_counter()
+            logger.info(f"TIMING _process_with_state: {int((_t3-_t2)*1000)}ms")
+            logger.info(f"TIMING total: {int((_t3-_t0)*1000)}ms")
+
             # 7. Save response to history
             await self.context.add_message(sender, "assistant", response)
 
             return response
 
+        except MissingContextError as e:
+            logger.info(f"Missing context: {e.param} - prompting user")
+            await self.context.add_message(sender, "assistant", e.prompt_hr)
+            return e.prompt_hr
+
+        except VehicleSelectionRequired as e:
+            logger.info(f"Vehicle selection needed: {len(e.vehicles)} vehicles")
+            vehicles_list = "\n".join([
+                f"* {v.get('LicencePlate', 'N/A')} - {v.get('FullVehicleName', v.get('DisplayName', 'Vozilo'))}"
+                for v in e.vehicles[:5]
+            ])
+            prompt = f"{e.prompt_hr}\n\n{vehicles_list}"
+            await self.context.add_message(sender, "assistant", prompt)
+            return prompt
+
         except Exception as e:
-            logger.error(f"Processing error: {e}", exc_info=True)
-            return "Doslo je do greske. Molimo pokusajte ponovno."
+            err = ConversationError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Processing error for {sender[-4:]}: {e}",
+                cause=e,
+            )
+            logger.error(f"{err}", exc_info=True)
+            return "Došlo je do greške. Molimo pokušajte ponovno."
 
-    async def _identify_user(self, phone: str) -> Optional[Dict[str, Any]]:
-        """Identify user and build context."""
-        user_service = UserService(self.db, self.gateway, self.cache)
-
-        user = await user_service.get_active_identity(phone)
-
-        if user:
-            ctx = await user_service.build_context(user.api_identity, phone)
-            ctx["display_name"] = user.display_name
-            ctx["is_new"] = False
-            return ctx
-
-        result = await user_service.try_auto_onboard(phone)
-
-        if result:
-            display_name, vehicle_info = result
-            user = await user_service.get_active_identity(phone)
-
-            if user:
-                ctx = await user_service.build_context(user.api_identity, phone)
-                ctx["display_name"] = display_name
-                ctx["is_new"] = True
-                ctx["vehicle_info"] = vehicle_info
-                return ctx
-
-        return None
-
-    # =========================================================================
-    # HALLUCINATION FEEDBACK DETECTION
-    # =========================================================================
-
-    # Patterns that indicate user is reporting wrong answer
-    HALLUCINATION_PATTERNS = [
-        "krivo",
-        "nije točno",
-        "nije tocno",
-        "pogrešno",
-        "pogresno",
-        "to nije istina",
-        "nije to",
-        "netočno",
-        "netocno",
-        "greška",
-        "greska",
-        "nije tako",
-        "nije u redu",
-        "ne, nije",
-    ]
-
-    async def _check_hallucination_feedback(
+    async def _check_gdpr_consent(
         self,
-        text: str,
         sender: str,
+        text: str,
         user_context: Dict[str, Any],
-        conv_manager: 'ConversationManager'
+        db_session
     ) -> Optional[str]:
+        """Check GDPR consent status and handle consent flow.
+
+        Uses user_context (already resolved by identify_user) to determine
+        if user is a valid MobilityOne user. Does NOT re-query the API.
+        Only queries DB for consent flag status.
+
+        Returns None if consent is already given (continue processing).
+        Returns a response string if consent is pending (block processing).
         """
-        Check if user is reporting a hallucination ("krivo" feedback).
-
-        If detected:
-        1. Get last bot response from history
-        2. Record hallucination via error_learning
-        3. Return follow-up question for more details
-
-        Returns:
-            Response string if hallucination detected, None otherwise
-        """
-        text_lower = text.lower().strip()
-
-        # Check if this looks like hallucination feedback
-        is_feedback = any(
-            pattern in text_lower
-            for pattern in self.HALLUCINATION_PATTERNS
-        )
-
-        if not is_feedback:
-            return None
-
-        # Don't trigger for longer messages (probably context, not feedback)
-        if len(text) > 100:
-            return None
-
-        logger.info(f"🚨 Hallucination feedback detected: '{text}'")
-
-        try:
-            # Get last bot response from history
-            history = await self.context.get_history(sender)
-
-            last_bot_response = None
-            last_user_query = None
-
-            # Find the most recent assistant message and the query before it
-            for i, msg in enumerate(reversed(history)):
-                if msg.get("role") == "assistant" and not last_bot_response:
-                    last_bot_response = msg.get("content", "")
-                elif msg.get("role") == "user" and last_bot_response and not last_user_query:
-                    last_user_query = msg.get("content", "")
-                    break
-
-            if not last_bot_response:
-                logger.warning("No previous bot response found for hallucination report")
-                return None
-
-            # Record the hallucination
-            result = await self.error_learning.record_hallucination(
-                user_query=last_user_query or "[Unknown query]",
-                bot_response=last_bot_response,
-                user_feedback=text,
-                retrieved_chunks=[],  # TODO: Track RAG chunks
-                model="gpt-4o",  # TODO: Get actual model used
-                conversation_id=sender,
-                tenant_id=user_context.get("tenant_id")
+        # Guest = not found in MobilityOne API → block immediately
+        if user_context.get("is_guest"):
+            consent_key = f"gdpr_consent:{sender}"
+            try:
+                await self.redis.set(consent_key, "unknown", ex=300)
+            except Exception:
+                pass
+            err = ConversationError(
+                ErrorCode.CONSENT_REQUIRED,
+                f"Unregistered user blocked at consent gate: ***{sender[-4:]}",
+                metadata={"sender_suffix": sender[-4:]},
+            )
+            logger.info(f"{err}")
+            return (
+                "Pozdrav! Ja sam MobilityOne AI asistent — automatizirani sustav, ne čovjek.\n\n"
+                "Vaš broj nije registriran u MobilityOne sustavu.\n"
+                "Za korištenje ovog bota morate biti registrirani korisnik.\n\n"
+                "Kontaktirajte vašeg administratora za registraciju."
             )
 
-            # Save state
-            self.error_learning.save_to_file()
-
-            # Return the follow-up question
-            follow_up = result.get("follow_up_question", "")
-            if follow_up:
-                await self.context.add_message(sender, "assistant", follow_up)
-                return follow_up
-
+        # User IS in MobilityOne. Check consent status via Redis cache first.
+        consent_key = f"gdpr_consent:{sender}"
+        try:
+            cached = await self.redis.get(consent_key)
         except Exception as e:
-            logger.error(f"Error recording hallucination: {e}", exc_info=True)
+            err = InfrastructureError(
+                ErrorCode.REDIS_UNAVAILABLE,
+                f"Redis error during consent check: {e}",
+                cause=e,
+            )
+            logger.warning(f"{err}")
+            cached = None
+        if cached == b"1" or cached == "1":
+            return None  # Consent already given, continue
 
-        return None
+        # Check DB for consent flag
+        db = db_session or self._user_handler.db
+        user_service = UserService(db, self._user_handler.gateway, self._user_handler.cache)
+        user = await user_service.get_active_identity(sender)
 
-    def _build_greeting(self, user_context: Dict[str, Any]) -> str:
-        """Build personalized greeting for new user."""
-        name = user_context.get("display_name", "")
-        vehicle = user_context.get("vehicle", {})
-        vehicle_info = user_context.get("vehicle_info", "")
+        if user and user.gdpr_consent_given:
+            # Cache consent in Redis (24h TTL) to avoid future DB lookups
+            try:
+                await self.redis.set(consent_key, "1", ex=86400)
+            except Exception:
+                pass
+            return None  # Already consented
 
-        greeting = f"Pozdrav {name}!\n\n"
-        greeting += "Ja sam MobilityOne AI asistent.\n\n"
+        if not user:
+            # DB lookup failed but user IS in MobilityOne (not guest).
+            # This can happen if DB was down during auto-onboard.
+            # Let them through — consent will be checked again next message.
+            err = InfrastructureError(
+                ErrorCode.DATABASE_UNAVAILABLE,
+                f"Consent DB lookup failed but user is valid MobilityOne user ***{sender[-4:]}",
+            )
+            logger.warning(f"{err}")
+            return None
 
-        if vehicle.get("plate"):
-            plate = vehicle.get("plate")
-            v_name = vehicle.get("name", "vozilo")
-            mileage = vehicle.get("mileage", "N/A")
+        # User exists in DB but hasn't consented — check if this message IS a consent response
+        normalized = text.strip().lower().rstrip(".!?")
 
-            greeting += f"Vidim da vam je dodijeljeno vozilo:\n"
-            greeting += f"   **{v_name}** ({plate})\n"
-            greeting += f"   Kilometraza: {mileage} km\n\n"
-            greeting += "Kako vam mogu pomoci?\n"
-            greeting += "* Unos kilometraze\n"
-            greeting += "* Prijava kvara\n"
-            greeting += "* Rezervacija vozila\n"
-            greeting += "* Pitanja o vozilu"
-        elif vehicle_info and "nema" not in vehicle_info.lower():
-            greeting += f"{vehicle_info}\n\n"
-            greeting += "Kako vam mogu pomoci?"
-        else:
-            greeting += "Trenutno nemate dodijeljeno vozilo.\n\n"
-            greeting += "Zelite li rezervirati vozilo? Recite mi:\n"
-            greeting += "* Za koji period (npr. 'sutra od 8 do 17')\n"
-            greeting += "* Ili samo recite 'Trebam vozilo' pa cemo dalje"
+        if normalized in CONSENT_ACCEPT_KEYWORDS:
+            await user_service.record_consent(sender, given=True)
+            try:
+                await self.redis.set(consent_key, "1", ex=86400)
+                await self.redis.delete(f"gdpr_consent_pending:{sender}")
+            except Exception:
+                pass
+            logger.info(f"GDPR consent accepted by ***{sender[-4:]}")
+            greeting = self._user_handler.build_greeting(user_context)
+            return f"Hvala na pristanku!\n\n{greeting}"
 
-        return greeting
+        if normalized in CONSENT_DECLINE_KEYWORDS:
+            logger.info(f"GDPR consent declined by ***{sender[-4:]}")
+            return GDPR_CONSENT_DECLINED
+
+        # Check if we already sent the consent message (via Redis flag)
+        pending_key = f"gdpr_consent_pending:{sender}"
+        try:
+            already_asked = await self.redis.get(pending_key)
+        except Exception:
+            already_asked = None
+
+        if already_asked:
+            return GDPR_CONSENT_REPEAT
+
+        # First interaction — send consent message
+        err = ConversationError(
+            ErrorCode.CONSENT_EXPIRED,
+            f"Consent not yet given, prompting user ***{sender[-4:]}",
+            metadata={"sender_suffix": sender[-4:]},
+        )
+        logger.info(f"{err}")
+        try:
+            await self.redis.set(pending_key, "1", ex=86400)
+        except Exception:
+            pass
+        return GDPR_CONSENT_MESSAGE
 
     async def _process_with_state(
         self,
@@ -502,10 +453,12 @@ class MessageEngine:
         conv_manager: ConversationManager
     ) -> str:
         """Process message based on conversation state using Unified Router."""
-        state = conv_manager.get_state()
+        import time as _time
+        _pws_start = _time.perf_counter()
 
-        # CRITICAL DEBUG: Log current state for troubleshooting flow issues
+        state = conv_manager.get_state()
         is_in_flow = conv_manager.is_in_flow()
+
         logger.info(
             f"STATE CHECK: user={sender[-4:]}, state={state.value}, "
             f"is_in_flow={is_in_flow}, flow={conv_manager.get_current_flow()}, "
@@ -514,40 +467,35 @@ class MessageEngine:
             f"has_items={len(conv_manager.get_displayed_items())}"
         )
 
-        # === CRITICAL FIX: Direct state-based handling for in-flow messages ===
-        # Before calling unified router, handle obvious in-flow cases directly
-        # This prevents router hallucination from breaking flows
+        # Direct state-based handling for in-flow messages
         if is_in_flow:
-            text_lower = text.lower()
-
-            # In CONFIRMING state - handle confirmations and "show more" directly
             if state == ConversationState.CONFIRMING:
-                # Check for "show more" type requests
-                if any(s in text_lower for s in ["pokaz", "ostala", "druga", "više", "vise", "sva vozila", "lista", "popis"]):
+                if matches_show_more(text):
                     logger.info("DIRECT HANDLER: 'show more' in CONFIRMING state")
                     return await self._flow_handler.handle_confirmation(
                         sender, text, user_context, conv_manager
                     )
-                # Check for confirmation/cancellation
-                if any(w in text_lower for w in ["da", "potvrdi", "ok", "yes", "može", "moze", "ne", "odustani", "cancel", "no"]):
+                if matches_confirm_yes(text) or matches_confirm_no(text):
                     logger.info("DIRECT HANDLER: confirmation response in CONFIRMING state")
                     return await self._flow_handler.handle_confirmation(
                         sender, text, user_context, conv_manager
                     )
 
-            # In SELECTING state - handle numeric selection directly
             if state == ConversationState.SELECTING_ITEM:
-                if text.strip().isdigit() or any(s in text_lower for s in ["prvi", "drugi", "treći", "treci"]):
+                if matches_item_selection(text):
                     logger.info("DIRECT HANDLER: item selection in SELECTING state")
                     return await self._flow_handler.handle_selection(
                         sender, text, user_context, conv_manager, self._handle_new_request
                     )
 
-        # === v19.0: UNIFIED ROUTER - Single decision point ===
-        # Initialize unified router lazily
+        # Initialize unified router lazily (lock prevents double-init under concurrency)
         if not self._unified_router_initialized:
-            self.unified_router = await get_unified_router()
-            self._unified_router_initialized = True
+            async with self._unified_router_lock:
+                if not self._unified_router_initialized:
+                    self.unified_router = await get_unified_router()
+                    if self.registry and self.registry.is_ready:
+                        self.unified_router.set_registry(self.registry)
+                    self._unified_router_initialized = True
 
         # Build conversation state for router
         conv_state = None
@@ -559,40 +507,46 @@ class MessageEngine:
                 "missing_params": conv_manager.get_missing_params()
             }
 
-        # Get unified routing decision
-        decision = await self.unified_router.route(text, user_context, conv_state)
+        # Get unified routing decision (with fallback on failure)
+        _rt0 = _time.perf_counter()
+        try:
+            decision = await self.unified_router.route(text, user_context, conv_state)
+        except Exception as e:
+            err = ConversationError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Unified router failed: {e}",
+                metadata={"sender_suffix": sender[-4:], "text_preview": text[:50]},
+                cause=e,
+            )
+            logger.error(f"{err}", exc_info=True)
+            # Fall through to _handle_new_request which has its own routing
+            return await self._handle_new_request(sender, text, user_context, conv_manager)
+        _rt1 = _time.perf_counter()
 
         logger.info(
             f"UNIFIED ROUTER: action={decision.action}, tool={decision.tool}, "
             f"flow={decision.flow_type}, conf={decision.confidence:.2f}"
         )
+        logger.info(f"TIMING router: {int((_rt1-_rt0)*1000)}ms (since pws_start: {int((_rt1-_pws_start)*1000)}ms)")
 
-        # === Handle routing decision ===
-
-        # 1. Direct response (greetings, help)
+        # Handle routing decisions
         if decision.action == "direct_response":
             return decision.response or "Kako vam mogu pomoći?"
 
-        # 2. Exit flow - user wants something different
+        if decision.action == "clarify":
+            logger.info(f"UNIFIED ROUTER: Clarification needed - '{decision.clarification}'")
+            return decision.clarification or "Možete li mi reći više detalja o tome što tražite?"
+
         if decision.action == "exit_flow":
-            # CRITICAL FIX: Only exit if actually in a flow, prevent infinite loop
             if conv_manager.is_in_flow():
-                logger.info(f"UNIFIED ROUTER: Exiting flow, resetting state")
+                logger.info("UNIFIED ROUTER: Exiting flow, resetting state")
                 await conv_manager.reset()
-                # Re-route with clean state - but prevent infinite recursion
-                # by passing a flag or checking if we just reset
                 new_decision = await self.unified_router.route(text, user_context, None)
 
-                # Handle the new decision directly (no recursion)
                 if new_decision.action == "direct_response":
                     return new_decision.response or "Kako vam mogu pomoći?"
                 if new_decision.action == "start_flow":
-                    if new_decision.flow_type == "booking":
-                        return await self._handle_booking_flow(text, user_context, conv_manager)
-                    if new_decision.flow_type == "mileage":
-                        return await self._handle_mileage_input_flow(text, user_context, conv_manager)
-                    if new_decision.flow_type == "case":
-                        return await self._handle_case_creation_flow(text, user_context, conv_manager)
+                    return await self._handle_flow_start(new_decision, text, user_context, conv_manager)
                 if new_decision.action == "simple_api" and new_decision.tool:
                     route = RouteResult(
                         matched=True,
@@ -600,67 +554,189 @@ class MessageEngine:
                         confidence=new_decision.confidence,
                         flow_type="simple"
                     )
-                    result = await self._execute_deterministic(
+                    result = await self._deterministic_executor.execute(
                         route, user_context, conv_manager, sender, text
                     )
                     if result:
                         return result
-                # Fallback to new request handling
-                return await self._handle_new_request(sender, text, user_context, conv_manager)
+                return "Nisam siguran što tražite. Možete pitati za:\n* Rezervaciju vozila\n* Kilometražu\n* Prijavu štete\n* Informacije o vozilu"
             else:
-                # Not in flow but got exit_flow - treat as simple_api or new request
-                logger.warning(f"UNIFIED ROUTER: exit_flow received but not in flow - ignoring")
-                return await self._handle_new_request(sender, text, user_context, conv_manager)
+                logger.warning("UNIFIED ROUTER: exit_flow received but not in flow - ignoring")
+                return "Kako vam mogu pomoći?"
 
-        # 3. Continue flow - user is providing requested info
         if decision.action == "continue_flow":
-            # CRITICAL: Handle based on ACTUAL state, not router's guess
             if state == ConversationState.SELECTING_ITEM:
                 return await self._flow_handler.handle_selection(
                     sender, text, user_context, conv_manager, self._handle_new_request
                 )
             if state == ConversationState.CONFIRMING:
-                return await self._flow_handler.handle_confirmation(
+                result = await self._flow_handler.handle_confirmation(
                     sender, text, user_context, conv_manager
                 )
+                if isinstance(result, dict) and result.get("mid_flow_question"):
+                    question = result.get("question", text)
+                    logger.info(f"P1: Handling mid-flow question: '{question[:50]}'")
+                    # Per-sender guard to prevent nested mid-flow recursion
+                    # Uses conv_manager.context (per-user) instead of self (shared singleton)
+                    mid_flow_key = "_handling_mid_flow"
+                    already_handling = conv_manager.context.tool_outputs.get(mid_flow_key, False)
+                    if not already_handling:
+                        conv_manager.context.tool_outputs[mid_flow_key] = True
+                        try:
+                            answer = await self._handle_new_request(sender, question, user_context, conv_manager)
+                        finally:
+                            conv_manager.context.tool_outputs.pop(mid_flow_key, None)
+                        return f"{answer}\n\n---\n_Čeka se potvrda prethodne operacije. Potvrdite s **Da** ili **Ne**._"
+                    else:
+                        logger.warning("P1: Skipping nested mid-flow question to prevent recursion")
+                        return "Potvrdite prethodnu operaciju s **Da** ili **Ne**."
+                return result
             if state == ConversationState.GATHERING_PARAMS:
                 return await self._flow_handler.handle_gathering(
                     sender, text, user_context, conv_manager, self._handle_new_request
                 )
-            # If we're supposedly in a flow but state is IDLE, try to recover
             if state == ConversationState.IDLE and conv_manager.get_current_flow():
-                logger.warning(f"STATE MISMATCH: is_in_flow but state=IDLE, treating as new request")
-                # Fall through to new request handling
+                err = ConversationError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    "is_in_flow but state=IDLE",
+                    metadata={"flow": conv_manager.get_current_flow()},
+                )
+                logger.warning(f"STATE MISMATCH: {err}")
+                conv_manager.reset_flow()
 
-        # 4. Start flow - begin a multi-step flow
         if decision.action == "start_flow":
-            if decision.flow_type == "booking":
-                return await self._handle_booking_flow(text, user_context, conv_manager)
-            if decision.flow_type == "mileage":
-                return await self._handle_mileage_input_flow(text, user_context, conv_manager)
-            if decision.flow_type == "case":
-                return await self._handle_case_creation_flow(text, user_context, conv_manager)
+            # Guest users cannot use flows (booking, mileage, case) - require registration
+            if user_context.get("is_guest") and not UserContextManager(user_context).person_id:
+                return (
+                    "Za ovu operaciju trebate biti registrirani u MobilityOne sustavu.\n"
+                    "Kontaktirajte svog administratora za pristup."
+                )
+            return await self._handle_flow_start(decision, text, user_context, conv_manager)
 
-        # 5. Simple API - direct tool call
         if decision.action == "simple_api" and decision.tool:
-            # Create route result for deterministic execution
+            # Guest users: check if tool needs PersonId before calling API
+            if user_context.get("is_guest") and not UserContextManager(user_context).person_id:
+                tool = self.registry.get_tool(decision.tool) if self.registry else None
+                needs_person = False
+                if tool:
+                    for param_def in tool.parameters.values():
+                        if getattr(param_def, 'context_key', None) == "person_id":
+                            needs_person = True
+                            break
+                if needs_person:
+                    return (
+                        "Za dohvat osobnih podataka trebate biti registrirani u MobilityOne sustavu.\n"
+                        "Kontaktirajte svog administratora za pristup."
+                    )
             route = RouteResult(
                 matched=True,
                 tool_name=decision.tool,
                 confidence=decision.confidence,
                 flow_type="simple"
             )
-            result = await self._execute_deterministic(
+            result = await self._deterministic_executor.execute(
                 route, user_context, conv_manager, sender, text
             )
             if result:
                 return result
-            # Fall through to LLM if deterministic fails
+            # Tool execution failed — inform user directly instead of expensive fallback chain
+            logger.warning(f"Simple API execution failed for {decision.tool}")
+            return "Došlo je do greške pri dohvatu podataka. Pokušajte ponovo."
 
-        # === END UNIFIED ROUTER ===
+        # UnifiedRouter returned an action we couldn't handle — should not happen
+        logger.warning(f"UNHANDLED action={decision.action} tool={decision.tool}")
+        return (
+            "Nisam siguran što tražite. Možete pitati za:\n"
+            "* Rezervaciju vozila\n"
+            "* Kilometražu\n"
+            "* Prijavu štete\n"
+            "* Informacije o vozilu"
+        )
 
-        # Fallback to original new request handling
-        return await self._handle_new_request(sender, text, user_context, conv_manager)
+    async def _handle_flow_start(self, decision, text: str, user_context: Dict, conv_manager) -> str:
+        """Handle flow start from router decision."""
+        if decision.flow_type == "booking":
+            return await self._flow_executors.handle_booking_flow(
+                text, user_context, conv_manager, decision.params
+            )
+        if decision.flow_type == "mileage":
+            return await self._flow_executors.handle_mileage_input_flow(
+                text, user_context, conv_manager, decision.params
+            )
+        if decision.flow_type == "case":
+            return await self._flow_executors.handle_case_creation_flow(
+                text, user_context, conv_manager, decision.params
+            )
+        if decision.flow_type in ("delete_booking", "delete_case", "delete_trip"):
+            return await self._flow_executors.handle_delete_flow(
+                decision.flow_type, text, user_context, conv_manager
+            )
+        # ── GENERIC: Any flow_type not handled above (covers all 950 tools) ──
+        logger.info(f"GENERIC FLOW START: type={decision.flow_type}, tool={decision.tool}")
+
+        tool_name = decision.tool
+        if not tool_name:
+            return "Nisam mogao odrediti operaciju. Možete li preformulirati?"
+
+        tool = self.registry.get_tool(tool_name) if self.registry else None
+        if not tool:
+            err = ConversationError(
+                ErrorCode.FLOW_NOT_FOUND,
+                f"Tool '{tool_name}' not found in registry",
+                metadata={"tool_name": tool_name, "flow_type": decision.flow_type},
+            )
+            logger.warning(f"{err}")
+            return f"Alat '{tool_name}' nije pronađen u sustavu."
+
+        # Determine which params are missing (exclude context-injectable ones)
+        ctx = UserContextManager(user_context)
+        injected = set()
+        for p_name in tool.get_context_params():
+            injected.add(p_name)
+        if ctx.person_id:
+            for p_name, p_def in tool.parameters.items():
+                if getattr(p_def, 'context_key', None) == 'person_id':
+                    injected.add(p_name)
+        if ctx.vehicle_id:
+            injected.add("VehicleId")
+
+        provided = set(decision.params.keys()) if decision.params else set()
+        missing = [p for p in tool.required_params if p not in injected and p not in provided]
+
+        is_mutation = tool.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        flow_name = f"generic_{'mutation' if is_mutation else 'query'}"
+
+        await conv_manager.start_flow(flow_name=flow_name, tool=tool_name, required_params=missing)
+
+        # Store context-injected + LLM-extracted params
+        initial_params = dict(decision.params or {})
+        if ctx.person_id:
+            for p_name, p_def in tool.parameters.items():
+                if getattr(p_def, 'context_key', None) == 'person_id':
+                    initial_params[p_name] = ctx.person_id
+        if ctx.vehicle_id and "VehicleId" in tool.parameters:
+            initial_params["VehicleId"] = ctx.vehicle_id
+        if initial_params:
+            await conv_manager.add_parameters(initial_params)
+        await conv_manager.save()
+
+        if not missing:
+            # All params already available — execute or confirm
+            if is_mutation:
+                result = await self._flow_handler.request_confirmation(
+                    tool_name=tool_name,
+                    parameters=conv_manager.get_parameters(),
+                    user_context=user_context,
+                    conv_manager=conv_manager
+                )
+                return result.get("prompt", "Potvrdite operaciju s 'Da' ili 'Ne'.")
+            else:
+                return await self._flow_handler._execute_generic_tool(
+                    tool_name, conv_manager.get_parameters(), user_context, conv_manager
+                )
+
+        from services.context import get_multiple_missing_prompts
+        return get_multiple_missing_prompts(missing)
 
     async def _handle_new_request(
         self,
@@ -669,809 +745,62 @@ class MessageEngine:
         user_context: Dict[str, Any],
         conv_manager: ConversationManager
     ) -> str:
-        """Handle new request with Chain Planning and Fallback Execution."""
+        """Handle new request via QueryRouter deterministic routing (exception recovery / mid-flow callback)."""
 
-        # === v16.1: DETERMINISTIC ROUTING - Try rules FIRST ===
-        # This guarantees correct responses for known patterns WITHOUT LLM
-        route = self.query_router.route(text, user_context)
+        # DETERMINISTIC ROUTING - Try rules FIRST
+        # predict_proba() is CPU-bound (matrix mul). On 0.5 CPU it blocks the
+        # event loop for 1-5ms, starving all other coroutines at concurrency >5.
+        # Bounded pool (2 threads) releases the loop without unbounded thread creation.
+        loop = asyncio.get_running_loop()
+        route = await loop.run_in_executor(_ml_thread_pool, self.query_router.route, text, user_context)
 
         if route.matched:
-            logger.info(f"ROUTER: Deterministic match → {route.tool_name or route.flow_type}")
+            logger.info(f"ROUTER: Deterministic match -> {route.tool_name or route.flow_type}")
 
-            # Direct response (greetings, thanks, help)
+            # Direct response (greetings, thanks, help, context queries)
             if route.flow_type == "direct_response":
+                if route.response_template:
+                    ctx = UserContextManager(user_context)
+                    if 'person_id' in route.response_template:
+                        return f"**Person ID:** {ctx.person_id or 'N/A'}"
+                    elif 'phone' in route.response_template:
+                        return f"**Telefon:** {ctx.phone or 'N/A'}"
+                    elif 'tenant_id' in route.response_template:
+                        return f"**Tenant ID:** {ctx.tenant_id or 'N/A'}"
+
+                    simple_context = {
+                        k: v for k, v in user_context.items()
+                        if not isinstance(v, (dict, list))
+                    }
+                    try:
+                        return route.response_template.format(**simple_context)
+                    except (KeyError, ValueError):
+                        return route.response_template
                 return route.response_template
 
-            # Booking flow
+            # Flow-based routing
             if route.flow_type == "booking":
-                return await self._handle_booking_flow(text, user_context, conv_manager)
-
-            # Mileage input flow
+                return await self._flow_executors.handle_booking_flow(text, user_context, conv_manager, {})
             if route.flow_type == "mileage_input":
-                return await self._handle_mileage_input_flow(text, user_context, conv_manager)
-
-            # Simple query - execute tool deterministically
-            if route.flow_type == "simple" and route.tool_name:
-                result = await self._execute_deterministic(
-                    route, user_context, conv_manager, sender, text
-                )
-                if result:
-                    return result
-                # If deterministic execution failed, fall through to LLM path
-                logger.warning("Deterministic execution failed, falling back to LLM")
-
-            # List flow (my bookings, etc.)
-            if route.flow_type == "list" and route.tool_name:
-                result = await self._execute_deterministic(
-                    route, user_context, conv_manager, sender, text
-                )
-                if result:
-                    return result
-                logger.warning("List execution failed, falling back to LLM")
-
-            # Case creation flow (report damage, etc.)
+                return await self._flow_executors.handle_mileage_input_flow(text, user_context, conv_manager, {})
             if route.flow_type == "case_creation" and route.tool_name:
-                return await self._handle_case_creation_flow(text, user_context, conv_manager)
+                return await self._flow_executors.handle_case_creation_flow(text, user_context, conv_manager, {})
 
-        # No pattern match - try intelligent category-based routing
-        if not route.matched:
-            logger.info(f"ROUTER: No pattern match - trying intelligent routing")
-
-            # Initialize intelligent router lazily
-            if not self._intelligent_router_initialized:
-                await self.intelligent_router.initialize()
-                self._intelligent_router_initialized = True
-
-            # Get intelligent routing decision
-            intelligent_decision = await self.intelligent_router.route(
-                query=text,
-                user_context=user_context,
-                conversation_state=conv_manager.to_dict() if conv_manager.is_in_flow() else None
-            )
-
-            # Handle intelligent routing results
-            if intelligent_decision.flow_type == FlowType.DIRECT_RESPONSE:
-                return intelligent_decision.direct_response
-
-            if intelligent_decision.tool_name and intelligent_decision.confidence >= 0.4:
-                logger.info(
-                    f"INTELLIGENT ROUTER: {intelligent_decision.tool_name} "
-                    f"(conf={intelligent_decision.confidence:.2f}, flow={intelligent_decision.flow_type.value})"
+            # Simple or list query - execute deterministically
+            if route.flow_type in ("simple", "list") and route.tool_name:
+                result = await self._deterministic_executor.execute(
+                    route, user_context, conv_manager, sender, text
                 )
+                if result:
+                    return result
+                logger.warning(f"Deterministic execution failed for {route.tool_name}")
 
-                # Handle flows based on intelligent routing
-                if intelligent_decision.flow_type == FlowType.BOOKING:
-                    return await self._handle_booking_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.AVAILABILITY:
-                    return await self._handle_booking_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.CASE_CREATION:
-                    return await self._handle_case_creation_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.MILEAGE_INPUT:
-                    return await self._handle_mileage_input_flow(text, user_context, conv_manager)
-
-                if intelligent_decision.flow_type == FlowType.LIST:
-                    # For list queries, create a route result and use deterministic execution
-                    list_route = RouteResult(
-                        matched=True,
-                        tool_name=intelligent_decision.tool_name,
-                        extract_fields=[],
-                        flow_type="list"
-                    )
-                    result = await self._execute_deterministic(
-                        list_route, user_context, conv_manager, sender, text
-                    )
-                    if result:
-                        return result
-
-                # For SIMPLE flow type, continue to LLM path but with the selected tool
-                if intelligent_decision.flow_type == FlowType.SIMPLE:
-                    # Store the intelligent decision for later use
-                    route = RouteResult(
-                        matched=True,
-                        tool_name=intelligent_decision.tool_name,
-                        confidence=intelligent_decision.confidence,
-                        flow_type="simple"
-                    )
-
-        # === END DETERMINISTIC AND INTELLIGENT ROUTING ===
-
-        # Pre-resolve entity references
-        pre_resolved = await self._pre_resolve_entity_references(
-            text, user_context, conv_manager
+        # No deterministic match — return helpful message
+        logger.info(f"_handle_new_request: No deterministic match for '{text[:50]}'")
+        return (
+            "Nisam siguran što tražite. Možete pitati za:\n"
+            "* Rezervaciju vozila\n"
+            "* Kilometražu\n"
+            "* Prijavu štete\n"
+            "* Informacije o vozilu"
         )
-
-        if pre_resolved:
-            logger.info(f"Pre-resolved entities: {list(pre_resolved.keys())}")
-
-        # Get history
-        history = await self.context.get_recent_messages(sender)
-
-        messages = history.copy()
-        messages.append({"role": "user", "content": text})
-
-        # Get relevant tools with scores
-        tools_with_scores = await self.registry.find_relevant_tools_with_scores(
-            text, top_k=10  # v16.0: More tools for better fallback options
-        )
-
-        tools_with_scores = sorted(
-            tools_with_scores,
-            key=lambda t: t["score"],
-            reverse=True
-        )
-
-        tools = [t["schema"] for t in tools_with_scores]
-
-        # === v16.0: Use ChainPlanner for multi-step plans with fallbacks ===
-        plan = await self.chain_planner.create_plan(
-            query=text,
-            user_context=user_context,
-            available_tools=tools,
-            tool_scores=tools_with_scores
-        )
-
-        logger.info(f"ChainPlan: {plan.understanding} (simple={plan.is_simple})")
-
-        # Handle direct response (greetings, clarifications)
-        if plan.direct_response:
-            logger.info("Planner direct response")
-            return plan.direct_response
-
-        # Handle missing data - start gathering flow
-        if plan.missing_data and not plan.has_all_data:
-            missing_prompt = self._build_missing_data_prompt(plan.missing_data)
-            logger.info(f"Missing data: {plan.missing_data}")
-
-            # v16.0: Use primary_path instead of steps
-            first_step = plan.primary_path[0] if plan.primary_path else None
-
-            # Store plan in conversation for continuation
-            await conv_manager.start_flow(
-                flow_name="gathering",
-                tool=first_step.tool_name if first_step else None,
-                required_params=plan.missing_data
-            )
-            await conv_manager.save()
-
-            return missing_prompt
-
-        # v16.0: Store extraction hint for response formatting
-        extraction_hint = getattr(plan, 'extraction_hint', None)
-
-        # v16.0: Get fallback tools from plan
-        fallback_tools = []
-        if hasattr(plan, 'fallback_paths') and plan.fallback_paths:
-            for step_fallbacks in plan.fallback_paths.values():
-                for fb in step_fallbacks:
-                    for fb_step in fb.steps:
-                        if fb_step.tool_name:
-                            fallback_tools.append(fb_step.tool_name)
-
-        # === Continue with AI tool calling for execution ===
-        forced_tool = None
-
-        # CRITICAL FIX v15.1: SINGLE_TOOL_THRESHOLD must match ai_orchestrator
-        SINGLE_TOOL_THRESHOLD = 0.98
-
-        if tools_with_scores:
-            best_match = max(tools_with_scores, key=lambda t: t["score"])
-            best_score = best_match["score"]
-            best_tool_name = best_match["name"]
-
-            tool_names = [t["name"] for t in tools_with_scores]
-            available_tool_names = set(tool_names)
-            logger.info(f"Available tools: {tool_names[:5]}")
-            logger.info(f"Best match: {best_tool_name} (score={best_score:.3f})")
-            if fallback_tools:
-                logger.info(f"Fallback tools: {fallback_tools}")
-
-            # v16.0: Get first step from primary_path
-            first_step = plan.primary_path[0] if plan.primary_path else None
-
-            # CRITICAL FIX v15.1: If we're in SINGLE TOOL MODE, only best tool is valid
-            # Token budgeting will reduce to only the best tool when score >= 0.98
-            # So forced_tool MUST be best_tool_name, otherwise we get OpenAI 400 error
-            if best_score >= SINGLE_TOOL_THRESHOLD:
-                # SINGLE TOOL MODE - only best match will be sent to OpenAI
-                forced_tool = best_tool_name
-                if first_step and first_step.tool_name:
-                    suggested = first_step.tool_name
-                    if suggested != best_tool_name:
-                        logger.warning(
-                            f"PLANNER suggested '{suggested}' but SINGLE TOOL MODE active "
-                            f"(score={best_score:.3f} >= {SINGLE_TOOL_THRESHOLD}). "
-                            f"Using best match '{best_tool_name}' instead."
-                        )
-                    else:
-                        logger.info(f"PLANNER: Confirmed best match {forced_tool}")
-                else:
-                    logger.info(f"SINGLE TOOL MODE: Using {forced_tool}")
-            else:
-                # Normal mode - can use planner's suggestion if it's in available tools
-                if first_step and first_step.tool_name:
-                    suggested_tool = first_step.tool_name
-                    if suggested_tool in available_tool_names:
-                        forced_tool = suggested_tool
-                        logger.info(f"PLANNER: Using suggested tool {forced_tool}")
-                    else:
-                        # Planner suggested a tool not in search results
-                        forced_tool = best_tool_name if best_score >= settings.ACTION_THRESHOLD else None
-                        logger.warning(
-                            f"PLANNER suggested '{suggested_tool}' not in available tools. "
-                            f"Using best match '{forced_tool}' instead."
-                        )
-                elif best_score >= settings.ACTION_THRESHOLD:
-                    forced_tool = best_tool_name
-                    logger.info(f"ACTION-FIRST: Forcing {forced_tool}")
-
-        # Build system prompt
-        system_prompt = self.ai.build_system_prompt(
-            user_context,
-            conv_manager.to_dict() if conv_manager.is_in_flow() else None
-        )
-
-        # AI iteration loop
-        current_messages = messages.copy()
-
-        for iteration in range(self.MAX_ITERATIONS):
-            logger.debug(f"AI iteration {iteration + 1}/{self.MAX_ITERATIONS}")
-
-            current_forced = forced_tool if iteration == 0 else None
-
-            # v19.1: Use instrumented call for drift detection
-            result = await self._instrumented_ai_call(
-                messages=current_messages,
-                tools=tools,
-                system_prompt=system_prompt,
-                forced_tool=current_forced,
-                tool_scores=tools_with_scores,
-                user_context=user_context
-            )
-
-            if result.get("type") == "error":
-                return result.get("content", "Greska u AI obradi.")
-
-            if result.get("type") == "text":
-                return result.get("content", "")
-
-            if result.get("type") == "tool_call":
-                tool_name = result["tool"]
-                tool = self.registry.get_tool(tool_name)
-                method = tool.method if tool else "GET"
-
-                # Check for special handling
-                if "available" in tool_name.lower() or "calendar" in tool_name.lower():
-                    if method == "GET" and "vehicle" in tool_name.lower():
-                        return await self._handle_availability_flow(
-                            result, user_context, conv_manager
-                        )
-
-                if method in ("POST", "PUT", "PATCH"):
-                    if self._tool_handler.requires_confirmation(tool_name):
-                        flow_result = await self._flow_handler.request_confirmation(
-                            tool_name, result["parameters"], user_context, conv_manager
-                        )
-                        if flow_result.get("needs_input"):
-                            return flow_result["prompt"]
-
-                # Execute tool
-                # NEW v10.1: Pass original text for intent-aware response formatting
-                tool_response = await self._tool_handler.execute_tool_call(
-                    result, user_context, conv_manager, sender, user_query=text
-                )
-
-                # v16.0: Use LLM Response Extractor for successful responses
-                if tool_response.get("success") and tool_response.get("data"):
-                    try:
-                        extracted_response = await self.response_extractor.extract(
-                            user_query=text,
-                            api_response=tool_response["data"],
-                            tool_name=tool_name,
-                            extraction_hint=extraction_hint
-                        )
-                        if extracted_response:
-                            logger.info(f"LLM extracted response for {tool_name}")
-                            return extracted_response
-                    except Exception as e:
-                        logger.warning(f"LLM extraction failed, using fallback: {e}")
-                        # Continue with standard formatting
-
-                if tool_response.get("final_response"):
-                    return tool_response["final_response"]
-
-                if tool_response.get("needs_input"):
-                    return tool_response.get("prompt", "")
-
-                # v16.0: Try fallback tools on failure
-                if not tool_response.get("success", True) and fallback_tools:
-                    logger.info(f"Primary tool {tool_name} failed, trying fallbacks...")
-
-                    for fb_tool_name in fallback_tools:
-                        if fb_tool_name == tool_name:
-                            continue  # Skip the one that just failed
-
-                        fb_tool = self.registry.get_tool(fb_tool_name)
-                        if not fb_tool:
-                            continue
-
-                        logger.info(f"Trying fallback: {fb_tool_name}")
-
-                        # Adapt parameters for fallback tool
-                        fb_params = result["parameters"].copy()
-
-                        fb_result = {
-                            "tool": fb_tool_name,
-                            "parameters": fb_params,
-                            "tool_call_id": result.get("tool_call_id", "fallback")
-                        }
-
-                        fb_response = await self._tool_handler.execute_tool_call(
-                            fb_result, user_context, conv_manager, sender, user_query=text
-                        )
-
-                        if fb_response.get("success"):
-                            logger.info(f"Fallback {fb_tool_name} succeeded!")
-
-                            # Use LLM extraction for fallback response too
-                            if fb_response.get("data"):
-                                try:
-                                    extracted = await self.response_extractor.extract(
-                                        user_query=text,
-                                        api_response=fb_response["data"],
-                                        tool_name=fb_tool_name,
-                                        extraction_hint=extraction_hint
-                                    )
-                                    if extracted:
-                                        return extracted
-                                except Exception as e:
-                                    logger.warning(f"Fallback extraction failed: {e}")
-
-                            if fb_response.get("final_response"):
-                                return fb_response["final_response"]
-                            break  # Success - exit fallback loop
-
-                        logger.info(f"Fallback {fb_tool_name} also failed")
-
-                # Add to conversation for next iteration
-                tool_result_content = tool_response.get("data", {})
-
-                if not tool_response.get("success", True):
-                    ai_feedback = tool_response.get("ai_feedback", "")
-                    tool_result_content = {
-                        "error": True,
-                        "message": tool_response.get("error", "Unknown error"),
-                        "ai_feedback": ai_feedback
-                    }
-
-                current_messages.append({
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [{
-                        "id": result["tool_call_id"],
-                        "type": "function",
-                        "function": {
-                            "name": result["tool"],
-                            "arguments": json.dumps(result["parameters"])
-                        }
-                    }]
-                })
-
-                current_messages.append({
-                    "role": "tool",
-                    "tool_call_id": result["tool_call_id"],
-                    "content": json.dumps(tool_result_content)
-                })
-
-        return "Nisam uspio obraditi zahtjev. Pokusajte drugacije formulirati."
-
-    async def _handle_availability_flow(
-        self,
-        result: Dict[str, Any],
-        user_context: Dict[str, Any],
-        conv_manager: ConversationManager
-    ) -> str:
-        """Handle availability check flow."""
-        flow_result = await self._flow_handler.handle_availability(
-            result["tool"],
-            result["parameters"],
-            user_context,
-            conv_manager
-        )
-
-        if flow_result.get("needs_input"):
-            return flow_result["prompt"]
-        if flow_result.get("final_response"):
-            return flow_result["final_response"]
-
-        return flow_result.get("error", "Greska pri provjeri dostupnosti.")
-
-    async def _pre_resolve_entity_references(
-        self,
-        text: str,
-        user_context: Dict[str, Any],
-        conv_manager: ConversationManager
-    ) -> Dict[str, Any]:
-        """Pre-resolve entity references before AI processing."""
-        resolved = {}
-
-        try:
-            entity_ref = self.dependency_resolver.detect_entity_reference(
-                text, entity_type="vehicle"
-            )
-
-            if entity_ref:
-                logger.info(f"Pre-resolving entity: {entity_ref}")
-
-                resolution = await self.dependency_resolver.resolve_entity_reference(
-                    reference=entity_ref,
-                    user_context=user_context,
-                    executor=self.executor
-                )
-
-                if resolution.success:
-                    logger.info(f"Pre-resolved VehicleId: {resolution.resolved_value}")
-
-                    resolved["VehicleId"] = resolution.resolved_value
-                    resolved["vehicleId"] = resolution.resolved_value
-
-                    if hasattr(conv_manager.context, 'tool_outputs'):
-                        conv_manager.context.tool_outputs["VehicleId"] = (
-                            resolution.resolved_value
-                        )
-                        conv_manager.context.tool_outputs["vehicleId"] = (
-                            resolution.resolved_value
-                        )
-                        await conv_manager.save()
-                else:
-                    logger.warning(
-                        f"Failed to pre-resolve: {resolution.error_message}"
-                    )
-
-        except Exception as e:
-            logger.error(f"Entity pre-resolution error: {e}", exc_info=True)
-
-        return resolved
-
-    def _build_missing_data_prompt(self, missing_params: List[str]) -> str:
-        """Build user-friendly prompt for missing parameters."""
-        param_prompts = {
-            "from": "Od kada vam treba? (npr. 'sutra u 9:00')",
-            "to": "Do kada?",
-            "FromTime": "Od kada vam treba?",
-            "ToTime": "Do kada?",
-            "Description": "Mozete li opisati situaciju?",
-            "VehicleId": "Koje vozilo zelite?",
-            "Value": "Koja je vrijednost? (npr. kilometraza)",
-            "Subject": "Koji je naslov/tema?",
-            "Message": "Koja je poruka?"
-        }
-
-        if len(missing_params) == 1:
-            param = missing_params[0]
-            return param_prompts.get(param, f"Trebam jos: {param}")
-
-        lines = ["Za nastavak trebam jos informacije:"]
-        for param in missing_params[:3]:
-            prompt = param_prompts.get(param, param)
-            lines.append(f"* {prompt}")
-
-        return "\n".join(lines)
-
-    # === v16.1: DETERMINISTIC EXECUTION METHODS ===
-
-    async def _execute_deterministic(
-        self,
-        route: RouteResult,
-        user_context: Dict[str, Any],
-        conv_manager: ConversationManager,
-        sender: str,
-        original_query: str
-    ) -> Optional[str]:
-        """
-        Execute tool deterministically without LLM tool selection.
-
-        This is the FAST PATH for known queries:
-        - NO embedding search
-        - NO LLM tool selection
-        - GUARANTEED correct tool
-
-        Returns:
-            Formatted response string or None if should fall back to LLM
-        """
-        tool = self.registry.get_tool(route.tool_name)
-        if not tool:
-            logger.error(f"ROUTER: Tool {route.tool_name} not found in registry")
-            return None
-
-        # Build parameters from context
-        params = {}
-        vehicle = user_context.get("vehicle", {})
-
-        # Inject VehicleId if needed and available
-        if "VehicleId" in [p.name for p in tool.parameters.values() if p.required]:
-            vehicle_id = vehicle.get("id")
-            if vehicle_id:
-                params["VehicleId"] = vehicle_id
-            else:
-                # No vehicle - can't execute
-                return (
-                    "Trenutno nemate dodijeljeno vozilo.\n"
-                    "Želite li rezervirati vozilo?"
-                )
-
-        # Create execution context
-        from services.tool_contracts import ToolExecutionContext
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs=conv_manager.context.tool_outputs if hasattr(conv_manager.context, 'tool_outputs') else {},
-            conversation_state={}
-        )
-
-        # Execute tool
-        logger.info(f"DETERMINISTIC: Executing {route.tool_name} with {list(params.keys())}")
-        result = await self.executor.execute(tool, params, execution_context)
-
-        if not result.success:
-            logger.warning(f"DETERMINISTIC: {route.tool_name} failed: {result.error_message}")
-            return None  # Fall back to LLM
-
-        # Try template-based formatting first
-        if route.response_template:
-            formatted = self.query_router.format_response(route, result.data, original_query)
-            if formatted:
-                logger.info(f"DETERMINISTIC: Template response for {route.tool_name}")
-                return formatted
-
-        # Use LLM extraction for complex responses
-        try:
-            extraction_hint = ",".join(route.extract_fields) if route.extract_fields else None
-            extracted = await self.response_extractor.extract(
-                user_query=original_query,
-                api_response=result.data,
-                tool_name=route.tool_name,
-                extraction_hint=extraction_hint
-            )
-            if extracted:
-                logger.info(f"DETERMINISTIC: LLM extracted response for {route.tool_name}")
-                return extracted
-        except Exception as e:
-            logger.warning(f"DETERMINISTIC: LLM extraction failed: {e}")
-
-        # Final fallback - use standard formatter
-        result_dict = {"success": True, "data": result.data, "operation": route.tool_name}
-        return self.formatter.format_result(result_dict, tool, user_query=original_query)
-
-    async def _handle_booking_flow(
-        self,
-        text: str,
-        user_context: Dict[str, Any],
-        conv_manager: ConversationManager
-    ) -> str:
-        """Handle booking flow deterministically."""
-        # Extract time parameters from text
-        time_params = await self.ai.extract_parameters(
-            text,
-            [
-                {"name": "from", "type": "string", "description": "Početno vrijeme"},
-                {"name": "to", "type": "string", "description": "Završno vrijeme"}
-            ]
-        )
-
-        params = {}
-        if time_params.get("from"):
-            params["FromTime"] = time_params["from"]
-            params["from"] = time_params["from"]
-        if time_params.get("to"):
-            params["ToTime"] = time_params["to"]
-            params["to"] = time_params["to"]
-
-        # Start availability flow
-        result = {
-            "tool": "get_AvailableVehicles",
-            "parameters": params,
-            "tool_call_id": "booking_flow"
-        }
-
-        return await self._handle_availability_flow(result, user_context, conv_manager)
-
-    async def _handle_mileage_input_flow(
-        self,
-        text: str,
-        user_context: Dict[str, Any],
-        conv_manager: ConversationManager
-    ) -> str:
-        """Handle mileage input flow deterministically."""
-        # Extract mileage value from text
-        mileage_params = await self.ai.extract_parameters(
-            text,
-            [
-                {"name": "Value", "type": "number", "description": "Kilometraža u km"}
-            ]
-        )
-
-        # Try to get vehicle from multiple sources
-        vehicle = user_context.get("vehicle", {})
-        vehicle_id = vehicle.get("id")
-        vehicle_name = vehicle.get("name", "")
-        plate = vehicle.get("plate", "")
-
-        # 1. Check if we have vehicle from recent booking/context
-        if not vehicle_id and hasattr(conv_manager.context, 'tool_outputs'):
-            vehicle_id = conv_manager.context.tool_outputs.get("VehicleId")
-            if vehicle_id:
-                # Try to get name from stored vehicles
-                all_vehicles = conv_manager.context.tool_outputs.get("all_available_vehicles", [])
-                for v in all_vehicles:
-                    if v.get("Id") == vehicle_id:
-                        vehicle_name = v.get("DisplayName") or v.get("FullVehicleName") or "Vozilo"
-                        plate = v.get("LicencePlate") or ""
-                        break
-
-        # 2. If still no vehicle, fetch first available one
-        if not vehicle_id:
-            try:
-                from services.api_gateway import HttpMethod
-                from datetime import datetime, timedelta
-
-                tomorrow = datetime.now() + timedelta(days=1)
-                result = await self.gateway.execute(
-                    method=HttpMethod.GET,
-                    path="/vehiclemgt/AvailableVehicles",
-                    params={
-                        "from": tomorrow.replace(hour=8, minute=0).isoformat(),
-                        "to": tomorrow.replace(hour=17, minute=0).isoformat()
-                    }
-                )
-
-                if result.success and result.data:
-                    data = result.data.get("Data", result.data) if isinstance(result.data, dict) else result.data
-                    vehicles = data if isinstance(data, list) else [data]
-
-                    if vehicles:
-                        v = vehicles[0]
-                        vehicle_id = v.get("Id")
-                        vehicle_name = v.get("DisplayName") or v.get("FullVehicleName") or "Vozilo"
-                        plate = v.get("LicencePlate") or ""
-
-                        # Store for later - ONLY minimal data to prevent serialization issues
-                        if hasattr(conv_manager.context, 'tool_outputs'):
-                            conv_manager.context.tool_outputs["VehicleId"] = vehicle_id
-                            # Store only minimal vehicle data
-                            minimal_vehicles = [{
-                                "Id": v.get("Id"),
-                                "DisplayName": v.get("DisplayName") or v.get("FullVehicleName") or "Vozilo",
-                                "LicencePlate": v.get("LicencePlate") or v.get("Plate") or ""
-                            } for v in vehicles]
-                            conv_manager.context.tool_outputs["all_available_vehicles"] = minimal_vehicles
-            except Exception as e:
-                logger.warning(f"Failed to fetch vehicles for mileage: {e}")
-
-        if not vehicle_id:
-            return (
-                "Nije pronađeno vozilo za unos kilometraže.\n"
-                "Pokušajte prvo rezervirati vozilo ili kontaktirajte podršku."
-            )
-
-        if not mileage_params.get("Value"):
-            # Start gathering flow - store vehicle info
-            await conv_manager.start_flow(
-                flow_name="mileage_input",
-                tool="post_AddMileage",
-                required_params=["Value"]
-            )
-            await conv_manager.add_parameters({
-                "VehicleId": vehicle_id,
-                "_vehicle_name": vehicle_name,
-                "_vehicle_plate": plate
-            })
-            await conv_manager.save()
-
-            return (
-                f"Unosim kilometražu za **{vehicle_name}** ({plate}).\n\n"
-                f"Kolika je trenutna kilometraža? _(npr. '14500')_"
-            )
-
-        # Have all params - ask for confirmation
-        value = mileage_params["Value"]
-
-        await conv_manager.add_parameters({
-            "VehicleId": vehicle_id,
-            "Value": value
-        })
-
-        message = (
-            f"**Potvrda unosa kilometraže:**\n\n"
-            f"Vozilo: {vehicle_name} ({plate})\n"
-            f"Kilometraža: {value} km\n\n"
-            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
-        )
-
-        await conv_manager.request_confirmation(message)
-        conv_manager.context.current_tool = "post_AddMileage"
-        await conv_manager.save()
-
-        return message
-
-    async def _handle_case_creation_flow(
-        self,
-        text: str,
-        user_context: Dict[str, Any],
-        conv_manager: ConversationManager
-    ) -> str:
-        """Handle support case/damage report creation deterministically."""
-        # Extract description from text
-        case_params = await self.ai.extract_parameters(
-            text,
-            [
-                {"name": "Description", "type": "string", "description": "Opis problema ili kvara"},
-                {"name": "Subject", "type": "string", "description": "Naslov slučaja"}
-            ]
-        )
-
-        vehicle = user_context.get("vehicle", {})
-        vehicle_id = vehicle.get("id")
-        vehicle_name = vehicle.get("name", "vozilo")
-        plate = vehicle.get("plate", "")
-
-        # Build subject from text if not extracted
-        subject = case_params.get("Subject")
-        if not subject:
-            # Try to infer subject from common patterns
-            text_lower = text.lower()
-            if "kvar" in text_lower:
-                subject = "Prijava kvara"
-            elif "šteta" in text_lower or "oštećen" in text_lower:
-                subject = "Prijava oštećenja"
-            elif "problem" in text_lower:
-                subject = "Prijava problema"
-            else:
-                subject = "Prijava slučaja"
-
-        description = case_params.get("Description")
-
-        if not description:
-            # Need to gather description
-            await conv_manager.start_flow(
-                flow_name="case_creation",
-                tool="post_AddCase",
-                required_params=["Description"]
-            )
-
-            # Store what we have so far
-            params = {"Subject": subject}
-            if vehicle_id:
-                params["VehicleId"] = vehicle_id
-            await conv_manager.add_parameters(params)
-            await conv_manager.save()
-
-            return "Možete li opisati problem ili kvar detaljnije?"
-
-        # Have all data - request confirmation
-        # API expects: User, Subject, Message
-        person_id = user_context.get("person_id", "")
-        params = {
-            "User": person_id,  # Required by API
-            "Subject": subject,
-            "Message": description  # API uses "Message", not "Description"
-        }
-
-        await conv_manager.add_parameters(params)
-
-        vehicle_line = f"Vozilo: {vehicle_name} ({plate})\n" if vehicle_id else ""
-
-        message = (
-            f"**Potvrda prijave slučaja:**\n\n"
-            f"Naslov: {subject}\n"
-            f"{vehicle_line}"
-            f"Opis: {description}\n\n"
-            f"_Potvrdite s 'Da' ili odustanite s 'Ne'._"
-        )
-
-        await conv_manager.request_confirmation(message)
-        conv_manager.context.current_tool = "post_AddCase"
-        await conv_manager.save()
-
-        return message

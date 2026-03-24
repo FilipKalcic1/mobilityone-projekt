@@ -1,6 +1,5 @@
 """
 Tool Contracts - Pydantic Models for Unified Tool Definition
-Version: 2.0
 
 Domain-agnostic tool metadata contracts.
 NO business logic, NO domain-specific references.
@@ -36,6 +35,20 @@ class ParameterDefinition(BaseModel):
 
     # For context injection
     context_key: Optional[str] = None  # Key in user_context dict
+
+    # SURVIVAL KIT: Operator support for filter building
+    preferred_operator: str = Field(
+        default="(=)",
+        description="Preferred operator for filter: (=), (contains), (startsWith), (endsWith), (>), (<), (>=), (<=)"
+    )
+    is_filterable: bool = Field(
+        default=False,
+        description="Indicates if this parameter can be used for filtering"
+    )
+    filter_format: Optional[str] = Field(
+        default=None,
+        description="Filter format pattern, e.g., '{name}({operator}){value}' or 'OData'"
+    )
 
     @field_validator('location')
     @classmethod
@@ -104,7 +117,7 @@ class UnifiedToolDefinition(BaseModel):
     def _compute_hash(self) -> str:
         """Compute hash of tool definition for cache invalidation."""
         signature = f"{self.operation_id}:{self.method}:{self.path}:{len(self.parameters)}"
-        return hashlib.md5(signature.encode()).hexdigest()[:16]
+        return hashlib.md5(signature.encode(), usedforsecurity=False).hexdigest()[:16]
 
     def get_context_params(self) -> Dict[str, ParameterDefinition]:
         """Get parameters that should be injected from context."""
@@ -170,7 +183,7 @@ class ToolExecutionResult(BaseModel):
     error_message: Optional[str] = None
     ai_feedback: Optional[str] = None  # Croatian explanation for LLM
 
-    # KRITIČNO za auto-chaining: Lista parametara koji nedostaju
+    # Required for auto-chaining: list of missing parameters
     missing_params: List[str] = Field(
         default_factory=list,
         description="Missing required parameters (for auto-chaining)"

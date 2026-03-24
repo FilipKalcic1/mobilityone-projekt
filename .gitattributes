@@ -1,7 +1,26 @@
-# Force LF line endings for shell scripts (prevents Docker issues on Windows)
-*.sh text eol=lf
+# Normalize line endings to LF on commit
+* text=auto eol=lf
 
-# Other common files that should use LF
+# Source files
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.cfg text eol=lf
+*.sh text eol=lf
 Dockerfile text eol=lf
 docker-compose.yml text eol=lf
-*.py text eol=lf
+Makefile text eol=lf
+
+# Windows batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.pkl binary
+*.faiss binary
+*.png binary
+*.jpg binary

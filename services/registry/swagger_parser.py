@@ -1,6 +1,5 @@
 """
 Swagger Parser - Parse OpenAPI/Swagger specs into UnifiedToolDefinition.
-Version: 1.0
 
 Single responsibility: Parse Swagger JSON specs and create tool definitions.
 """
@@ -19,6 +18,7 @@ from services.tool_contracts import (
     ParameterDefinition,
     DependencySource
 )
+from services.errors import BotError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class SwaggerParser:
         "MaintenanceDaysPeriod",     # Response field, not request param
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize parser with context parameter schemas."""
         self.context_param_patterns: Dict[str, Dict] = {}
         self.context_param_fallback: Dict[str, str] = {}
@@ -121,7 +121,7 @@ class SwaggerParser:
     async def fetch_spec(self, url: str) -> Optional[Dict]:
         """Fetch Swagger spec from URL."""
         try:
-            async with httpx.AsyncClient(verify=False, timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.get(url)
                 if response.status_code == 200:
                     return response.json()
@@ -175,9 +175,10 @@ class SwaggerParser:
                     if tool:
                         tools.append(tool)
                 except Exception as e:
-                    logger.debug(f"Skipped {method} {path}: {e}")
+                    err = BotError(ErrorCode.TOOL_SCHEMA_INVALID, f"Invalid schema for {method} {path}: {e}", cause=e)
+                    logger.debug(str(err))
 
-        logger.info(f"✅ {service_name}: {len(tools)} operations")
+        logger.info(f"{service_name}: {len(tools)} operations")
         return tools
 
     def _parse_operation(
@@ -220,6 +221,21 @@ class SwaggerParser:
             for name, param_def in body_params.items():
                 if param_def.required:
                     required_params.append(name)
+
+        # Global parameter injection (Rows)
+        if method == "GET":
+            rows_param = ParameterDefinition(
+                name="Rows",
+                param_type="integer",
+                format="int32",
+                description="Broj redova za vratiti",
+                required=False,
+                location="query",
+                dependency_source=DependencySource.FROM_USER,
+                default_value=100
+            )
+            if "Rows" not in parameters:
+                parameters["Rows"] = rows_param
 
         # Infer output keys
         output_keys = self._infer_output_keys(operation, spec)
@@ -309,7 +325,7 @@ class SwaggerParser:
             else DependencySource.FROM_USER
         )
 
-        return ParameterDefinition(
+        param_def = ParameterDefinition(
             name=param_name,
             param_type=param_type,
             format=param_format,
@@ -320,6 +336,13 @@ class SwaggerParser:
             context_key=context_key,
             enum_values=schema.get("enum")
         )
+
+        # If it is recognized as person_id, set it to 'contains' from the schema
+        if context_key == "person_id":
+            param_def.preferred_operator = "(contains)"
+            param_def.is_filterable = True
+
+        return param_def
 
     def _parse_request_body(
         self,
@@ -357,7 +380,7 @@ class SwaggerParser:
                 else DependencySource.FROM_USER
             )
 
-            params[prop_name] = ParameterDefinition(
+            param_def = ParameterDefinition(
                 name=prop_name,
                 param_type=prop_type,
                 format=prop_format,
@@ -370,12 +393,22 @@ class SwaggerParser:
                 items_type=prop_schema.get("items", {}).get("type")
             )
 
+            # If it is recognized as person_id, set it to 'contains' from the schema
+            if context_key == "person_id":
+                param_def.preferred_operator = "(contains)"
+                param_def.is_filterable = True
+
+            params[prop_name] = param_def
+
         return params
 
     def _infer_output_keys(self, operation: Dict, spec: Dict) -> List[str]:
-        """Infer output keys from response schema."""
-        output_keys = []
+        """
+        Extract ALL output keys from response schema - NO guessing.
 
+        This reads the actual schema properties from Swagger spec.
+        Field names come directly from API definition.
+        """
         responses = operation.get("responses", {})
         success_response = (
             responses.get("200") or
@@ -384,50 +417,45 @@ class SwaggerParser:
         )
 
         if not success_response:
-            return output_keys
+            return []
 
         content = success_response.get("content", {})
-        json_content = content.get("application/json", {})
+        json_content = (
+            content.get("application/json", {}) or
+            content.get("text/json", {})
+        )
         schema = json_content.get("schema", {})
 
+        if not schema:
+            return []
+
+        # Resolve the schema (handles $ref)
         schema = self._resolve_ref(schema, spec)
 
+        # Handle array wrapper
         if schema.get("type") == "array":
             items_schema = schema.get("items", {})
             schema = self._resolve_ref(items_schema, spec)
 
         properties = schema.get("properties", {})
 
-        # Check for wrapper keys
+        # Check for wrapper keys (API might wrap in Data/Items)
         for wrapper_key in ["Items", "items", "Data", "data", "results", "value"]:
             if wrapper_key in properties:
                 wrapper_schema = self._resolve_ref(properties[wrapper_key], spec)
                 if wrapper_schema.get("type") == "array":
                     items_schema = wrapper_schema.get("items", {})
                     items_schema = self._resolve_ref(items_schema, spec)
-                    properties = items_schema.get("properties", {})
+                    inner_props = items_schema.get("properties", {})
+                    if inner_props:
+                        properties = inner_props
+                        break
+                elif "properties" in wrapper_schema:
+                    properties = wrapper_schema["properties"]
                     break
 
-        all_keys = list(properties.keys())
-
-        useful_patterns = [
-            "id", "ID", "Id", "uuid", "UUID", "Uuid",
-            "vin", "VIN", "Vin",
-            "plate", "Plate", "LicencePlate", "RegistrationNumber",
-            "code", "Code", "number", "Number", "name", "Name",
-            "externalId", "ExternalId", "referenceId", "ReferenceId",
-        ]
-
-        for key in all_keys:
-            if any(pattern in key for pattern in useful_patterns):
-                output_keys.append(key)
-
-        for key in all_keys:
-            if key.endswith("Id") or key.endswith("ID") or key.endswith("UUID"):
-                if key not in output_keys:
-                    output_keys.append(key)
-
-        return output_keys[:15]
+        # Return ALL property names from schema - this is the source of truth
+        return list(properties.keys())
 
     def _resolve_ref(self, schema: Dict, spec: Dict) -> Dict:
         """Resolve $ref to actual schema."""

@@ -1,6 +1,5 @@
 """
 Tool Evaluator - Performance Tracking & Learning
-Version: 1.0
 
 KRITIČNA KOMPONENTA za kvalitetu sustava.
 
@@ -19,10 +18,10 @@ Omogućava:
 PRIMJER KORIŠTENJA:
     evaluator = get_tool_evaluator()
 
-    # Nakon uspješnog poziva
+    # After a successful call
     evaluator.record_success("get_MasterData", response_time=0.5)
 
-    # Nakon neuspješnog poziva
+    # After a failed call
     evaluator.record_failure("get_Vehicles", "Wrong data returned")
 
     # Dohvat score-a za prioritizaciju
@@ -31,16 +30,14 @@ PRIMJER KORIŠTENJA:
 
 import logging
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 EVALUATION_CACHE_FILE = Path.cwd() / ".cache" / "tool_evaluations.json"
-
 
 @dataclass
 class ToolMetrics:
@@ -105,8 +102,8 @@ class ToolMetrics:
         # Recency bonus/penalty (10%)
         if self.last_error_time:
             try:
-                last_error = datetime.fromisoformat(self.last_error_time)
-                hours_since_error = (datetime.utcnow() - last_error).total_seconds() / 3600
+                last_error = datetime.fromisoformat(self.last_error_time.replace('Z', '+00:00'))
+                hours_since_error = (datetime.now(timezone.utc) - last_error).total_seconds() / 3600
 
                 if hours_since_error < 1:
                     # Recent error - penalty
@@ -163,7 +160,6 @@ class ToolMetrics:
             last_call=data.get("last_call")
         )
 
-
 class ToolEvaluator:
     """
     Tool performance evaluator with learning capabilities.
@@ -205,7 +201,7 @@ class ToolEvaluator:
 
             data = {
                 "version": "1.0",
-                "saved_at": datetime.utcnow().isoformat(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
                 "metrics": [m.to_dict() for m in self.metrics.values()]
             }
 
@@ -237,7 +233,7 @@ class ToolEvaluator:
         """
         metrics = self._get_or_create_metrics(operation_id)
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         metrics.total_calls += 1
         metrics.successful_calls += 1
@@ -280,7 +276,7 @@ class ToolEvaluator:
         """
         metrics = self._get_or_create_metrics(operation_id)
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         metrics.total_calls += 1
         metrics.failed_calls += 1
@@ -324,7 +320,7 @@ class ToolEvaluator:
 
         if positive:
             metrics.positive_feedback += 1
-            logger.debug(f"👍 Positive feedback for {operation_id}")
+            logger.debug(f"Positive feedback for {operation_id}")
         else:
             metrics.negative_feedback += 1
             logger.info(
@@ -461,10 +457,8 @@ class ToolEvaluator:
             "worst_performers": bottom_5
         }
 
-
 # Global instance
 _tool_evaluator: Optional[ToolEvaluator] = None
-
 
 def get_tool_evaluator() -> ToolEvaluator:
     """Get global tool evaluator instance."""

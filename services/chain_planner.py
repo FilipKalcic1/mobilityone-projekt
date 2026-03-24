@@ -1,6 +1,5 @@
 """
 Chain Planner - Multi-step execution planning with fallback paths.
-Version: 1.0
 
 Single responsibility: Create execution plans with multiple paths
 and fallback strategies for complex queries.
@@ -8,16 +7,96 @@ and fallback strategies for complex queries.
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional
 
-from openai import AsyncAzureOpenAI
-
 from config import get_settings
+from services.openai_client import get_openai_client, get_llm_circuit_breaker
+from services.circuit_breaker import CircuitOpenError
+from services.context import UserContextManager
+from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("chain_planner")
 settings = get_settings()
+
+
+# ──────────────────────────────────────────────────────────────
+# MULTI-TOOL PATTERNS: Deterministic shortcuts for common
+# multi-tool queries. Skips LLM planning entirely.
+# Each pattern maps to parallel-executable tools.
+# ──────────────────────────────────────────────────────────────
+
+MULTI_TOOL_PATTERNS = [
+    # 3-tool patterns FIRST (more specific = higher priority)
+    {
+        # "kilometrazu, troskove i putovanja"
+        "keywords_all": [
+            [r"kilometra[žz]|km"],
+            [r"troš|trosk|rashod|expense"],
+            [r"putovanj|trip|vožnj"],
+        ],
+        "tools": ["get_MasterData", "get_Expenses", "get_Trips"],
+        "understanding": "Kilometraža, troškovi i putovanja",
+    },
+    # 2-tool patterns
+    {
+        # "daj mi kilometrazu i troskove" / "km i rashode"
+        "keywords_all": [
+            [r"kilometra[žz]|km|stanje km"],
+            [r"troš|trosk|rashod|izdatak|expense"],
+        ],
+        "tools": ["get_MasterData", "get_Expenses"],
+        "understanding": "Kilometraža i troškovi",
+    },
+    {
+        # "km i putovanja"
+        "keywords_all": [
+            [r"kilometra[žz]|km|stanje km"],
+            [r"putovanj|trip|vožnj"],
+        ],
+        "tools": ["get_MasterData", "get_Trips"],
+        "understanding": "Kilometraža i putovanja",
+    },
+    {
+        # "troskovi i putovanja"
+        "keywords_all": [
+            [r"troš|trosk|rashod|izdatak|expense"],
+            [r"putovanj|trip|vožnj"],
+        ],
+        "tools": ["get_Expenses", "get_Trips"],
+        "understanding": "Troškovi i putovanja",
+    },
+    {
+        # "podatke o vozilu i moje podatke"
+        "keywords_all": [
+            [r"vozil|auto"],
+            [r"korisni[kc]|osob|profil|moj[ie] podatk"],
+        ],
+        "tools": ["get_MasterData", "get_PersonData_personIdOrEmail"],
+        "understanding": "Podaci o vozilu i korisniku",
+    },
+    {
+        # "rezervacije i troskove"
+        "keywords_all": [
+            [r"rezervacij|booking|kalendar"],
+            [r"troš|trosk|rashod|expense"],
+        ],
+        "tools": ["get_VehicleCalendar", "get_Expenses"],
+        "understanding": "Rezervacije i troškovi",
+    },
+    {
+        # "slucajeve i troskove"
+        "keywords_all": [
+            [r"slu[čc]aj|šteta|steta|kvar|prijav|slucaj"],
+            [r"troš|trosk|rashod|expense"],
+        ],
+        "tools": ["get_Cases", "get_Expenses"],
+        "understanding": "Slučajevi i troškovi",
+    },
+]
 
 
 class StepType(Enum):
@@ -76,12 +155,10 @@ class ChainPlanner:
     """
 
     def __init__(self):
-        """Initialize with OpenAI client."""
-        self.openai = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        """Initialize with shared OpenAI client."""
+        # Shared client: rate limiting + connection pooling across all services
+        self.openai = get_openai_client()
+        self._circuit_breaker = get_llm_circuit_breaker()
 
     async def create_plan(
         self,
@@ -102,7 +179,14 @@ class ChainPlanner:
         Returns:
             ExecutionPlan with primary path and fallbacks
         """
-        logger.info(f"Planning chain for: {query[:50]}...")
+        with trace_span(_tracer, "chain_planner.create_plan", {"query_length": len(query), "num_tools": len(available_tools)}):
+            logger.info(f"Planning chain for: {query[:50]}...")
+
+        # Check for deterministic multi-tool patterns (no LLM needed)
+        multi_plan = self._check_multi_tool_patterns(query)
+        if multi_plan:
+            logger.info(f"MULTI-TOOL FAST PATH: {[s.tool_name for s in multi_plan.primary_path]}")
+            return multi_plan
 
         # Check for simple cases first
         simple_plan = self._check_simple_cases(query, user_context, tool_scores)
@@ -187,6 +271,35 @@ class ChainPlanner:
 
         return None
 
+    def _check_multi_tool_patterns(self, query: str) -> Optional[ExecutionPlan]:
+        """Check for deterministic multi-tool patterns that skip LLM planning."""
+        query_lower = query.lower()
+
+        for pattern in MULTI_TOOL_PATTERNS:
+            keyword_groups = pattern["keywords_all"]
+            # ALL keyword groups must match (each group needs at least one regex hit)
+            if all(
+                any(re.search(regex, query_lower) for regex in group)
+                for group in keyword_groups
+            ):
+                steps = [
+                    PlanStep(
+                        step_number=i + 1,
+                        step_type=StepType.EXECUTE_TOOL,
+                        tool_name=tool,
+                        reason=f"Multi-tool pattern: {pattern['understanding']}",
+                    )
+                    for i, tool in enumerate(pattern["tools"])
+                ]
+                return ExecutionPlan(
+                    understanding=pattern["understanding"],
+                    is_simple=False,
+                    has_all_data=True,
+                    primary_path=steps,
+                )
+
+        return None
+
     def _has_required_context(
         self,
         tool: Dict[str, Any],
@@ -196,13 +309,16 @@ class ChainPlanner:
         schema = tool.get("schema", {})
         required = schema.get("parameters", {}).get("required", [])
 
+        # Use UserContextManager for validated access
+        ctx = UserContextManager(user_context)
+
         for param in required:
             param_lower = param.lower()
             if "vehicle" in param_lower:
-                if not user_context.get("vehicle", {}).get("id"):
+                if not ctx.has_vehicle():
                     return False
             elif "person" in param_lower or "driver" in param_lower:
-                if not user_context.get("person_id"):
+                if not ctx.person_id:
                     return False
 
         return True
@@ -228,22 +344,22 @@ class ChainPlanner:
 
     def _summarize_context(self, user_context: Dict[str, Any]) -> str:
         """Summarize user context for planner."""
+        # Use UserContextManager for validated access
+        ctx = UserContextManager(user_context)
         parts = []
 
-        if user_context.get("person_id"):
-            parts.append(f"person_id: {user_context['person_id']}")
+        if ctx.person_id:
+            parts.append(f"person_id: {ctx.person_id}")
 
-        if user_context.get("display_name"):
-            parts.append(f"ime: {user_context['display_name']}")
+        if ctx.display_name != "Korisnik":  # Only if not default
+            parts.append(f"ime: {ctx.display_name}")
 
-        vehicle = user_context.get("vehicle", {})
-        if vehicle:
-            if vehicle.get("id"):
-                parts.append(f"vehicle_id: {vehicle['id']}")
-            if vehicle.get("plate"):
-                parts.append(f"tablica: {vehicle['plate']}")
-            if vehicle.get("name"):
-                parts.append(f"vozilo: {vehicle['name']}")
+        if ctx.vehicle and ctx.vehicle.is_valid():
+            parts.append(f"vehicle_id: {ctx.vehicle.id}")
+            if ctx.vehicle.plate:
+                parts.append(f"tablica: {ctx.vehicle.plate}")
+            if ctx.vehicle.name:
+                parts.append(f"vozilo: {ctx.vehicle.name}")
 
         if not parts:
             return "Nema dodatnih podataka o korisniku."
@@ -412,7 +528,9 @@ DOSTUPNI ALATI:
 Napravi CHAIN PLAN izvršenja u JSON formatu."""
 
         try:
-            response = await self.openai.chat.completions.create(
+            response = await self._circuit_breaker.call(
+                f"llm_planner:{settings.AZURE_OPENAI_DEPLOYMENT_NAME}",
+                self.openai.chat.completions.create,
                 model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -425,6 +543,10 @@ Napravi CHAIN PLAN izvršenja u JSON formatu."""
 
             content = response.choices[0].message.content
             return json.loads(content)
+
+        except CircuitOpenError as e:
+            logger.warning(f"ChainPlanner circuit breaker OPEN: {e}")
+            return None
 
         except Exception as e:
             logger.error(f"ChainPlanner LLM error: {e}")

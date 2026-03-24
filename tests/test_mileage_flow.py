@@ -1,6 +1,5 @@
 """
 Test Mileage Input Flow End-to-End
-Version: 1.0
 
 Simulira mileage input flow kroz MessageEngine:
 1. Korisnik: "Unesi kilometražu 16500"
@@ -9,12 +8,15 @@ Simulira mileage input flow kroz MessageEngine:
 4. Bot: Unosi kilometražu
 
 Pokreni: python -m tests.test_mileage_flow
+
+Note: Integration test - skipped in CI (when APP_ENV=testing).
 """
 
 import asyncio
 import logging
 import sys
 import os
+import pytest
 
 # Fix Windows console encoding for emojis
 if sys.platform == "win32":
@@ -34,6 +36,8 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_mileage_api():
     """Test AddMileage API directly."""
 
@@ -128,6 +132,8 @@ async def test_mileage_api():
     }
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_mileage_flow():
     """Test mileage input flow through FlowHandler."""
 
@@ -299,6 +305,8 @@ async def test_mileage_flow():
     await redis_client.aclose()
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("APP_ENV") == "testing", reason="Integration test - requires real services")
 async def test_full_mileage_flow():
     """Test mileage submission via ToolExecutor (simplified - no MessageEngine)."""
 

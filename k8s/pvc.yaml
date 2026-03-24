@@ -1,0 +1,40 @@
+# =============================================================================
+# PERSISTENT VOLUME CLAIM - Cache for ML embeddings and models
+# =============================================================================
+#
+# PURPOSE:
+# - Stores pre-computed Azure OpenAI embeddings (~40MB)
+# - Stores trained ML models (intent classifier, etc.)
+# - Without this, each pod startup takes 60-120 seconds generating embeddings
+# - With this, pod startup takes <5 seconds
+#
+# IMPORTANT:
+# - Use ReadWriteMany (RWX) access mode so all pods can share the cache
+# - Requires a storage class that supports RWX:
+#     Azure AKS: azurefile (default) or azurefile-premium
+#     AWS EKS:   efs-sc (requires EFS CSI driver)
+#     GCP GKE:   standard-rwx (requires Filestore CSI driver)
+#     On-prem:   nfs-client
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mobility-cache-pvc
+  labels:
+    app: mobility-bot
+    component: cache
+spec:
+  accessModes:
+    - ReadWriteMany  # All pods can read/write (required for shared cache)
+  resources:
+    requests:
+      storage: 500Mi  # Embeddings (~40MB) + ML models (~100MB) + headroom
+  # -------------------------------------------------------------------------
+  # REQUIRED: Set storage class for your cloud provider.
+  # Azure AKS (default target):
+  storageClassName: azurefile
+  # AWS EKS:   storageClassName: efs-sc
+  # GCP GKE:   storageClassName: standard-rwx
+  # On-prem:   storageClassName: nfs-client
+  # -------------------------------------------------------------------------
