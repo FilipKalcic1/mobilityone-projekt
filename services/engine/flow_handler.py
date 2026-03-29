@@ -11,15 +11,15 @@ v2.0 Changes:
 
 import logging
 import re
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, List, Optional, Union
 
 from services.booking_contracts import AssigneeType, EntryType
 from services.error_translator import get_error_translator
 from services.confirmation_dialog import get_confirmation_dialog
 from services.context import get_multiple_missing_prompts
 from services.context.user_context_manager import UserContextManager
-from services.errors import ConversationError, ErrorCode, InfrastructureError
+from services.errors import ConversationError, ErrorCode
 from services.tracing import get_tracer, trace_span
 from services.engine.confirmation_handler import (
     request_confirmation_flow,
@@ -27,11 +27,37 @@ from services.engine.confirmation_handler import (
     handle_confirmation_flow,
     show_mileage_confirmation,
     show_case_confirmation,
-    show_delete_confirmation,
 )
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("flow_handler")
+
+# Pre-compiled regex patterns for _is_question() hot path
+_QUESTION_PATTERNS = [re.compile(p) for p in [  # Applied to lowered text only
+    r'\b(koliko|kolika|koliki)\b',   # How much/many
+    r'\b(koji|koja|koje|kojih)\b',    # Which
+    r'\b(što|sta|sto)\b',             # What
+    r'\b(gdje|di)\b',                 # Where
+    r'\b(kada|kad)\b',                # When
+    r'\b(zašto|zasto)\b',             # Why
+    r'\b(kako)\b',                    # How
+    r'\b(tko|ko)\b',                  # Who
+    r'\b(ima li|postoji li)\b',       # Is there
+    r'\b(mogu li|može li|moze li)\b', # Can I/Can it
+    r'\b(je li|jel)\b',               # Is it
+]]
+
+# Pre-compiled regex patterns for _extract_filter_text() hot path
+_FILTER_PATTERNS = [re.compile(p) for p in [
+    r'pokaži\s+(?:samo\s+)?(.+)',        # "pokaži Passat", "pokaži samo ZG"
+    r'pokazi\s+(?:samo\s+)?(.+)',        # "pokazi Passat" (without č)
+    r'filtriraj\s+(.+)',                  # "filtriraj Golf"
+    r'samo\s+(.+)',                       # "samo Octavia"
+    r'traži\s+(.+)',                      # "traži VW"
+    r'trazi\s+(.+)',                      # "trazi VW" (without ž)
+    r'nađi\s+(.+)',                       # "nađi Škoda"
+    r'nadji\s+(.+)',                      # "nadji Skoda" (without đ)
+]]
 
 class FlowHandler:
     """
@@ -106,11 +132,7 @@ class FlowHandler:
             }
 
         from services.tool_contracts import ToolExecutionContext
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs={},
-            conversation_state={}
-        )
+        execution_context = ToolExecutionContext.from_conv_manager(user_context, None)
 
         result = await self.executor.execute(tool, parameters, execution_context)
 
@@ -234,7 +256,7 @@ class FlowHandler:
         text: str,
         user_context: Dict[str, Any],
         conv_manager
-    ) -> str:
+    ) -> Union[str, Dict[str, Any]]:
         """Handle confirmation response. Delegates to confirmation_handler."""
         with trace_span(_tracer, "flow_handler.handle_confirmation", {"sender_suffix": sender[-4:] if sender else "", "text_length": len(text)}) as span:
             result = await handle_confirmation_flow(
@@ -328,17 +350,11 @@ class FlowHandler:
                         logger.info(f"GATHERING FALLBACK: Using raw text '{text.strip()}' as {param}")
                 # For Value (mileage), try to parse the number
                 elif param.lower() in ['value', 'mileage']:
-                    # Strip European thousands separators (45.000 or 1.234.567 → 45000 / 1234567)
-                    cleaned = text
-                    while True:
-                        new = re.sub(r'(\d)[.,](\d{3})\b', r'\1\2', cleaned)
-                        if new == cleaned:
-                            break
-                        cleaned = new
-                    numbers = re.findall(r'\d+', cleaned)
-                    if numbers:
-                        extracted[param] = int(numbers[0])
-                        logger.info(f"GATHERING FALLBACK: Extracted number '{numbers[0]}' as {param}")
+                    from services.text_normalizer import clean_european_number
+                    parsed = clean_european_number(text)
+                    if parsed is not None:
+                        extracted[param] = parsed
+                        logger.info(f"GATHERING FALLBACK: Extracted number '{parsed}' as {param}")
 
             await conv_manager.add_parameters(extracted)
 
@@ -416,10 +432,6 @@ class FlowHandler:
         """Show case creation confirmation. Delegates to confirmation_handler."""
         return await show_case_confirmation(params, user_context, conv_manager)
 
-    async def _show_delete_confirmation(self, selected: Dict, conv_manager) -> str:
-        """Show confirmation for delete operation. Delegates to confirmation_handler."""
-        return await show_delete_confirmation(selected, conv_manager)
-
     async def _execute_generic_tool(self, tool_name: str, params: Dict[str, Any],
                                      user_context: Dict[str, Any], conv_manager) -> str:
         """Execute any tool generically and format the response.
@@ -439,26 +451,12 @@ class FlowHandler:
             return f"Alat '{tool_name}' nije pronađen."
 
         from services.tool_contracts import ToolExecutionContext
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs=getattr(conv_manager.context, 'tool_outputs', {}),
-            conversation_state={}
-        )
+        execution_context = ToolExecutionContext.from_conv_manager(user_context, conv_manager)
 
         result = await self.executor.execute(tool, params, execution_context)
 
-        # Clean up flow state (same pattern as handle_confirmation lines 448-455)
-        try:
-            await conv_manager.complete()
-            await conv_manager.reset()
-        except Exception as e:
-            err = InfrastructureError(
-                ErrorCode.REDIS_UNAVAILABLE,
-                f"State cleanup failed after generic execution: {e}",
-                cause=e,
-            )
-            logger.error(f"{err}")
-            conv_manager.context.reset()
+        from services.engine.confirmation_handler import cleanup_flow_state
+        await cleanup_flow_state(conv_manager, context="generic execution")
 
         if result.success:
             result_dict = {"success": True, "data": result.data, "operation": tool_name}
@@ -500,7 +498,7 @@ class FlowHandler:
         Returns ISO format string or None if unparseable.
         """
         text_lower = text.lower().strip()
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Map Croatian day keywords to date offsets
         day_map = {
@@ -558,23 +556,9 @@ class FlowHandler:
         """
         text_lower = text.lower().strip()
 
-        # Question word patterns (Croatian)
-        question_patterns = [
-            r'\b(koliko|kolika|koliki)\b',   # How much/many
-            r'\b(koji|koja|koje|kojih)\b',    # Which
-            r'\b(što|sta|sto)\b',             # What
-            r'\b(gdje|di)\b',                 # Where
-            r'\b(kada|kad)\b',                # When
-            r'\b(zašto|zasto)\b',             # Why
-            r'\b(kako)\b',                    # How
-            r'\b(tko|ko)\b',                  # Who
-            r'\b(ima li|postoji li)\b',       # Is there
-            r'\b(mogu li|može li|moze li)\b', # Can I/Can it
-            r'\b(je li|jel)\b',               # Is it
-        ]
-
-        for pattern in question_patterns:
-            if re.search(pattern, text_lower):
+        # Question word patterns (Croatian) — pre-compiled at module level
+        for pattern in _QUESTION_PATTERNS:
+            if pattern.search(text_lower):
                 return True
 
         # Check for question mark
@@ -609,20 +593,9 @@ class FlowHandler:
         """
         text_lower = text.lower().strip()
 
-        # Filter patterns (Croatian)
-        patterns = [
-            r'pokaži\s+(?:samo\s+)?(.+)',        # "pokaži Passat", "pokaži samo ZG"
-            r'pokazi\s+(?:samo\s+)?(.+)',        # "pokazi Passat" (without č)
-            r'filtriraj\s+(.+)',                  # "filtriraj Golf"
-            r'samo\s+(.+)',                       # "samo Octavia"
-            r'traži\s+(.+)',                      # "traži VW"
-            r'trazi\s+(.+)',                      # "trazi VW" (without ž)
-            r'nađi\s+(.+)',                       # "nađi Škoda"
-            r'nadji\s+(.+)',                      # "nadji Skoda" (without đ)
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text_lower)
+        # Filter patterns (Croatian) — pre-compiled at module level
+        for pattern in _FILTER_PATTERNS:
+            match = pattern.search(text_lower)
             if match:
                 filter_val = match.group(1).strip()
                 # Don't treat confirmation words as filters

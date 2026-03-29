@@ -36,7 +36,8 @@ from services.registry.search_scorers import (
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("search_engine")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 # Module-level cache for JSON files (loaded once, reused)
@@ -93,9 +94,11 @@ class SearchEngine:
         from services.openai_client import get_embedding_client
         self.openai = get_embedding_client()
 
-        # Load category and documentation data
+        # Load category data (categories are small, keep local cache)
         self._tool_categories = _load_json_file("tool_categories.json")
-        self._tool_documentation = _load_json_file("tool_documentation.json")
+        # Tool documentation — shared cache (single source of truth)
+        from services.schema_sanitizer import get_tool_documentation
+        self._tool_documentation = get_tool_documentation()
 
         # Build reverse lookup: tool_id -> category
         self._tool_to_category: Dict[str, str] = {}
@@ -257,7 +260,7 @@ class SearchEngine:
         try:
             response = await self.openai.embeddings.create(
                 input=[query[:8000]],
-                model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+                model=_get_settings().AZURE_OPENAI_EMBEDDING_DEPLOYMENT
             )
             return response.data[0].embedding
         except Exception as e:

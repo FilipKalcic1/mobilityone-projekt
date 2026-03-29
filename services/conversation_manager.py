@@ -8,7 +8,7 @@ CRITICAL FIX: State is now stored in Redis, survives restarts.
 
 import json
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, Any, List, Optional
@@ -200,7 +200,10 @@ class ConversationManager:
                 data = await self.redis.get(self._redis_key)
                 if data:
                     state_dict = json.loads(data)
-                    self.context = ConversationContext(**state_dict)
+                    # Forward-compat: filter out keys not in ConversationContext
+                    valid_fields = {f.name for f in fields(ConversationContext)}
+                    filtered = {k: v for k, v in state_dict.items() if k in valid_fields}
+                    self.context = ConversationContext(**filtered)
                     # INFO level to ensure we see state loading
                     logger.info(
                         f"CONV LOADED: user={self.user_id[-4:]}, state={self.context.state}, "
@@ -497,6 +500,9 @@ class ConversationManager:
 
         try:
             started = datetime.fromisoformat(self.context.started_at)
+            # Ensure timezone-aware comparison (Redis may store naive datetimes)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
             return elapsed > self.FLOW_TIMEOUT_SECONDS
         except (ValueError, TypeError) as e:

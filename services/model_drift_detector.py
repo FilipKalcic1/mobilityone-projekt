@@ -7,6 +7,7 @@ recent metrics against baseline.
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 from collections import deque
 from typing import Dict, List, Optional, Any
@@ -15,11 +16,22 @@ from dataclasses import dataclass
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-BASELINE_DAYS = settings.DRIFT_BASELINE_DAYS
-ANALYSIS_HOURS = settings.DRIFT_ANALYSIS_HOURS
-MIN_SAMPLES = settings.DRIFT_MIN_SAMPLES
+
+def _get_settings():
+    return get_settings()
+
+
+def _baseline_days():
+    return _get_settings().DRIFT_BASELINE_DAYS
+
+
+def _analysis_hours():
+    return _get_settings().DRIFT_ANALYSIS_HOURS
+
+
+def _min_samples():
+    return _get_settings().DRIFT_MIN_SAMPLES
 
 
 @dataclass
@@ -53,11 +65,11 @@ class ModelDriftDetector:
         model_version: str,
         latency_ms: int,
         success: bool,
-        error_type: str = None,
-        confidence_score: float = None,
-        tools_called: List[str] = None,
+        error_type: Optional[str] = None,
+        confidence_score: Optional[float] = None,
+        tools_called: Optional[List[str]] = None,
         hallucination_reported: bool = False,
-        tenant_id: str = None
+        tenant_id: Optional[str] = None
     ) -> None:
         """Record a model interaction."""
         metric = {
@@ -74,13 +86,13 @@ class ModelDriftDetector:
         if self.redis:
             try:
                 key = f"drift:m:{int(datetime.now(timezone.utc).timestamp() * 1000)}"
-                await self.redis.setex(key, BASELINE_DAYS * 86400, json.dumps(metric))
+                await self.redis.setex(key, _baseline_days() * 86400, json.dumps(metric))
             except Exception as e:
                 logger.debug(f"Failed to persist drift metric: {e}")
 
-    async def check_drift(self, model_version: str = None) -> DriftReport:
+    async def check_drift(self, model_version: Optional[str] = None) -> DriftReport:
         """Check for model drift."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=ANALYSIS_HOURS)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=_analysis_hours())
 
         # Get recent metrics
         recent = [
@@ -91,14 +103,14 @@ class ModelDriftDetector:
         if model_version:
             recent = [m for m in recent if m.get("model") == model_version]
 
-        if len(recent) < MIN_SAMPLES:
+        if len(recent) < _min_samples():
             return DriftReport(
                 has_drift=False, severity="none",
                 error_rate=0, baseline_error_rate=0,
                 latency_ms=0, baseline_latency_ms=0,
                 hallucination_rate=0, baseline_hallucination_rate=0,
                 sample_count=len(recent),
-                alerts=[f"Insufficient data: {len(recent)}/{MIN_SAMPLES} samples"]
+                alerts=[f"Insufficient data: {len(recent)}/{_min_samples()} samples"]
             )
 
         # Calculate current metrics
@@ -178,13 +190,13 @@ class ModelDriftDetector:
             return self._baseline_cache
 
         # Calculate from in-memory metrics
-        cutoff = datetime.now(timezone.utc) - timedelta(days=BASELINE_DAYS)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=_baseline_days())
         baseline_metrics = [
             m for m in self._metrics
             if datetime.fromisoformat(m["ts"].replace('Z', '+00:00')) > cutoff
         ]
 
-        if len(baseline_metrics) >= MIN_SAMPLES:
+        if len(baseline_metrics) >= _min_samples():
             total = len(baseline_metrics)
             errors = sum(1 for m in baseline_metrics if not m["success"])
             hallucinations = sum(1 for m in baseline_metrics if m.get("hallucination"))
@@ -219,13 +231,25 @@ class ModelDriftDetector:
 
 # Singleton
 _detector: Optional[ModelDriftDetector] = None
+_singleton_lock = threading.Lock()
 
 
 def get_drift_detector(redis_client=None, db_session=None, alert_callback=None) -> ModelDriftDetector:
-    """Get or create drift detector singleton."""
+    """Get or create drift detector singleton. Updates dependencies if provided."""
     global _detector
     if _detector is None:
-        _detector = ModelDriftDetector(redis_client, db_session, alert_callback)
+        with _singleton_lock:
+            if _detector is None:
+                _detector = ModelDriftDetector(redis_client, db_session, alert_callback)
+    # Update dependencies under lock when provided (late-binding pattern)
+    if redis_client is not None or db_session is not None or alert_callback is not None:
+        with _singleton_lock:
+            if redis_client is not None:
+                _detector.redis = redis_client
+            if db_session is not None:
+                _detector.db = db_session
+            if alert_callback is not None:
+                _detector.alert_callback = alert_callback
     return _detector
 
 

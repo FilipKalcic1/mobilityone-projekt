@@ -102,6 +102,7 @@ class DependencyResolver:
         """
         self.registry = registry
         self._resolution_cache: Dict[str, Any] = {}
+        self._CACHE_MAX_SIZE = 500  # Prevent unbounded memory growth
 
         logger.info("DependencyResolver initialized")
 
@@ -224,8 +225,9 @@ class DependencyResolver:
         # Standard OData-style filter
         # Format depends on API, but most common patterns:
 
-        # Clean the value (remove extra spaces, normalize)
-        clean_value = value.strip()
+        # Sanitize value through FilterBuilder to prevent injection
+        from services.filter_builder import FilterBuilder
+        clean_value = FilterBuilder._sanitize_value(value)
 
         # Build filter string
         # Most APIs use: Filter=Field(=)Value or Filter=Field eq 'Value'
@@ -304,8 +306,9 @@ class DependencyResolver:
                     param_type, filter_field = value_type
                     provider_params = self.build_filter_query(filter_field, user_value)
                 else:
-                    # Try as generic search/name filter
-                    provider_params = {'Filter': f"Name(~){user_value}"}
+                    # Try as generic search/name filter — sanitize to prevent injection
+                    from services.filter_builder import FilterBuilder
+                    provider_params = {'Filter': f"Name(~){FilterBuilder._sanitize_value(user_value)}"}
 
             # Use UserContextManager for validated access
             ctx = UserContextManager(user_context)
@@ -336,11 +339,7 @@ class DependencyResolver:
             try:
                 from services.tool_contracts import ToolExecutionContext
 
-                exec_context = ToolExecutionContext(
-                    user_context=user_context,
-                    tool_outputs={},
-                    conversation_state={}
-                )
+                exec_context = ToolExecutionContext.from_conv_manager(user_context, None)
 
                 result = await executor.execute(
                     tool=provider_tool,
@@ -364,7 +363,10 @@ class DependencyResolver:
                 )
 
                 if resolved_value:
-                    # Cache the resolution
+                    # Evict oldest entries if cache is full
+                    if len(self._resolution_cache) >= self._CACHE_MAX_SIZE:
+                        oldest_key = next(iter(self._resolution_cache))
+                        del self._resolution_cache[oldest_key]
                     self._resolution_cache[cache_key] = {
                         'value': resolved_value,
                         'tool': provider_tool_id
@@ -726,11 +728,7 @@ class DependencyResolver:
         try:
             from services.tool_contracts import ToolExecutionContext
 
-            exec_context = ToolExecutionContext(
-                user_context=user_context,
-                tool_outputs={},
-                conversation_state={}
-            )
+            exec_context = ToolExecutionContext.from_conv_manager(user_context, None)
 
             result = await executor.execute(
                 tool=provider_tool,
@@ -773,8 +771,11 @@ class DependencyResolver:
             vehicle_id = self._extract_id_from_result(vehicle, "VehicleId")
 
             if vehicle_id:
-                # Cache for future use
+                # Cache for future use (evict oldest if full)
                 cache_key = f"ordinal:{reference.value}"
+                if len(self._resolution_cache) >= self._CACHE_MAX_SIZE:
+                    oldest_key = next(iter(self._resolution_cache))
+                    del self._resolution_cache[oldest_key]
                 self._resolution_cache[cache_key] = {
                     "value": vehicle_id,
                     "tool": provider_tool_id
@@ -885,11 +886,7 @@ class DependencyResolver:
         try:
             from services.tool_contracts import ToolExecutionContext
 
-            exec_context = ToolExecutionContext(
-                user_context=user_context,
-                tool_outputs={},
-                conversation_state={}
-            )
+            exec_context = ToolExecutionContext.from_conv_manager(user_context, None)
 
             result = await executor.execute(
                 tool=provider_tool,

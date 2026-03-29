@@ -34,6 +34,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ class ToolEvaluator:
         if response_time_ms > 0:
             metrics.total_response_time_ms += response_time_ms
             metrics.avg_response_time_ms = (
-                metrics.total_response_time_ms / metrics.total_calls
+                metrics.total_response_time_ms / metrics.successful_calls
             )
 
         logger.debug(
@@ -459,10 +460,13 @@ class ToolEvaluator:
 
 # Global instance
 _tool_evaluator: Optional[ToolEvaluator] = None
+_singleton_lock = threading.Lock()
 
 def get_tool_evaluator() -> ToolEvaluator:
     """Get global tool evaluator instance."""
     global _tool_evaluator
     if _tool_evaluator is None:
-        _tool_evaluator = ToolEvaluator()
+        with _singleton_lock:
+            if _tool_evaluator is None:
+                _tool_evaluator = ToolEvaluator()
     return _tool_evaluator

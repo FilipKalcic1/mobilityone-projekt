@@ -11,11 +11,14 @@ class FilterBuilder:
     SECURITY: All values are sanitized to prevent injection attacks.
     """
 
-    # Characters that could be used for injection attacks
-    # Removes: SQL keywords, special operators, quotes, semicolons
-    DANGEROUS_PATTERNS = re.compile(
-        r"(--|;|'|\"|\\|/\*|\*/|xp_|exec|execute|insert|update|delete|drop|"
-        r"truncate|union|select|from|where|and\s+\d|or\s+\d)",
+    # Allowlist: only alphanumeric, spaces, hyphens, dots, @, plus, underscores
+    # This is safer than a blocklist because it rejects anything unexpected.
+    _ALLOWED_CHARS = re.compile(r"[^a-zA-Z0-9čćžšđČĆŽŠĐ\s\-_.@+]")
+
+    # Blocklist for dangerous SQL keywords and comment sequences
+    _DANGEROUS_PATTERNS = re.compile(
+        r"(--|\b(exec|execute|insert|update|delete|drop|truncate|union|select|"
+        r"from|where|alter|create|grant|revoke|xp_)\b)",
         re.IGNORECASE
     )
 
@@ -24,17 +27,17 @@ class FilterBuilder:
         """
         Sanitize filter value to prevent injection attacks.
 
-        Removes dangerous SQL/injection patterns while preserving
-        legitimate search characters.
+        Uses allowlist approach: only permits safe characters.
+        Blocklist as secondary defense for SQL keywords.
         """
         if not isinstance(value, str):
             value = str(value)
 
-        # Remove dangerous patterns
-        sanitized = FilterBuilder.DANGEROUS_PATTERNS.sub('', value)
+        # Primary: strip non-allowed characters
+        sanitized = FilterBuilder._ALLOWED_CHARS.sub('', value)
 
-        # Escape parentheses (used in filter syntax)
-        sanitized = sanitized.replace('(', '').replace(')', '')
+        # Secondary: remove dangerous SQL keywords
+        sanitized = FilterBuilder._DANGEROUS_PATTERNS.sub('', sanitized)
 
         # Trim and limit length to prevent buffer attacks
         sanitized = sanitized.strip()[:500]

@@ -66,6 +66,7 @@ class UnifiedToolDefinition(BaseModel):
     This is the CONTRACT between Registry and Executor.
     All tool metadata must be expressible in this format.
     """
+    model_config = {"arbitrary_types_allowed": True}
     operation_id: str = Field(..., description="Unique tool identifier")
     service_name: str = Field(..., description="Service name (e.g., 'automation', 'crm')")
     swagger_name: str = Field(default="", description="Swagger service prefix (e.g., 'automation', 'masterdata')")
@@ -143,6 +144,8 @@ class UnifiedToolDefinition(BaseModel):
             if param.dependency_source == DependencySource.FROM_TOOL_OUTPUT
         }
 
+    _openai_function_cache: Optional[Dict[str, Any]] = None
+
     def to_openai_function(self) -> Dict[str, Any]:
         """
         Convert to OpenAI function calling format with STRICT validation.
@@ -151,9 +154,14 @@ class UnifiedToolDefinition(BaseModel):
         Context params are INVISIBLE.
 
         FIX #13: Uses SchemaSanitizer to ensure OpenAI compatibility.
+        Cached after first call — tool schemas don't change at runtime.
         """
+        if self._openai_function_cache is not None:
+            return self._openai_function_cache
         from services.schema_sanitizer import SchemaSanitizer
-        return SchemaSanitizer.sanitize_tool_schema(self)
+        result = SchemaSanitizer.sanitize_tool_schema(self)
+        object.__setattr__(self, '_openai_function_cache', result)
+        return result
 
 
 class ToolExecutionContext(BaseModel):
@@ -164,6 +172,20 @@ class ToolExecutionContext(BaseModel):
         description="Outputs from previously executed tools"
     )
     conversation_state: Dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_conv_manager(cls, user_context: Dict[str, Any], conv_manager) -> "ToolExecutionContext":
+        """Build execution context from user_context and conversation manager.
+
+        Extracts tool_outputs from conv_manager.context if available.
+        Single source of truth — all engine/ callers should use this.
+        """
+        tool_outputs = getattr(conv_manager.context, 'tool_outputs', {}) if conv_manager else {}
+        return cls(
+            user_context=user_context,
+            tool_outputs=tool_outputs,
+            conversation_state={},
+        )
 
 
 class ToolExecutionResult(BaseModel):

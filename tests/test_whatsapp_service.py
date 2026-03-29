@@ -21,10 +21,11 @@ from services.whatsapp_service import WhatsAppService, SendResult
 @pytest.fixture
 def whatsapp_service():
     """Create a WhatsAppService with test config (no real Infobip calls)."""
-    with patch("services.whatsapp_service.settings") as mock_settings:
-        mock_settings.INFOBIP_API_KEY = "test-api-key-1234567890"
-        mock_settings.INFOBIP_BASE_URL = "api.infobip.com"
-        mock_settings.INFOBIP_SENDER_NUMBER = "385991234567"
+    with patch("services.whatsapp_service._get_settings", return_value=MagicMock(
+        INFOBIP_API_KEY="test-api-key-1234567890",
+        INFOBIP_BASE_URL="api.infobip.com",
+        INFOBIP_SENDER_NUMBER="385991234567",
+    )):
         svc = WhatsAppService(
             api_key="test-api-key-1234567890",
             base_url="api.infobip.com",
@@ -168,7 +169,7 @@ class TestRetryBehavior:
             result = await whatsapp_service.send("385991234567", "Will fail")
 
         assert result.success is False
-        assert result.error_code == "HTTP_503"
+        assert result.error_code == "GATEWAY_SERVICE_UNAVAILABLE"
         assert whatsapp_service._messages_failed == 1
         # Should have attempted MAX_RETRIES times
         assert mock_client.post.call_count == whatsapp_service.MAX_RETRIES
@@ -191,7 +192,7 @@ class TestRetryBehavior:
         result = await whatsapp_service.send("385991234567", "Bad request test")
 
         assert result.success is False
-        assert result.error_code == "HTTP_400"
+        assert result.error_code == "GATEWAY_BAD_REQUEST"
         assert "Invalid recipient" in result.error_message
         # Only 1 attempt - no retries for client errors
         assert mock_client.post.call_count == 1
@@ -263,7 +264,7 @@ class TestPhoneValidation:
         )
 
         assert result.success is False
-        assert result.error_code == "INVALID_PHONE"
+        assert result.error_code == "VALIDATION_PHONE_INVALID"
         # No HTTP call was made
         mock_client.post.assert_not_called()
 

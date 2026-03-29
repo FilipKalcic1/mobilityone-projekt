@@ -15,7 +15,8 @@ import httpx
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 class TokenManager:
@@ -45,10 +46,10 @@ class TokenManager:
         self._last_failure: Optional[datetime] = None
 
         # Configuration
-        self.auth_url = settings.MOBILITY_AUTH_URL
-        self.client_id = settings.MOBILITY_CLIENT_ID
-        self.client_secret = settings.MOBILITY_CLIENT_SECRET
-        self.scope = settings.MOBILITY_SCOPE
+        self.auth_url = _get_settings().MOBILITY_AUTH_URL
+        self.client_id = _get_settings().MOBILITY_CLIENT_ID
+        self.client_secret = _get_settings().MOBILITY_CLIENT_SECRET
+        self.scope = _get_settings().MOBILITY_SCOPE
 
         self._cache_key = "mobility:access_token"
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -98,7 +99,12 @@ class TokenManager:
             return await self._fetch_new_token()
 
     async def _get_http_client(self) -> httpx.AsyncClient:
-        """Get or create cached HTTP client for token requests."""
+        """Get or create cached HTTP client for token requests.
+
+        Design: client is lazily created and reused for connection pooling.
+        If a connection error occurs, httpx handles retries internally.
+        The client is closed on shutdown via close().
+        """
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(timeout=5.0)
         return self._http_client

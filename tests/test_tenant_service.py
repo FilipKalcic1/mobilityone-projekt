@@ -18,8 +18,7 @@ class TestTenantResolutionFromPhone:
 
     @pytest.fixture
     def service(self):
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             return TenantService()
 
     def test_croatian_phone_resolves_to_hr(self, service):
@@ -63,8 +62,7 @@ class TestTenantResolutionOrder:
 
     @pytest.fixture
     def service(self):
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             svc = TenantService()
             return svc
 
@@ -103,8 +101,7 @@ class TestTenantCaching:
 
     @pytest.fixture
     def service_with_redis(self):
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             redis = AsyncMock()
             svc = TenantService(redis_client=redis)
             return svc, redis
@@ -144,8 +141,7 @@ class TestTenantValidation:
 
     @pytest.fixture
     def service(self):
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             return TenantService()
 
     def test_valid_tenant_id(self, service):
@@ -203,8 +199,7 @@ class TestUpdateUserTenant:
 
     @pytest.fixture
     def service_with_db(self):
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             db = AsyncMock()
             redis = AsyncMock()
             svc = TenantService(db_session=db, redis_client=redis)
@@ -213,8 +208,7 @@ class TestUpdateUserTenant:
     @pytest.mark.asyncio
     async def test_no_db_returns_false(self):
         """Test returns False when no database session (line 182-184)."""
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             service = TenantService(db_session=None)
 
             result = await service.update_user_tenant("+385991234567", "tenant-new", "admin")
@@ -271,8 +265,7 @@ class TestGetTenantStats:
 
     @pytest.fixture
     def service(self):
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
             return TenantService()
 
     def test_returns_stats_dict(self, service):
@@ -296,8 +289,7 @@ class TestGetTenantServiceSingleton:
         # Reset singleton
         ts_module._tenant_service = None
 
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
 
             from services.tenant_service import get_tenant_service
 
@@ -312,8 +304,7 @@ class TestGetTenantServiceSingleton:
 
         ts_module._tenant_service = None
 
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
 
             from services.tenant_service import get_tenant_service
 
@@ -334,8 +325,7 @@ class TestGetTenantServiceSingleton:
 
         ts_module._tenant_service = None
 
-        with patch("services.tenant_service.settings") as mock_settings:
-            mock_settings.MOBILITY_TENANT_ID = "tenant-default"
+        with patch("services.tenant_service._get_settings", return_value=MagicMock(MOBILITY_TENANT_ID="tenant-default")):
 
             from services.tenant_service import get_tenant_service
 

@@ -17,7 +17,10 @@ No external dependencies — uses a simple TF-IDF based BM25 implementation.
 import logging
 import math
 import re
+import threading
 from typing import Dict, List, Optional, Tuple
+
+from services.text_normalizer import normalize_diacritics
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +31,7 @@ _B = 0.75   # Length normalization
 
 def _tokenize(text: str) -> List[str]:
     """Tokenize text: lowercase, split on non-alphanumeric, remove short tokens."""
-    text = text.lower()
-    # Remove Croatian diacritics for matching
-    diacritics = str.maketrans({
-        'č': 'c', 'ć': 'c', 'ž': 'z', 'š': 's', 'đ': 'd',
-    })
-    text = text.translate(diacritics)
+    text = normalize_diacritics(text.lower())
     tokens = re.split(r'[^a-z0-9]+', text)
     return [t for t in tokens if len(t) >= 2]
 
@@ -215,11 +213,14 @@ class BM25Index:
 
 # Singleton
 _bm25_index: Optional[BM25Index] = None
+_singleton_lock = threading.Lock()
 
 
 def get_bm25_index() -> BM25Index:
     """Get singleton BM25Index."""
     global _bm25_index
     if _bm25_index is None:
-        _bm25_index = BM25Index()
+        with _singleton_lock:
+            if _bm25_index is None:
+                _bm25_index = BM25Index()
     return _bm25_index

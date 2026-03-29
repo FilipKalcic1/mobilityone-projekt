@@ -13,7 +13,7 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Tuple, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from services.tool_contracts import (
     UnifiedToolDefinition,
@@ -184,11 +184,20 @@ class ParameterManager:
             warnings.extend(output_warnings)
 
             # Step 3: Add LLM-provided parameters
+            # SECURITY: Do NOT let LLM overwrite context-injected params
+            # (e.g., tenant_id, user_id) — context takes precedence.
             user_params, user_warnings = self._process_user_params(
                 tool,
                 llm_params
             )
-            resolved.update(user_params)
+            for key, value in user_params.items():
+                if key in context_params:
+                    logger.warning(
+                        f"LLM tried to set context param '{key}' "
+                        f"(blocked, keeping context value)"
+                    )
+                    continue
+                resolved[key] = value
             warnings.extend(user_warnings)
 
             # Step 3.5: CONTEXT -> USER fallback
@@ -628,7 +637,7 @@ class ParameterManager:
             value_lower = value.lower().strip()
 
             # STEP 1: Handle Croatian natural language dates
-            today = datetime.now()
+            today = datetime.now(timezone.utc)
             time_part = None
 
             # Extract time if present (e.g., "sutra u 9:00" or "sutra 9h")
@@ -852,7 +861,6 @@ class ParameterManager:
 
         # Priority 3: Generate question from param name
         # Convert camelCase/PascalCase to readable format
-        import re
         readable = re.sub(r'([a-z])([A-Z])', r'\1 \2', param_name)
         readable = readable.replace("_", " ").lower()
 

@@ -123,7 +123,8 @@ def trace_span(tracer, name: str, attributes: Optional[Dict[str, Any]] = None):
                 for key, value in attributes.items():
                     span.set_attribute(key, str(value) if not isinstance(value, (str, int, float, bool)) else value)
             yield span
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Tracing span creation failed, using no-op: {e}")
         yield _NOOP_SPAN
 
 

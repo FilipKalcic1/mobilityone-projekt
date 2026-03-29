@@ -21,12 +21,17 @@ from services.errors import (
     ErrorCode, GatewayError as StructuredGatewayError,
     HTTP_STATUS_TO_ERROR_CODE, CircuitOpenError,
 )
+from services.retry_utils import calculate_backoff
 from services.token_manager import TokenManager
 from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("api_gateway")
-settings = get_settings()
+
+
+def _get_settings():
+    """Lazy settings accessor to avoid module-level initialization."""
+    return get_settings()
 
 class HttpMethod(Enum):
     """HTTP methods."""
@@ -96,8 +101,8 @@ class APIGateway:
             tenant_id: Tenant ID (defaults to settings)
             redis_client: Redis client for token caching
         """
-        self.base_url = (base_url or settings.MOBILITY_API_URL).rstrip("/")
-        self.tenant_id = tenant_id or settings.tenant_id
+        self.base_url = (base_url or _get_settings().MOBILITY_API_URL).rstrip("/")
+        self.tenant_id = tenant_id or _get_settings().tenant_id
 
         self.token_manager = TokenManager(redis_client)
 
@@ -511,9 +516,7 @@ class APIGateway:
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff with jitter for retries."""
-        base = 2 ** attempt
-        jitter = random.uniform(0, 0.5)
-        return min(base + jitter, 30)
+        return calculate_backoff(attempt, base_delay=1.0, max_delay=30.0, jitter=0.5)
 
     def _calculate_circuit_cooldown(self) -> float:
         """

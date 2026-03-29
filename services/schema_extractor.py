@@ -9,6 +9,7 @@ DEPENDS ON: tool_registry.py (for output_keys from parsed swagger)
 
 import logging
 from typing import Any, Dict, List, Optional, Union
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ class SchemaExtractor:
 
 # Module-level singleton
 _extractor: Optional[SchemaExtractor] = None
+_singleton_lock = threading.Lock()
 
 
 def get_schema_extractor(registry=None) -> SchemaExtractor:
@@ -220,7 +222,9 @@ def get_schema_extractor(registry=None) -> SchemaExtractor:
     global _extractor
 
     if _extractor is None:
-        _extractor = SchemaExtractor(registry)
+        with _singleton_lock:
+            if _extractor is None:
+                _extractor = SchemaExtractor(registry)
     elif registry is not None:
         _extractor.set_registry(registry)
 

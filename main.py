@@ -7,6 +7,7 @@ Main entry point with automatic database initialization.
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -129,6 +130,12 @@ REQUEST_LATENCY = Histogram(
 TOOLS_LOADED = Gauge('tools_loaded_total', 'Number of tools loaded in registry')
 
 
+_UUID_RE = re.compile(
+    r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_NUMERIC_ID_RE = re.compile(r"/\d+")
+
+
 class MetricsMiddleware(BaseHTTPMiddleware):
     """Record Prometheus HTTP request metrics (count + latency)."""
 
@@ -145,7 +152,10 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         elapsed = time.monotonic() - start
 
         # Normalize path to avoid high-cardinality label explosion
-        path = request.url.path.rstrip("/") or "/"
+        # Replace UUID/numeric ID segments with placeholders
+        raw_path = request.url.path.rstrip("/") or "/"
+        path = _UUID_RE.sub("/{id}", raw_path)
+        path = _NUMERIC_ID_RE.sub("/{id}", path)
         status = str(response.status_code)
 
         REQUEST_COUNT.labels(method=method, endpoint=path, status=status).inc()

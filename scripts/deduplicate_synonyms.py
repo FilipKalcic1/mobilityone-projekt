@@ -12,8 +12,9 @@ import json
 import os
 import sys
 
-# Ensure UTF-8 output
-sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+# Ensure UTF-8 output (reconfigure avoids leaking a file descriptor)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 TOOL_DOC_PATH = os.path.join(os.path.dirname(__file__), '..', 'config', 'tool_documentation.json')
 

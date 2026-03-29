@@ -6,6 +6,7 @@ Single model pricing (gpt-4o-mini) from config.
 """
 
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -13,10 +14,10 @@ from typing import Dict, Optional
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-INPUT_PRICE = settings.LLM_INPUT_PRICE_PER_1K
-OUTPUT_PRICE = settings.LLM_OUTPUT_PRICE_PER_1K
+
+def _get_settings():
+    return get_settings()
 
 
 @dataclass
@@ -39,7 +40,8 @@ class CostTracker:
 
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate cost in USD."""
-        return (prompt_tokens * INPUT_PRICE + completion_tokens * OUTPUT_PRICE) / 1000
+        s = _get_settings()
+        return (prompt_tokens * s.LLM_INPUT_PRICE_PER_1K + completion_tokens * s.LLM_OUTPUT_PRICE_PER_1K) / 1000
 
     async def record_usage(
         self,
@@ -75,7 +77,7 @@ class CostTracker:
 
         return cost
 
-    async def get_daily_stats(self, date: str = None) -> DailyStats:
+    async def get_daily_stats(self, date: Optional[str] = None) -> DailyStats:
         """Get daily statistics."""
         date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         key = f"cost:daily:{date}"
@@ -112,8 +114,8 @@ class CostTracker:
                 # Verify it's a real pipeline, not a MagicMock artifact
                 if hasattr(pipe, 'execute') and not isinstance(pipe, type(self.redis)):
                     use_pipeline = True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Redis pipeline creation failed, falling back to sequential: {e}")
 
             if use_pipeline:
                 for i in range(90):
@@ -158,11 +160,14 @@ class CostTracker:
 
 # Singleton
 _cost_tracker: Optional[CostTracker] = None
+_cost_tracker_lock = threading.Lock()
 
 
 async def get_cost_tracker(redis_client) -> CostTracker:
     """Get or create cost tracker singleton."""
     global _cost_tracker
     if _cost_tracker is None:
-        _cost_tracker = CostTracker(redis_client)
+        with _cost_tracker_lock:
+            if _cost_tracker is None:
+                _cost_tracker = CostTracker(redis_client)
     return _cost_tracker

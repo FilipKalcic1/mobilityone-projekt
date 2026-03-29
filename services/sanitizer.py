@@ -12,6 +12,7 @@ SECURITY:
 import re
 import logging
 from typing import Any, Dict, Set
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -220,12 +221,15 @@ class DataSanitizer:
 
 # Singleton instance
 _sanitizer = None
+_singleton_lock = threading.Lock()
 
 def get_sanitizer() -> DataSanitizer:
     """Get singleton sanitizer instance."""
     global _sanitizer
     if _sanitizer is None:
-        _sanitizer = DataSanitizer()
+        with _singleton_lock:
+            if _sanitizer is None:
+                _sanitizer = DataSanitizer()
     return _sanitizer
 
 def sanitize(data: Any) -> Any:

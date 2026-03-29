@@ -139,7 +139,6 @@ class TestQueryPatternLearner:
         """Test initialization."""
         assert len(learner._mappings) == 0
         assert len(learner._query_patterns) > 0
-        assert len(learner._tool_patterns) > 0
 
     def test_init_with_existing_mappings(self, mock_db):
         """Test initialization with existing mappings."""

@@ -10,7 +10,7 @@ dependencies as parameters instead of `self`.
 
 import logging
 import re
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 
 from services.booking_contracts import AssigneeType, EntryType
 from services.error_translator import get_error_translator
@@ -171,8 +171,8 @@ async def handle_confirmation_flow(
     text: str,
     user_context: Dict[str, Any],
     conv_manager
-) -> str:
-    """Handle confirmation response."""
+) -> Union[str, Dict[str, Any]]:
+    """Handle confirmation response. Returns str or dict (mid_flow_question marker)."""
     text_lower = text.lower()
 
     # NEW: Detect filter commands like "pokazi Passat" or "pokazi ZG"
@@ -319,31 +319,11 @@ async def handle_confirmation_flow(
         booking_context["assigneetype"] = int(AssigneeType.PERSON)  # 1
 
     from services.tool_contracts import ToolExecutionContext
-    execution_context = ToolExecutionContext(
-        user_context=booking_context,
-        tool_outputs=(
-            conv_manager.context.tool_outputs
-            if hasattr(conv_manager.context, 'tool_outputs')
-            else {}
-        ),
-        conversation_state={}
-    )
+    execution_context = ToolExecutionContext.from_conv_manager(booking_context, conv_manager)
 
     result = await executor.execute(tool, params, execution_context)
 
-    # Always clean up state - even if save fails, don't leave stale flow
-    try:
-        await conv_manager.complete()
-        await conv_manager.reset()
-    except Exception as e:
-        err = InfrastructureError(
-            ErrorCode.REDIS_UNAVAILABLE,
-            f"State cleanup failed after execution: {e}",
-            cause=e,
-        )
-        logger.error(f"{err}")
-        # Force reset context in memory even if Redis save failed
-        conv_manager.context.reset()
+    await cleanup_flow_state(conv_manager, context="confirmation execution")
 
     if result.success:
         if tool_name == "post_VehicleCalendar":
@@ -492,3 +472,22 @@ async def show_delete_confirmation(selected: Dict, conv_manager) -> str:
     await conv_manager.save()
 
     return message
+
+
+async def cleanup_flow_state(conv_manager, context: str = "flow") -> None:
+    """Complete and reset conversation state after tool execution.
+
+    Shared cleanup for confirmation_handler and flow_handler.
+    Always resets in-memory context even if Redis persist fails.
+    """
+    try:
+        await conv_manager.complete()
+        await conv_manager.reset()
+    except Exception as e:
+        err = InfrastructureError(
+            ErrorCode.REDIS_UNAVAILABLE,
+            f"State cleanup failed after {context}: {e}",
+            cause=e,
+        )
+        logger.error(f"{err}")
+        conv_manager.context.reset()

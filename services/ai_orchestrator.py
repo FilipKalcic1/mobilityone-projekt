@@ -2,10 +2,9 @@
 import asyncio
 import json
 import logging
-import random
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 
 from openai import RateLimitError, APIStatusError, APITimeoutError
@@ -17,11 +16,14 @@ from services.context import UserContextManager
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
 from services.circuit_breaker import CircuitOpenError
 from services.errors import GatewayError, ErrorCode
+from services.retry_utils import calculate_backoff
+from services.text_normalizer import sanitize_for_llm
 from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("ai_orchestrator")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 # Prometheus LLM metrics
 LLM_REQUEST_DURATION = Histogram(
@@ -63,7 +65,7 @@ except ImportError:
 
 
 # Token budgeting constants
-MAX_TOOLS_FOR_LLM = getattr(settings, 'MAX_TOOLS_FOR_LLM', 25)
+MAX_TOOLS_FOR_LLM = 25  # Maximum tools to include in LLM context
 MIN_TOOLS_FOR_LLM = 5
 # History budget: 10 messages max, 2000 tokens max for conversation history.
 # At 20 concurrent requests, worst case = 20 × 2000 tokens × ~4 bytes = 160KB.
@@ -109,7 +111,7 @@ class AIOrchestrator:
         self.client = get_openai_client()
         self._circuit_breaker = get_llm_circuit_breaker()
 
-        self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
+        self.model = _get_settings().AZURE_OPENAI_DEPLOYMENT_NAME
 
         # Token tracking
         self._total_prompt_tokens = 0
@@ -175,8 +177,8 @@ class AIOrchestrator:
         call_args = {
             "model": self.model,
             "messages": final_messages,
-            "temperature": settings.AI_TEMPERATURE,
-            "max_tokens": settings.AI_MAX_TOKENS
+            "temperature": _get_settings().AI_TEMPERATURE,
+            "max_tokens": _get_settings().AI_MAX_TOKENS
         }
 
         if trimmed_tools:
@@ -211,8 +213,8 @@ class AIOrchestrator:
                     # Token and cost metrics
                     LLM_TOKENS_USED.labels(model=self.model, type="prompt").inc(response.usage.prompt_tokens)
                     LLM_TOKENS_USED.labels(model=self.model, type="completion").inc(response.usage.completion_tokens)
-                    cost = (response.usage.prompt_tokens * settings.LLM_INPUT_PRICE_PER_1K +
-                            response.usage.completion_tokens * settings.LLM_OUTPUT_PRICE_PER_1K) / 1000
+                    cost = (response.usage.prompt_tokens * _get_settings().LLM_INPUT_PRICE_PER_1K +
+                            response.usage.completion_tokens * _get_settings().LLM_OUTPUT_PRICE_PER_1K) / 1000
                     LLM_COST_USD.labels(model=self.model).inc(cost)
 
                     usage_data = {
@@ -337,9 +339,7 @@ class AIOrchestrator:
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff with jitter."""
-        exponential_delay = (2 ** attempt) * self.BASE_DELAY
-        jitter = random.uniform(0, self.MAX_JITTER)
-        return exponential_delay + jitter
+        return calculate_backoff(attempt, base_delay=self.BASE_DELAY, max_delay=60.0, jitter=self.MAX_JITTER)
 
     async def _handle_rate_limit(self, attempt: int, error_type: str) -> Optional[Dict[str, Any]]:
         """
@@ -630,7 +630,7 @@ class AIOrchestrator:
             for p in required_params
         ])
 
-        today = datetime.now()
+        today = datetime.now(timezone.utc)
         tomorrow = today + timedelta(days=1)
 
         system = f"""Izvuci parametre iz korisnikove poruke.
@@ -667,7 +667,10 @@ to je vjerojatno odgovor na prethodno pitanje. Koristi taj datum/vrijeme za tra�
 Vrati SAMO JSON, bez drugog teksta."""
 
         if context:
-            system += f"\n\nDodatni kontekst: {context}"
+            sanitized_context = sanitize_for_llm(str(context))
+            system += f"\n\nDodatni kontekst: {sanitized_context}"
+
+        sanitized_input = sanitize_for_llm(user_input) if user_input else ""
 
         # Retry loop with backoff for rate limits + circuit breaker
         for attempt in range(self.MAX_RETRIES):
@@ -678,7 +681,7 @@ Vrati SAMO JSON, bez drugog teksta."""
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system},
-                        {"role": "user", "content": user_input}
+                        {"role": "user", "content": sanitized_input}
                     ],
                     temperature=0.1,
                     max_tokens=300
@@ -746,7 +749,7 @@ Vrati SAMO JSON, bez drugog teksta."""
         person_id = ctx.person_id or ""
         vehicle = ctx.vehicle
 
-        today = datetime.now()
+        today = datetime.now(timezone.utc)
 
         prompt = f"""Ti si MobilityOne AI asistent za upravljanje voznim parkom.
         Komuniciraj na HRVATSKOM jeziku. Budi KONCIZAN i JASAN.

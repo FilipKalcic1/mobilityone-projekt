@@ -38,8 +38,12 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
+import threading
 
 logger = logging.getLogger(__name__)
+
+# Pre-compiled regex for time value parsing in _process_modification_value()
+_TIME_VALUE_RE = re.compile(r'(\d{1,2})[:\.]?(\d{0,2})')
 
 
 @dataclass
@@ -113,22 +117,22 @@ class ConfirmationDialog:
         "AssigneeType", "EntryType",
     }
 
-    # Patterns to detect parameter modifications in user input
+    # Patterns to detect parameter modifications in user input (pre-compiled)
     MODIFICATION_PATTERNS = [
         # "Bilješka: tekst" or "Note: tekst" (with and without Croatian chars)
-        (r'^(bilješka|biljesku|biljeska|note|opis|description):\s*(.+)$', 'Note'),
+        (re.compile(r'^(bilješka|biljesku|biljeska|note|opis|description):\s*(.+)$', re.IGNORECASE), 'Note'),
         # "Od: 10:00" or "od 10h"
-        (r'^od:\s*(.+)$', 'FromTime'),
-        (r'^od\s+(\d{1,2}[:\.]?\d{0,2})\s*h?$', 'FromTime'),
+        (re.compile(r'^od:\s*(.+)$', re.IGNORECASE), 'FromTime'),
+        (re.compile(r'^od\s+(\d{1,2}[:\.]?\d{0,2})\s*h?$', re.IGNORECASE), 'FromTime'),
         # "Do: 17:00" or "do 17h"
-        (r'^do:\s*(.+)$', 'ToTime'),
-        (r'^do\s+(\d{1,2}[:\.]?\d{0,2})\s*h?$', 'ToTime'),
+        (re.compile(r'^do:\s*(.+)$', re.IGNORECASE), 'ToTime'),
+        (re.compile(r'^do\s+(\d{1,2}[:\.]?\d{0,2})\s*h?$', re.IGNORECASE), 'ToTime'),
         # "Km: 15000" or "kilometraža: 15000"
-        (r'^(km|kilometraža|kilometraza|mileage):\s*(\d+)$', 'Value'),
+        (re.compile(r'^(km|kilometraža|kilometraza|mileage):\s*(\d+)$', re.IGNORECASE), 'Value'),
         # "Naslov: tekst"
-        (r'^(naslov|subject):\s*(.+)$', 'Subject'),
+        (re.compile(r'^(naslov|subject):\s*(.+)$', re.IGNORECASE), 'Subject'),
         # "Prioritet: visok"
-        (r'^prioritet:\s*(.+)$', 'Priority'),
+        (re.compile(r'^prioritet:\s*(.+)$', re.IGNORECASE), 'Priority'),
     ]
 
     def __init__(self) -> None:
@@ -279,7 +283,7 @@ class ConfirmationDialog:
         text = user_input.strip().lower()
 
         for pattern, param_name in self.MODIFICATION_PATTERNS:
-            match = re.match(pattern, text, re.IGNORECASE)
+            match = pattern.match(text)
             if match:
                 # Get the value (last capture group)
                 groups = match.groups()
@@ -298,7 +302,7 @@ class ConfirmationDialog:
         # Time values: convert "10:00" or "10" to proper format
         if param_name in ("FromTime", "ToTime"):
             # Try to parse time
-            time_match = re.match(r'(\d{1,2})[:\.]?(\d{0,2})', value)
+            time_match = _TIME_VALUE_RE.match(value)
             if time_match:
                 hour = int(time_match.group(1))
                 minute = int(time_match.group(2)) if time_match.group(2) else 0
@@ -406,11 +410,14 @@ class ConfirmationDialog:
 
 # Singleton instance
 _confirmation_dialog: Optional[ConfirmationDialog] = None
+_singleton_lock = threading.Lock()
 
 
 def get_confirmation_dialog() -> ConfirmationDialog:
     """Get or create singleton ConfirmationDialog instance."""
     global _confirmation_dialog
     if _confirmation_dialog is None:
-        _confirmation_dialog = ConfirmationDialog()
+        with _singleton_lock:
+            if _confirmation_dialog is None:
+                _confirmation_dialog = ConfirmationDialog()
     return _confirmation_dialog

@@ -16,18 +16,14 @@ import os
 import re
 from typing import Optional, Dict, List
 
-logger = logging.getLogger(__name__)
+from services.text_normalizer import normalize_diacritics
 
-# Diacritic normalization map
-_DIACRITIC_MAP = str.maketrans({
-    'č': 'c', 'ć': 'c', 'ž': 'z', 'š': 's', 'đ': 'd',
-    'Č': 'C', 'Ć': 'C', 'Ž': 'Z', 'Š': 'S', 'Đ': 'D',
-})
+logger = logging.getLogger(__name__)
 
 
 def _normalize(text: str) -> str:
     """Normalize text: lowercase + remove diacritics."""
-    return text.lower().translate(_DIACRITIC_MAP)
+    return normalize_diacritics(text.lower())
 
 
 # Hand-curated entity stems — highest quality, ordering matters.
@@ -226,27 +222,27 @@ _MOJ = r'(?:moj[eai]?|mojeg|mojega|mojem|mojemu|mojoj|mojih|mojim|mojima|mojom|m
 
 _POSSESSIVE_PATTERNS = [
     # Vehicle possessives — \b prevents "nemoj vozilo" false positive (D2)
-    (r'\b' + _MOJ + r'\s+vozil', 'vehicles'),
-    (r'\b' + _MOJ + r'\s+aut', 'vehicles'),
-    (r'\bmom(?:e|u|em)?\s+vozil', 'vehicles'),
-    (r'\bmom(?:e|u|em)?\s+aut', 'vehicles'),
-    (r'\bmoj\s+aut[oi]', 'vehicles'),
+    (re.compile(r'\b' + _MOJ + r'\s+vozil'), 'vehicles'),
+    (re.compile(r'\b' + _MOJ + r'\s+aut'), 'vehicles'),
+    (re.compile(r'\bmom(?:e|u|em)?\s+vozil'), 'vehicles'),
+    (re.compile(r'\bmom(?:e|u|em)?\s+aut'), 'vehicles'),
+    (re.compile(r'\bmoj\s+aut[oi]'), 'vehicles'),
     # Expense possessives
-    (r'\b' + _MOJ + r'\s+trosk', 'expenses'),
-    (r'\b' + _MOJ + r'\s+trosak', 'expenses'),
+    (re.compile(r'\b' + _MOJ + r'\s+trosk'), 'expenses'),
+    (re.compile(r'\b' + _MOJ + r'\s+trosak'), 'expenses'),
     # Trip possessives
-    (r'\b' + _MOJ + r'\s+putovanj', 'trips'),
-    (r'\b' + _MOJ + r'\s+voznj', 'trips'),
+    (re.compile(r'\b' + _MOJ + r'\s+putovanj'), 'trips'),
+    (re.compile(r'\b' + _MOJ + r'\s+voznj'), 'trips'),
     # Case possessives
-    (r'\b' + _MOJ + r'\s+slucaj', 'cases'),
-    (r'\b' + _MOJ + r'\s+stet', 'cases'),
+    (re.compile(r'\b' + _MOJ + r'\s+slucaj'), 'cases'),
+    (re.compile(r'\b' + _MOJ + r'\s+stet'), 'cases'),
     # Calendar/reservation possessives
-    (r'\b' + _MOJ + r'\s+rezervacij', 'vehiclecalendar'),
+    (re.compile(r'\b' + _MOJ + r'\s+rezervacij'), 'vehiclecalendar'),
     # Equipment possessives
-    (r'\b' + _MOJ + r'\s+oprem', 'equipment'),
+    (re.compile(r'\b' + _MOJ + r'\s+oprem'), 'equipment'),
     # Generic "my" without entity — still possessive
-    (r'\b' + _MOJ + r'\s+podac', None),  # "moji podaci" — possessive but no specific entity
-    (r'\bpodaci\s+o\s+meni', None),
+    (re.compile(r'\b' + _MOJ + r'\s+podac'), None),  # "moji podaci" — possessive but no specific entity
+    (re.compile(r'\bpodaci\s+o\s+meni'), None),
 ]
 
 
@@ -260,7 +256,7 @@ def detect_possessive(query: str) -> tuple:
     """
     q = _normalize(query)
     for pattern, entity in _POSSESSIVE_PATTERNS:
-        if re.search(pattern, q):
+        if pattern.search(q):
             return True, entity
     return False, None
 

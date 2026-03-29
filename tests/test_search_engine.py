@@ -83,10 +83,11 @@ def _build_engine(tool_categories=None, tool_documentation=None):
             return tool_documentation
         return None
 
-    with patch.object(mod, "settings", mock_settings):
+    with patch.object(mod, "_get_settings", return_value=mock_settings):
         with patch("services.openai_client.get_embedding_client", return_value=MagicMock()):
             with patch.object(mod, "_load_json_file", side_effect=fake_load):
-                engine = mod.SearchEngine()
+                with patch("services.schema_sanitizer.get_tool_documentation", return_value=tool_documentation):
+                    engine = mod.SearchEngine()
     return engine
 
 
@@ -247,7 +248,7 @@ class TestSearchEngineInit:
         mock_settings = _mock_settings()
         mock_client = MagicMock()
 
-        with patch.object(mod, "settings", mock_settings):
+        with patch.object(mod, "_get_settings", return_value=mock_settings):
             with patch("services.openai_client.get_embedding_client", return_value=mock_client):
                 with patch.object(mod, "_load_json_file", return_value=None):
                     engine = mod.SearchEngine()

@@ -457,19 +457,30 @@ class SwaggerParser:
         # Return ALL property names from schema - this is the source of truth
         return list(properties.keys())
 
-    def _resolve_ref(self, schema: Dict, spec: Dict) -> Dict:
-        """Resolve $ref to actual schema."""
+    def _resolve_ref(self, schema: Dict, spec: Dict, _visited: Optional[set] = None) -> Dict:
+        """Resolve $ref to actual schema (with circular reference protection)."""
         if not isinstance(schema, dict) or "$ref" not in schema:
             return schema
 
         ref_path = schema["$ref"]
         if not ref_path.startswith("#/"):
-            return schema
+            return schema  # External refs not supported
+
+        # Circular reference guard
+        if _visited is None:
+            _visited = set()
+        if ref_path in _visited:
+            return {"type": "object", "_circular_ref": ref_path}
+        _visited.add(ref_path)
 
         parts = ref_path[2:].split("/")
         resolved = spec
         for part in parts:
             resolved = resolved.get(part, {})
+
+        # Recursively resolve nested $refs
+        if isinstance(resolved, dict) and "$ref" in resolved:
+            resolved = self._resolve_ref(resolved, spec, _visited)
 
         return resolved
 

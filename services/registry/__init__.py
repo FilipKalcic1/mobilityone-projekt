@@ -26,7 +26,8 @@ from .search_engine import SearchEngine
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("tool_registry")
 
-# Documentation cache - loaded once at startup
+# Documentation cache - delegates to shared get_tool_documentation() but kept
+# as module-level variable for test compatibility (tests reset it to None)
 _documentation_cache: Optional[Dict[str, Any]] = None
 
 # Re-export for backward compatibility
@@ -270,8 +271,6 @@ class ToolRegistry:
         """
         try:
             from services.faiss_vector_store import initialize_faiss_store
-            import json
-            import os
 
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
             tool_doc_path = os.path.join(base_path, "config", "tool_documentation.json")
@@ -306,7 +305,7 @@ class ToolRegistry:
         top_k: int = 5,
         prefer_retrieval: bool = False,
         prefer_mutation: bool = False,
-        threshold: float = None
+        threshold: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Find relevant tools (backward compatible).

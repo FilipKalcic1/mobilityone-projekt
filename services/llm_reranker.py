@@ -11,9 +11,11 @@ from typing import List, Optional, Dict
 from dataclasses import dataclass
 
 from config import get_settings
+from services.text_normalizer import sanitize_for_llm
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 @dataclass
@@ -42,8 +44,6 @@ async def rerank_with_llm(
     Returns:
         List of RerankResult with best matches
     """
-    from openai import AsyncAzureOpenAI
-
     if not candidates:
         return []
 
@@ -67,7 +67,8 @@ async def rerank_with_llm(
         })
 
     # Build prompt
-    prompt = f"""Korisnik je postavio upit: "{query}"
+    sanitized_query = sanitize_for_llm(query) if query else ""
+    prompt = f"""Korisnik je postavio upit: "{sanitized_query}"
 
 FAISS pretraga je vratila sljedeće kandidate (sortirano po sličnosti):
 
@@ -93,14 +94,11 @@ Vrati JSON odgovor u formatu:
 Odgovori SAMO s JSON-om, bez dodatnog teksta."""
 
     try:
-        client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION
-        )
+        from services.openai_client import get_openai_client
+        client = get_openai_client()
 
         response = await client.chat.completions.create(
-            model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
+            model=_get_settings().AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
                 {"role": "system", "content": "Ti si ekspert za odabir pravog API alata. Odgovaraš SAMO u JSON formatu."},
                 {"role": "user", "content": prompt}

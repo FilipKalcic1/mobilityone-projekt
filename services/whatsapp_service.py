@@ -28,12 +28,14 @@ from dataclasses import dataclass
 import httpx
 
 from config import get_settings
-from services.errors import ConversationError, GatewayError, ErrorCode
+from services.errors import ConversationError, GatewayError, ErrorCode, HTTP_STATUS_TO_ERROR_CODE
 from services.patterns import UUID_PATTERN
+from services.retry_utils import calculate_backoff
 from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("whatsapp_service")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 # Phone number pattern (international format)
 # Accepts: +385..., 385..., 00385..., etc.
@@ -92,9 +94,9 @@ class WhatsAppService:
             base_url: Infobip base URL (defaults to settings)
             sender_number: Sender phone number (defaults to settings)
         """
-        self.api_key = api_key or settings.INFOBIP_API_KEY
-        self.base_url = base_url or settings.INFOBIP_BASE_URL
-        self.sender_number = sender_number or settings.INFOBIP_SENDER_NUMBER
+        self.api_key = api_key or _get_settings().INFOBIP_API_KEY
+        self.base_url = base_url or _get_settings().INFOBIP_BASE_URL
+        self.sender_number = sender_number or _get_settings().INFOBIP_SENDER_NUMBER
 
         # Validate configuration
         self._validate_config()
@@ -183,9 +185,9 @@ class WhatsAppService:
         if normalized.startswith('00'):
             normalized = normalized[2:]
 
-        # Remove leading 0 for Croatian numbers
-        if normalized.startswith('0') and len(normalized) == 10:
-            # Convert 091234567 to 385991234567
+        # Remove leading 0 for Croatian numbers (mobile: 10 digits, landline: 9 digits)
+        if normalized.startswith('0') and 9 <= len(normalized) <= 10:
+            # Convert 0991234567 → 385991234567 or 01xxxxxxx → 3851xxxxxxx
             normalized = '385' + normalized[1:]
 
         # Validate format
@@ -407,10 +409,10 @@ class WhatsAppService:
                 if not is_valid:
                     logger.error(f"Phone validation failed: {error}")
                     span.set_attribute("result.success", False)
-                    span.set_attribute("result.error_code", "INVALID_PHONE")
+                    span.set_attribute("result.error_code", ErrorCode.PHONE_INVALID)
                     return SendResult(
                         success=False,
-                        error_code="INVALID_PHONE",
+                        error_code=ErrorCode.PHONE_INVALID,
                         error_message=error
                     )
                 to = normalized_to
@@ -437,10 +439,10 @@ class WhatsAppService:
 
             if not headers:
                 span.set_attribute("result.success", False)
-                span.set_attribute("result.error_code", "CONFIG_ERROR")
+                span.set_attribute("result.error_code", ErrorCode.PARAMETER_MISSING)
                 return SendResult(
                     success=False,
-                    error_code="CONFIG_ERROR",
+                    error_code=ErrorCode.PARAMETER_MISSING,
                     error_message="API key not configured"
                 )
 
@@ -528,7 +530,7 @@ class WhatsAppService:
                     else:
                         return SendResult(
                             success=False,
-                            error_code="RATE_LIMIT",
+                            error_code=ErrorCode.RATE_LIMITED,
                             error_message="Rate limit exceeded after max retries",
                             status_code=429,
                             retry_after=retry_after
@@ -562,9 +564,10 @@ class WhatsAppService:
                     f"error={error_message[:200]}"
                 )
 
+                http_error_code = HTTP_STATUS_TO_ERROR_CODE.get(response.status_code, ErrorCode.SERVER_ERROR)
                 return SendResult(
                     success=False,
-                    error_code=f"HTTP_{response.status_code}",
+                    error_code=http_error_code,
                     error_message=error_message,
                     status_code=response.status_code
                 )
@@ -605,7 +608,7 @@ class WhatsAppService:
 
         return SendResult(
             success=False,
-            error_code="MAX_RETRIES_EXCEEDED",
+            error_code=ErrorCode.RETRY_EXHAUSTED,
             error_message=f"Failed after {self.MAX_RETRIES} attempts: {last_error}"
         )
 
@@ -624,11 +627,12 @@ class WhatsAppService:
         tie up all semaphore slots with sleeping coroutines, starving
         new messages.
         """
-        exponential_delay = (2 ** attempt) * self.BASE_DELAY
-        capped = min(self.MAX_BACKOFF, max(min_delay, exponential_delay))
-        jitter = random.uniform(0, self.MAX_JITTER)
-
-        return capped + jitter
+        raw = calculate_backoff(attempt, base_delay=self.BASE_DELAY, max_delay=self.MAX_BACKOFF, jitter=self.MAX_JITTER)
+        # Honour caller-supplied min_delay (e.g. Retry-After header)
+        if min_delay > 0:
+            base_without_jitter = min(self.MAX_BACKOFF, max(min_delay, self.BASE_DELAY * (2 ** attempt)))
+            return base_without_jitter + random.uniform(0, self.MAX_JITTER)
+        return raw
 
     # ---
     # BATCH SENDING (FOR FUTURE USE)

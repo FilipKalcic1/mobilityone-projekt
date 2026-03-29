@@ -24,6 +24,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +337,15 @@ class QualityTracker:
             self.history_file.unlink()
         logger.warning("Quality history cleared")
 
-# Convenience function
+_tracker: Optional[QualityTracker] = None
+_singleton_lock = threading.Lock()
+
+
 def get_quality_tracker() -> QualityTracker:
-    """Get the default quality tracker instance."""
-    return QualityTracker()
+    """Get the default quality tracker instance (singleton)."""
+    global _tracker
+    if _tracker is None:
+        with _singleton_lock:
+            if _tracker is None:
+                _tracker = QualityTracker()
+    return _tracker

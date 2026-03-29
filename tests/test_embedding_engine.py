@@ -16,7 +16,7 @@ def _make_engine():
     ms.AZURE_OPENAI_API_VERSION = "2024-02-15"
     ms.AZURE_OPENAI_EMBEDDING_DEPLOYMENT = "text-embedding"
 
-    with patch("services.registry.embedding_engine.settings", ms):
+    with patch("services.registry.embedding_engine._get_settings", return_value=ms):
         with patch("services.openai_client.get_embedding_client", return_value=MagicMock()):
             from services.registry.embedding_engine import EmbeddingEngine
             engine = EmbeddingEngine()

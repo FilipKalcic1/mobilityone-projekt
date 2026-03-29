@@ -18,9 +18,12 @@ import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+import threading
 
 from services.tracing import get_tracer, trace_span
 from services.errors import SearchError, ErrorCode
+
+import re
 
 import numpy as np
 import faiss
@@ -29,7 +32,11 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("faiss_vector_store")
-settings = get_settings()
+
+
+def _get_settings():
+    """Lazy settings access — avoid module-level parsing before env vars are set."""
+    return get_settings()
 
 # Cache directory for embeddings
 CACHE_DIR = Path(__file__).parent.parent / ".cache"
@@ -212,7 +219,7 @@ class FAISSVectorStore:
             try:
                 response = await self._openai_client.embeddings.create(
                     input=[text[:8000]],
-                    model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+                    model=_get_settings().AZURE_OPENAI_EMBEDDING_DEPLOYMENT
                 )
                 embedding = response.data[0].embedding
                 self._embeddings[tool_id] = embedding
@@ -508,7 +515,6 @@ class FAISSVectorStore:
         # ENTITY FIRST! (repeated 5x to dominate embedding)
         # This is the MOST IMPORTANT differentiator
         # ---
-        import re
         name = re.sub(r'^(get|post|put|patch|delete)_', '', tool_id, flags=re.IGNORECASE)
         for suffix in SUFFIX_MEANINGS.keys():
             if name.lower().endswith(suffix.lower()):
@@ -776,7 +782,7 @@ class FAISSVectorStore:
         try:
             response = await self._openai_client.embeddings.create(
                 input=[query[:8000]],
-                model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+                model=_get_settings().AZURE_OPENAI_EMBEDDING_DEPLOYMENT
             )
             return response.data[0].embedding
         except Exception as e:
@@ -804,12 +810,15 @@ class FAISSVectorStore:
 
 # Singleton instance
 _faiss_store: Optional[FAISSVectorStore] = None
+_singleton_lock = threading.Lock()
 
 def get_faiss_store() -> FAISSVectorStore:
     """Get singleton FAISSVectorStore instance."""
     global _faiss_store
     if _faiss_store is None:
-        _faiss_store = FAISSVectorStore()
+        with _singleton_lock:
+            if _faiss_store is None:
+                _faiss_store = FAISSVectorStore()
     return _faiss_store
 
 async def initialize_faiss_store(

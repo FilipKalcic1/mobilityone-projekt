@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 async def main():
     # Load tool documentation
-    with open('config/tool_documentation.json', 'r', encoding='utf-8') as f:
+    doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'tool_documentation.json')
+    with open(doc_path, 'r', encoding='utf-8') as f:
         tool_docs = json.load(f)
 
     print("=" * 70)

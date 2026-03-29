@@ -23,8 +23,10 @@ Pokretanje:
 """
 
 import os
+import re
 import time
 import logging
+import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
@@ -63,10 +65,19 @@ from services.feedback_analyzer import FeedbackAnalyzer
 from services.query_pattern_learner import QueryPatternLearner
 from services.quality_tracker import get_quality_tracker
 from services.feedback_learning_service import get_feedback_learning_service
-from services.gdpr_masking import GDPRMaskingService
+from services.gdpr_masking import get_masking_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+_PHONE_RE = re.compile(r"^\+?\d{8,15}$")
+
+
+def _validate_phone(phone: str) -> None:
+    """Validate phone number format for GDPR endpoints."""
+    if not _PHONE_RE.match(phone):
+        raise HTTPException(status_code=400, detail="Invalid phone number format")
+
 
 # Prometheus metrics for Admin API
 ADMIN_REQUESTS = Counter(
@@ -84,7 +95,7 @@ HALLUCINATIONS_PENDING = Gauge('hallucinations_pending', 'Pending hallucination 
 async def lifespan(app: FastAPI):
     """Application lifespan - initialize database and Redis connections."""
     logger.info("=" * 60)
-    logger.info("ADMIN API STARTING (v2.1 - Database + Drift Detection)")
+    logger.info("ADMIN API STARTING (v2.2.0 - Database + Drift Detection)")
     logger.info("Port: 8080 (ISOLATED from Bot API on 8000)")
     logger.info("Auth: X-Admin-Token header required")
     logger.info("Rate Limit: 30 requests/minute per admin")
@@ -121,6 +132,9 @@ async def lifespan(app: FastAPI):
         # Initialize cost tracker
         app.state.cost_tracker = CostTracker(redis_client=app.state.redis)
         logger.info("Cost tracker initialized")
+
+        # Share Redis with rate limiter instead of creating a separate connection
+        rate_limiter.set_redis(app.state.redis)
     except Exception as e:
         logger.warning(f"Redis connection failed: {e} - drift detection will use in-memory only")
         app.state.redis = None
@@ -143,9 +157,9 @@ app = FastAPI(
     title="MobilityOne Admin API",
     description="Internal API for reviewing hallucinations and error patterns. NOT for bot use!",
     version="2.2.0",
-    docs_url="/admin/docs",
-    redoc_url="/admin/redoc",
-    openapi_url="/admin/openapi.json",
+    docs_url="/admin/docs" if settings.DEBUG else None,
+    redoc_url="/admin/redoc" if settings.DEBUG else None,
+    openapi_url="/admin/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan
 )
 
@@ -156,7 +170,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # CORS - Restrict to internal domains only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ADMIN_CORS_ORIGINS.split(","),
+    allow_origins=[o.strip() for o in settings.ADMIN_CORS_ORIGINS.split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["X-Admin-Token", "Content-Type"],
@@ -215,7 +229,7 @@ async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
     """Verify admin token and return admin_id."""
     admin_id = VALID_ADMIN_TOKENS.get(token)
     if not admin_id:
-        logger.warning(f"Invalid admin token attempt: {token[:8]}...")
+        logger.warning(f"Invalid admin token attempt (len={len(token)}, hash={hashlib.sha256(token.encode()).hexdigest()[:8]})")
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired admin token"
@@ -231,17 +245,38 @@ class RedisRateLimiter:
 
     _MAX_FALLBACK_KEYS = 200  # Cap in-memory keys to prevent unbounded growth
 
+    _LUA_RATE_LIMIT = """
+    redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+    local count = redis.call('ZCARD', KEYS[1])
+    if count < tonumber(ARGV[3]) then
+        redis.call('ZADD', KEYS[1], ARGV[2], ARGV[2])
+        redis.call('EXPIRE', KEYS[1], 120)
+        return 1
+    end
+    return 0
+    """
+
     def __init__(self, requests_per_minute: int = 30):
         self.requests_per_minute = requests_per_minute
         self.redis: Optional[aioredis.Redis] = None
         self._fallback: Dict[str, List[float]] = defaultdict(list)
+        self._own_redis = False
+        self._rate_limit_script = None
         self._init_redis()
+
+    def set_redis(self, redis_client: aioredis.Redis):
+        """Use a shared Redis client (e.g. from app.state.redis)."""
+        self.redis = redis_client
+        self._own_redis = False
+        self._rate_limit_script = self.redis.register_script(self._LUA_RATE_LIMIT)
 
     def _init_redis(self):
         redis_url = settings.REDIS_URL
         try:
             self.redis = aioredis.from_url(redis_url, decode_responses=True)
-            logging.info(f"Rate limiter connected to Redis: {redis_url}")
+            self._own_redis = True
+            self._rate_limit_script = self.redis.register_script(self._LUA_RATE_LIMIT)
+            logging.info(f"Rate limiter connected to Redis")
         except Exception as e:
             logging.warning(f"Redis unavailable for rate limiting, using in-memory: {e}")
             self.redis = None
@@ -257,16 +292,12 @@ class RedisRateLimiter:
             window_start = now - 60
             redis_key = f"admin_rate_limit:{key}"
 
-            pipe = self.redis.pipeline()
-            pipe.zremrangebyscore(redis_key, 0, window_start)
-            pipe.zcard(redis_key)
-            pipe.zadd(redis_key, {str(now): now})
-            pipe.expire(redis_key, 120)
-
-            results = await pipe.execute()
-            current_count = results[1]
-
-            return current_count < self.requests_per_minute
+            # Atomic rate limit check via Lua — only ZADD if under limit
+            result = await self._rate_limit_script(
+                keys=[redis_key],
+                args=[str(window_start), str(now), str(self.requests_per_minute)]
+            )
+            return result == 1
         except Exception as e:
             logging.warning(f"Redis rate limit error: {e}")
             return self._memory_check(key)
@@ -447,7 +478,7 @@ async def health_check(request: Request):
     return {
         "status": "healthy" if all_healthy else "unhealthy",
         "service": "admin-api",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "database": db_status,
         "redis": redis_status,
         "drift_detector": drift_status,
@@ -470,8 +501,12 @@ async def readiness_check(request: Request):
     return {"ready": True}
 
 @app.get("/metrics")
-async def metrics():
-    """Prometheus metrics endpoint (no auth required for scraping)."""
+async def metrics(request: Request):
+    """Prometheus metrics endpoint (requires admin token)."""
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.headers.get("x-admin-token", "")
+    if VALID_ADMIN_TOKENS and token not in VALID_ADMIN_TOKENS:
+        return JSONResponse(status_code=403, content={"error": "Forbidden"})
     return PlainTextResponse(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST
@@ -938,7 +973,7 @@ async def analyze_feedback(
 
     except Exception as e:
         logger.error(f"Error analyzing feedback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/feedback/stats",
@@ -960,7 +995,7 @@ async def get_feedback_stats(
 
     except Exception as e:
         logger.error(f"Error getting feedback stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/feedback/analyze-comprehensive",
@@ -1002,7 +1037,7 @@ async def analyze_feedback_comprehensive(
 
     except Exception as e:
         logger.error(f"Error in comprehensive feedback analysis: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/feedback/learn-patterns",
@@ -1047,7 +1082,7 @@ async def learn_query_patterns(
 
     except Exception as e:
         logger.error(f"Error learning query patterns: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/feedback/learning-stats",
@@ -1069,7 +1104,7 @@ async def get_learning_stats(
 
     except Exception as e:
         logger.error(f"Error getting learning stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/quality/summary",
@@ -1098,7 +1133,7 @@ async def get_quality_summary(
 
     except Exception as e:
         logger.error(f"Error getting quality summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/quality/trend",
@@ -1132,7 +1167,7 @@ async def get_quality_trend(
 
     except Exception as e:
         logger.error(f"Error analyzing quality trend: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # ---
 # FEEDBACK LEARNING SERVICE ENDPOINTS
@@ -1181,7 +1216,7 @@ async def run_learning_cycle(
 
     except Exception as e:
         logger.error(f"Error running learning cycle: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/admin/learning/statistics",
@@ -1203,7 +1238,7 @@ async def get_learning_statistics(
 
     except Exception as e:
         logger.error(f"Error getting learning statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post(
     "/admin/learning/export-documentation",
@@ -1243,7 +1278,7 @@ async def export_to_documentation(
 
     except Exception as e:
         logger.error(f"Error exporting to documentation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.delete(
     "/admin/learning/clear",
@@ -1268,7 +1303,7 @@ async def clear_learned_boosts(
 
     except Exception as e:
         logger.error(f"Error clearing learned boosts: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # ---
 # GDPR ERASURE
@@ -1282,7 +1317,8 @@ async def clear_learned_boosts(
 async def gdpr_erase_user(
     phone: str,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    admin_id: str = Depends(check_rate_limit),
 ):
     """
     Erase all user data from database AND Redis.
@@ -1294,9 +1330,9 @@ async def gdpr_erase_user(
 
     Returns a summary of all records affected.
     """
+    _validate_phone(phone)
 
-
-    gdpr = GDPRMaskingService()
+    gdpr = get_masking_service()
 
     try:
         # 1. Database anonymization
@@ -1316,7 +1352,7 @@ async def gdpr_erase_user(
 
     except Exception as e:
         logger.error(f"GDPR erasure failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Erasure failed: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="Erasure failed")
 
 
 # ---
@@ -1331,7 +1367,8 @@ async def gdpr_erase_user(
 async def gdpr_export_user(
     phone: str,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    admin_id: str = Depends(check_rate_limit),
 ):
     """
     Export all user data in structured, machine-readable JSON format.
@@ -1342,9 +1379,9 @@ async def gdpr_export_user(
     Returns: JSON with user profile, conversations, messages,
     hallucination reports, and Redis ephemeral state.
     """
+    _validate_phone(phone)
 
-
-    gdpr = GDPRMaskingService()
+    gdpr = get_masking_service()
     redis_client = getattr(request.app.state, "redis", None)
 
     try:
@@ -1353,7 +1390,7 @@ async def gdpr_export_user(
 
     except Exception as e:
         logger.error(f"GDPR export failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 # ---

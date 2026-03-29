@@ -106,7 +106,7 @@ def get_memory_usage_mb() -> float:
     except ImportError:
         # psutil not installed, try /proc/self/status on Linux
         try:
-            with open('/proc/self/status', 'r') as f:
+            with open('/proc/self/status', 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.startswith('VmRSS:'):
                         return int(line.split()[1]) / 1024  # Convert KB to MB
@@ -918,6 +918,11 @@ class Worker:
         # Per-sender lock: serialize processing for same user within this pod.
         # Prevents conversation state race when user sends rapid messages.
         if sender not in self._processing_locks:
+            # Hard cap to prevent unbounded growth under adversarial conditions
+            if len(self._processing_locks) >= 10000:
+                oldest = min(self._lock_access_times, key=self._lock_access_times.get)
+                del self._processing_locks[oldest]
+                del self._lock_access_times[oldest]
             self._processing_locks[sender] = asyncio.Lock()
         self._lock_access_times[sender] = time.time()
         sender_lock = self._processing_locks[sender]
@@ -1256,8 +1261,8 @@ class Worker:
         if len(text) > MAX_WA_LENGTH:
             chunks = self._split_message(text, MAX_WA_LENGTH)
             log("info", "message_split", {"chunks": len(chunks), "original_len": len(text)})
-            for chunk in chunks:
-                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}
+            for idx, chunk in enumerate(chunks):
+                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}:{idx}"}
                 await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
         else:
             payload = {"to": to, "text": text, "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}

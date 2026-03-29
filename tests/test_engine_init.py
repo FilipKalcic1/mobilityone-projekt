@@ -37,8 +37,7 @@ def _make_engine():
     ms = _mock_settings()
 
     patches = {
-        "settings": patch("services.engine.settings", ms),
-        "get_settings": patch("services.engine.get_settings", return_value=ms),
+        "get_settings": patch("services.engine._get_settings", return_value=ms),
         "ToolExecutor": patch("services.engine.ToolExecutor"),
         "AIOrchestrator": patch("services.engine.AIOrchestrator"),
         "ResponseFormatter": patch("services.engine.ResponseFormatter"),
@@ -123,8 +122,7 @@ class TestInit:
 
     def test_engine_no_redis(self):
         ms = _mock_settings()
-        with patch("services.engine.settings", ms), \
-             patch("services.engine.get_settings", return_value=ms), \
+        with patch("services.engine._get_settings", return_value=ms), \
              patch("services.engine.ToolExecutor"), \
              patch("services.engine.AIOrchestrator"), \
              patch("services.engine.ResponseFormatter"), \

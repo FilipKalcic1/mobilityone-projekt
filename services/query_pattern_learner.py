@@ -45,6 +45,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport
+from services.text_normalizer import (
+    extract_tool_from_text as _shared_extract_tool,
+    extract_query_patterns as _shared_extract_patterns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,10 +211,7 @@ class QueryPatternLearner:
             (re.compile(pattern, re.IGNORECASE), label)
             for pattern, label in self.QUERY_PATTERNS
         ]
-        self._tool_patterns = [
-            re.compile(pattern, re.IGNORECASE)
-            for pattern in self.TOOL_PATTERNS
-        ]
+        # Tool extraction now delegated to text_normalizer.extract_tool_from_text
 
     def _load_existing_mappings(self) -> None:
         """Load previously learned mappings."""
@@ -266,34 +267,8 @@ class QueryPatternLearner:
         return None
 
     def _extract_tool_from_text(self, text: str) -> Optional[str]:
-        """Extract tool name from correction or response text."""
-        if not text:
-            return None
-
-        text_lower = text.lower()
-
-        # Try each pattern
-        for pattern in self._tool_patterns:
-            match = pattern.search(text_lower)
-            if match:
-                tool = match.group(1)
-                # Normalize tool name
-                if not tool.startswith(("get_", "post_", "put_", "delete_")):
-                    # Try to find full tool name
-                    full_match = re.search(
-                        r"(get|post|put|delete)_" + re.escape(tool),
-                        text_lower
-                    )
-                    if full_match:
-                        return full_match.group(0)
-                return tool
-
-        # Look for common tool references
-        tool_refs = re.findall(r"(get_\w+|post_\w+|put_\w+|delete_\w+)", text_lower)
-        if tool_refs:
-            return tool_refs[0]
-
-        return None
+        """Extract tool name from correction or response text. Delegates to shared utility."""
+        return _shared_extract_tool(text)
 
     def _extract_wrong_tool(self, report: HallucinationReport) -> Optional[str]:
         """Extract the tool that was wrongly used."""
@@ -311,30 +286,8 @@ class QueryPatternLearner:
         return self._extract_tool_from_text(report.bot_response)
 
     def _extract_patterns_from_query(self, query: str) -> List[str]:
-        """Extract meaningful patterns from a query."""
-        patterns = []
-        query_lower = query.lower()
-
-        # Remove common words
-        stopwords = {
-            "mi", "me", "ja", "ti", "on", "ona", "ono", "daj", "dajte",
-            "molim", "te", "vas", "trebam", "treba", "hoću", "želim",
-            "mogu", "možeš", "može", "li", "da", "ne", "i", "ili",
-            "za", "od", "do", "na", "u", "s", "sa", "po", "iz",
-        }
-
-        # Split into words
-        words = re.findall(r'\b\w+\b', query_lower)
-        words = [w for w in words if w not in stopwords and len(w) > 2]
-
-        # Create n-grams (1, 2, 3 words)
-        for n in [2, 3, 1]:  # Prefer longer patterns
-            for i in range(len(words) - n + 1):
-                pattern = " ".join(words[i:i+n])
-                if len(pattern) > 3:
-                    patterns.append(pattern)
-
-        return patterns[:5]  # Top 5 patterns
+        """Extract meaningful patterns from a query. Delegates to shared utility."""
+        return _shared_extract_patterns(query, min_pattern_len=3)
 
     def _analyze_failure_reason(
         self,

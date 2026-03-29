@@ -47,28 +47,34 @@ class TestAPIGatewayInit:
     """Test gateway initialization with tenant routing."""
 
     @patch("services.api_gateway.TokenManager")
-    @patch("services.api_gateway.settings")
-    def test_default_tenant_from_settings(self, mock_settings, mock_tm):
-        mock_settings.MOBILITY_API_URL = "https://api.example.com"
-        mock_settings.tenant_id = "tenant-default"
+    @patch("services.api_gateway._get_settings")
+    def test_default_tenant_from_settings(self, mock_settings_fn, mock_tm):
+        ms = MagicMock()
+        ms.MOBILITY_API_URL = "https://api.example.com"
+        ms.tenant_id = "tenant-default"
+        mock_settings_fn.return_value = ms
 
         gw = APIGateway()
         assert gw.tenant_id == "tenant-default"
 
     @patch("services.api_gateway.TokenManager")
-    @patch("services.api_gateway.settings")
-    def test_custom_tenant_overrides_settings(self, mock_settings, mock_tm):
-        mock_settings.MOBILITY_API_URL = "https://api.example.com"
-        mock_settings.tenant_id = "tenant-default"
+    @patch("services.api_gateway._get_settings")
+    def test_custom_tenant_overrides_settings(self, mock_settings_fn, mock_tm):
+        ms = MagicMock()
+        ms.MOBILITY_API_URL = "https://api.example.com"
+        ms.tenant_id = "tenant-default"
+        mock_settings_fn.return_value = ms
 
         gw = APIGateway(tenant_id="tenant-custom")
         assert gw.tenant_id == "tenant-custom"
 
     @patch("services.api_gateway.TokenManager")
-    @patch("services.api_gateway.settings")
-    def test_base_url_trailing_slash_stripped(self, mock_settings, mock_tm):
-        mock_settings.MOBILITY_API_URL = "https://api.example.com/"
-        mock_settings.tenant_id = "t"
+    @patch("services.api_gateway._get_settings")
+    def test_base_url_trailing_slash_stripped(self, mock_settings_fn, mock_tm):
+        ms = MagicMock()
+        ms.MOBILITY_API_URL = "https://api.example.com/"
+        ms.tenant_id = "t"
+        mock_settings_fn.return_value = ms
 
         gw = APIGateway()
         assert gw.base_url == "https://api.example.com"
@@ -78,11 +84,13 @@ class TestRowsDefault:
     """Test the GET request Rows default behavior."""
 
     @patch("services.api_gateway.TokenManager")
-    @patch("services.api_gateway.settings")
-    def test_get_without_rows_adds_default_50(self, mock_settings, mock_tm):
+    @patch("services.api_gateway._get_settings")
+    def test_get_without_rows_adds_default_50(self, mock_settings_fn, mock_tm):
         """GET requests without Rows param should get Rows=50 (not 1!)."""
-        mock_settings.MOBILITY_API_URL = "https://api.example.com"
-        mock_settings.tenant_id = "t"
+        ms = MagicMock()
+        ms.MOBILITY_API_URL = "https://api.example.com"
+        ms.tenant_id = "t"
+        mock_settings_fn.return_value = ms
 
         gw = APIGateway()
         params = {"status": "active"}

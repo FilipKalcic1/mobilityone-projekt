@@ -47,6 +47,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import HallucinationReport
 from services.errors import InfrastructureError, ErrorCode
+from services.text_normalizer import (
+    CROATIAN_STOPWORDS, extract_tool_from_text as _shared_extract_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +162,9 @@ class FeedbackAnalysisResult:
     # Analysis metadata
     analyzed_at: str = ""
 
+    # Internal: cached reports from analyze() for reuse in analyze_comprehensive()
+    _fetched_reports: List = field(default_factory=list, repr=False)
+
     def to_dict(self) -> Dict:
         return {
             "summary": {
@@ -200,21 +206,8 @@ class FeedbackAnalyzer:
         result = await analyzer.analyze_comprehensive()
     """
 
-    # Croatian stopwords to ignore
-    STOPWORDS = frozenset([
-        "a", "ako", "ali", "bi", "bez", "bilo", "bih", "biti", "da", "do",
-        "dok", "ga", "gdje", "i", "ili", "iz", "ja", "je", "jedan", "jedna",
-        "jedno", "jer", "još", "kada", "kako", "kao", "koja", "koje", "koji",
-        "koju", "li", "me", "mi", "može", "mogu", "na", "ne", "nego", "neka",
-        "neki", "nešto", "ni", "nije", "no", "o", "od", "ona", "one", "oni",
-        "ono", "pa", "po", "pod", "prema", "pri", "s", "sa", "sam", "samo",
-        "se", "smo", "su", "sve", "svi", "ta", "te", "ti", "to", "toga",
-        "tu", "u", "uz", "va", "već", "vi", "za", "što", "će", "ću", "tom",
-        "mu", "ju", "ih", "njoj", "njemu", "njima", "nje", "njega", "svoj",
-        "moj", "tvoj", "naš", "vaš", "njihov", "ovaj", "taj", "onaj",
-        "molim", "hvala", "hej", "bok", "daj", "pokaži", "prikaži", "reci",
-        "trebam", "treba", "želim", "hoću", "mogu", "dohvati", "pronađi",
-    ])
+    # Croatian stopwords — shared from text_normalizer
+    STOPWORDS = CROATIAN_STOPWORDS
 
     # Failure category recommendations
     CATEGORY_RECOMMENDATIONS = {
@@ -226,14 +219,6 @@ class FeedbackAnalyzer:
         "outdated": "Implement data freshness checks",
         "user_error": "Consider improving bot responses to prevent user confusion",
     }
-
-    # Query patterns for tool extraction
-    TOOL_PATTERNS = [
-        r"(get_\w+)",
-        r"(post_\w+)",
-        r"(put_\w+)",
-        r"(delete_\w+)",
-    ]
 
     MIN_WORD_LENGTH = 3
     MAX_WORD_LENGTH = 30
@@ -260,7 +245,7 @@ class FeedbackAnalyzer:
         self._load_existing_dictionaries(embedding_engine)
 
         # Compile tool patterns
-        self._tool_patterns = [re.compile(p, re.IGNORECASE) for p in self.TOOL_PATTERNS]
+        # Tool extraction now delegated to text_normalizer.extract_tool_from_text
 
         logger.info(
             f"FeedbackAnalyzer v2.0 initialized with {len(self._path_entity_croatian)} "
@@ -344,16 +329,8 @@ class FeedbackAnalyzer:
         return words
 
     def _extract_tool_from_text(self, text: str) -> Optional[str]:
-        """Extract tool name from text."""
-        if not text:
-            return None
-
-        for pattern in self._tool_patterns:
-            match = pattern.search(text)
-            if match:
-                return match.group(1).lower()
-
-        return None
+        """Extract tool name from text. Delegates to shared utility."""
+        return _shared_extract_tool(text)
 
     def _generate_dictionary_suggestions(
         self,
@@ -591,6 +568,7 @@ class FeedbackAnalyzer:
             return result
 
         result.total_reports_analyzed = len(reports)
+        result._fetched_reports = list(reports)
 
         missing_terms: Dict[str, TermFrequency] = {}
         query_patterns: Counter = Counter()
@@ -651,15 +629,19 @@ class FeedbackAnalyzer:
         # Start with basic analysis
         result = await self.analyze(min_occurrences=min_occurrences, limit=limit)
 
-        # Fetch reports again for deeper analysis
-        query = select(HallucinationReport).limit(limit)
-        try:
-            db_result = await self.db.execute(query)
-            reports = list(db_result.scalars().all())
-        except Exception as e:
-            err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to fetch reports for comprehensive analysis: {e}")
-            logger.error(str(err))
-            return result
+        # Reuse reports already fetched by analyze() to avoid double DB query
+        reports = result._fetched_reports or []
+
+        if not reports:
+            # Fallback: fetch if not available (shouldn't happen)
+            query = select(HallucinationReport).limit(limit)
+            try:
+                db_result = await self.db.execute(query)
+                reports = list(db_result.scalars().all())
+            except Exception as e:
+                err = InfrastructureError(ErrorCode.DATABASE_UNAVAILABLE, f"Failed to fetch reports for comprehensive analysis: {e}")
+                logger.error(str(err))
+                return result
 
         # Add failure category analysis
         result.failure_analysis = self._analyze_failure_categories(reports)

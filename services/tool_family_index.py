@@ -12,6 +12,7 @@ Example:
 """
 import logging
 from typing import Dict, Optional, List, TYPE_CHECKING
+import threading
 
 if TYPE_CHECKING:
     from services.tool_registry import ToolRegistry
@@ -190,11 +191,14 @@ class ToolFamilyIndex:
 
 # Singleton
 _family_index: Optional[ToolFamilyIndex] = None
+_singleton_lock = threading.Lock()
 
 
 def get_family_index() -> ToolFamilyIndex:
     """Get singleton ToolFamilyIndex."""
     global _family_index
     if _family_index is None:
-        _family_index = ToolFamilyIndex()
+        with _singleton_lock:
+            if _family_index is None:
+                _family_index = ToolFamilyIndex()
     return _family_index

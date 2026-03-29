@@ -6,6 +6,7 @@ Single responsibility: Execute tools with automatic dependency resolution.
 
 import json
 import logging
+import re
 from typing import Dict, Any, Optional, List
 
 from services.api_capabilities import get_capability_registry
@@ -98,17 +99,7 @@ class ToolHandler:
         # Create execution context
         from services.tool_contracts import ToolExecutionContext
 
-        tool_outputs = (
-            conv_manager.context.tool_outputs
-            if hasattr(conv_manager.context, 'tool_outputs')
-            else {}
-        )
-
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs=tool_outputs,
-            conversation_state={}
-        )
+        execution_context = ToolExecutionContext.from_conv_manager(user_context, conv_manager)
 
         # Inject PersonId filter for GET methods
         parameters = self._inject_person_filter(tool, parameters, user_context)
@@ -362,8 +353,6 @@ class ToolHandler:
         """Extract missing parameter name from validation error."""
         if not error_message:
             return None
-
-        import re
 
         match = re.search(r'parametri?:\s*(\w+)', error_message, re.IGNORECASE)
         if match:

@@ -8,6 +8,7 @@ Uses ML model instead of regex patterns.
 import logging
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
+import threading
 
 from services.intent_classifier import predict_with_ensemble
 from services.dynamic_threshold import (
@@ -243,11 +244,14 @@ class QueryRouter:
 
 # Singleton
 _router = None
+_singleton_lock = threading.Lock()
 
 
 def get_query_router() -> QueryRouter:
     """Get singleton instance."""
     global _router
     if _router is None:
-        _router = QueryRouter()
+        with _singleton_lock:
+            if _router is None:
+                _router = QueryRouter()
     return _router

@@ -10,6 +10,7 @@ Usage:
     from services.text_normalizer import (
         normalize_query, normalize_diacritics, normalize_synonyms,
         DIACRITIC_MAP, SYNONYM_MAP,
+        CROATIAN_STOPWORDS, extract_tool_from_text, extract_query_patterns,
     )
 
     normalized = normalize_query("Pokaži mi sva auta čija je registracija...")
@@ -18,7 +19,8 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Dict, Final
+import re
+from typing import Dict, Final, FrozenSet, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +71,145 @@ SYNONYM_MAP: Final[Dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Croatian stopwords — single source of truth (union of all 3 prior sets)
+# Used by: feedback_analyzer, query_pattern_learner, feedback_learning_service
+# ---------------------------------------------------------------------------
+
+CROATIAN_STOPWORDS: Final[FrozenSet[str]] = frozenset([
+    # Pronouns & particles
+    "a", "ako", "ali", "bi", "bez", "bilo", "bih", "da", "do",
+    "dok", "ga", "gdje", "i", "ili", "iz", "ja", "je", "jedan", "jedna",
+    "jedno", "jer", "još", "kada", "kako", "kao", "koja", "koje", "koji",
+    "koju", "li", "me", "mi", "može", "mogu", "na", "ne", "nego", "neka",
+    "neki", "nešto", "ni", "nije", "no", "o", "od", "ona", "one", "oni",
+    "ono", "pa", "po", "pod", "prema", "pri", "s", "sa", "sam", "samo",
+    "se", "smo", "su", "sve", "svi", "ta", "te", "ti", "to", "toga",
+    "tu", "u", "uz", "va", "već", "vi", "za", "što", "će", "ću", "tom",
+    "mu", "ju", "ih", "njoj", "njemu", "njima", "nje", "njega", "svoj",
+    "moj", "tvoj", "naš", "vaš", "njihov", "ovaj", "taj", "onaj",
+    # Verbs / auxiliaries
+    "biti", "bio", "bila", "bilo", "smo", "ste", "si",
+    # Bot-specific action words (should not be part of tool patterns)
+    "molim", "hvala", "hej", "bok", "daj", "dajte",
+    "pokaži", "prikaži", "reci", "kaži", "dohvati", "pronađi",
+    "trebam", "treba", "želim", "hoću", "mogu", "možeš",
+    "vas", "te",
+])
+
+
+# ---------------------------------------------------------------------------
+# Tool name extraction — single source of truth
+# Used by: feedback_analyzer, query_pattern_learner, feedback_learning_service
+# ---------------------------------------------------------------------------
+
+_TOOL_PATTERNS: Final = [
+    re.compile(r"(get_\w+)"),
+    re.compile(r"(post_\w+)"),
+    re.compile(r"(put_\w+)"),
+    re.compile(r"(patch_\w+)"),
+    re.compile(r"(delete_\w+)"),
+]
+
+_TOOL_VERB_PATTERNS: Final = [
+    re.compile(r"koristiti\s+(\w+)"),
+    re.compile(r"trebao?\s+(\w+)"),
+]
+
+_TOOL_FALLBACK_RE: Final = re.compile(
+    r"(?:get|post|put|patch|delete)_\w+"
+)
+
+
+def extract_tool_from_text(text: str) -> Optional[str]:
+    """Extract tool name (e.g. get_vehicles) from free text.
+
+    Searches for CRUD-prefixed tool identifiers and Croatian verb patterns.
+    Returns the first match, normalized to lowercase.
+
+    >>> extract_tool_from_text("koristi get_vehicles za popis")
+    'get_vehicles'
+    >>> extract_tool_from_text("trebao post_mileage_entry")
+    'post_mileage_entry'
+    >>> extract_tool_from_text("nema alata ovdje")
+    """
+    if not text:
+        return None
+
+    text_lower = text.lower()
+
+    # 1. Try CRUD-prefixed patterns (most reliable)
+    for pattern in _TOOL_PATTERNS:
+        match = pattern.search(text_lower)
+        if match:
+            return match.group(1)
+
+    # 2. Try Croatian verb patterns ("koristiti X", "trebao X")
+    for pattern in _TOOL_VERB_PATTERNS:
+        match = pattern.search(text_lower)
+        if match:
+            candidate = match.group(1)
+            # If candidate isn't already a CRUD-prefixed name, try to find full name
+            if not candidate.startswith(("get_", "post_", "put_", "patch_", "delete_")):
+                full_match = re.search(
+                    r"(get|post|put|patch|delete)_\w*" + re.escape(candidate),
+                    text_lower,
+                )
+                if full_match:
+                    return full_match.group(0)
+            return candidate
+
+    # 3. Fallback: find any CRUD-prefixed identifier anywhere
+    fallback = _TOOL_FALLBACK_RE.findall(text_lower)
+    if fallback:
+        return fallback[0] if isinstance(fallback[0], str) else fallback[0][0]
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# N-gram pattern extraction — single source of truth
+# Used by: feedback_analyzer, query_pattern_learner, feedback_learning_service
+# ---------------------------------------------------------------------------
+
+_WORD_RE: Final = re.compile(r"\b\w+\b")
+
+
+def extract_query_patterns(
+    query: str,
+    *,
+    stopwords: FrozenSet[str] = CROATIAN_STOPWORDS,
+    min_word_len: int = 3,
+    min_pattern_len: int = 4,
+    max_patterns: int = 5,
+) -> List[str]:
+    """Extract meaningful n-gram patterns from a query.
+
+    Removes stopwords, then generates 2-gram, 3-gram, and 1-gram patterns
+    (preferring longer patterns). Returns up to ``max_patterns`` results.
+
+    >>> extract_query_patterns("pokaži mi sva vozila u Zagrebu")
+    ['vozila zagrebu', 'sva vozila zagrebu', 'vozila', 'zagrebu']
+    """
+    if not query:
+        return []
+
+    words = [
+        w for w in _WORD_RE.findall(query.lower())
+        if w not in stopwords and len(w) >= min_word_len
+    ]
+
+    patterns: List[str] = []
+    for n in [2, 3, 1]:  # Prefer 2-3 word patterns
+        for i in range(len(words) - n + 1):
+            pattern = " ".join(words[i:i + n])
+            if len(pattern) >= min_pattern_len:
+                patterns.append(pattern)
+
+    return patterns[:max_patterns]
+
+
+# ---------------------------------------------------------------------------
+# Public API — original functions
 # ---------------------------------------------------------------------------
 
 def normalize_diacritics(text: str) -> str:
@@ -113,3 +253,38 @@ def normalize_query(text: str) -> str:
     text = normalize_diacritics(text)
     text = normalize_synonyms(text)
     return text
+
+
+def sanitize_for_llm(text: str, max_len: int = 500) -> str:
+    """Sanitize user input before embedding in LLM prompts.
+
+    Truncates to max_len, replaces control chars and double quotes
+    to prevent prompt-injection-style formatting issues.
+    """
+    if not text:
+        return ""
+    return text[:max_len].replace("\r", " ").replace("\n", " ").replace('"', "'")
+
+
+# Pre-compiled pattern for European number format cleaning
+_EURO_NUM_RE = re.compile(r'(\d)[.,](\d{3})\b')
+_DIGITS_RE = re.compile(r'\d+')
+
+
+def clean_european_number(text: str) -> Optional[int]:
+    """
+    Parse European number format (45.000 or 1.234.567) → int (45000 / 1234567).
+
+    Strips thousands separators (dots/commas before exactly 3 digits),
+    then extracts the first integer found.
+
+    Returns None if no number found.
+    """
+    cleaned = text
+    while True:
+        new = _EURO_NUM_RE.sub(r'\1\2', cleaned)
+        if new == cleaned:
+            break
+        cleaned = new
+    numbers = _DIGITS_RE.findall(cleaned)
+    return int(numbers[0]) if numbers else None

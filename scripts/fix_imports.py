@@ -33,7 +33,7 @@ REMOVALS = {
 }
 
 def process_file(filepath, names_to_remove):
-    with open(filepath) as f:
+    with open(filepath, encoding='utf-8') as f:
         lines = f.readlines()
 
     new_lines = []

@@ -297,7 +297,7 @@ class ToolExecutor:
             return ToolExecutionResult(
                 success=False,
                 operation_id=operation_id,
-                error_code="PARAMETER_VALIDATION_ERROR",
+                error_code=ErrorCode.PARAMETER_INVALID,
                 error_message=str(e),
                 ai_feedback=ai_feedback,
                 missing_params=e.missing_params,  # Pass missing_params for auto-chaining
@@ -310,7 +310,7 @@ class ToolExecutor:
             return ToolExecutionResult(
                 success=False,
                 operation_id=operation_id,
-                error_code="CIRCUIT_OPEN",
+                error_code=ErrorCode.CIRCUIT_OPEN,
                 error_message=str(e),
                 ai_feedback=str(e),  # Already in Croatian
                 execution_time_ms=int((time.time() - start_time) * 1000)
@@ -328,7 +328,7 @@ class ToolExecutor:
             return ToolExecutionResult(
                 success=False,
                 operation_id=operation_id,
-                error_code="EXECUTION_ERROR",
+                error_code=ErrorCode.TOOL_EXECUTION_FAILED,
                 error_message=str(e),
                 ai_feedback=ai_feedback,
                 execution_time_ms=int((time.time() - start_time) * 1000)
@@ -405,7 +405,7 @@ class ToolExecutor:
             f"(query={bool(query_params)}, body={bool(body)})"
         )
 
-    def _build_url(self, tool: "UnifiedToolDefinition", resolved_path: str = None) -> str:
+    def _build_url(self, tool: "UnifiedToolDefinition", resolved_path: Optional[str] = None) -> str:
         """
         Build full URL using STRICT MASTER PROMPT v3.1 formula.
 
@@ -481,9 +481,12 @@ class ToolExecutor:
             "Accept": "application/json"
         }
 
-        # Add custom headers from context
+        # SECURITY: Only allow safe, explicitly allowlisted custom headers
+        _SAFE_HEADERS = {"x-correlation-id", "x-request-id", "accept-language"}
         custom_headers = execution_context.user_context.get("headers", {})
-        headers.update(custom_headers)
+        for key, value in custom_headers.items():
+            if key.lower() in _SAFE_HEADERS:
+                headers[key] = str(value)
 
         return headers
 

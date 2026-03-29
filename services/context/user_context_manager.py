@@ -153,17 +153,14 @@ class VehicleContext:
     @staticmethod
     def _extract_mileage(data: Dict) -> Optional[int]:
         """Extract mileage as integer."""
-        value = (
-            data.get("Mileage") or
-            data.get("LastMileage") or
-            data.get("CurrentMileage") or
-            data.get("mileage")
-        )
-        if value is not None:
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                return None
+        # Use 'is not None' checks — 0 is a valid mileage but falsy
+        for key in ("Mileage", "LastMileage", "CurrentMileage", "mileage"):
+            value = data.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (ValueError, TypeError):
+                    continue
         return None
 
     def is_valid(self) -> bool:

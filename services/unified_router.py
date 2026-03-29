@@ -32,6 +32,7 @@ from services.flow_phrases import (
     matches_item_selection,
     matches_greeting,
 )
+from services.text_normalizer import sanitize_for_llm
 from services.tracing import get_tracer, trace_span
 from services.domain_models import RoutingTrace, RoutingTier
 from services.errors import RoutingError, ErrorCode
@@ -41,7 +42,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("unified_router")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 @dataclass
@@ -80,7 +82,7 @@ class UnifiedRouter:
         # Shared client: rate limiting + connection pooling across all services
         self.client = get_openai_client()
         self._circuit_breaker = get_llm_circuit_breaker()
-        self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
+        self.model = _get_settings().AZURE_OPENAI_DEPLOYMENT_NAME
 
         # Tool Registry for semantic search (injected)
         self._registry = registry
@@ -569,7 +571,10 @@ class UnifiedRouter:
             "confidence": 0.0-1.0
         }}"""
 
-        user_prompt = f'Korisnikov upit: "{query}"'
+        # Sanitize user query to mitigate prompt injection:
+        # Strip control characters and limit length to prevent token abuse
+        sanitized_query = sanitize_for_llm(query) if query else ""
+        user_prompt = f'Korisnikov upit: "{sanitized_query}"'
 
         try:
             with trace_span(_tracer, "router.llm_call", {

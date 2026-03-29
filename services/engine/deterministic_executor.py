@@ -148,11 +148,7 @@ class DeterministicExecutor:
 
         # Create execution context
         from services.tool_contracts import ToolExecutionContext
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs=conv_manager.context.tool_outputs if hasattr(conv_manager.context, 'tool_outputs') else {},
-            conversation_state={}
-        )
+        execution_context = ToolExecutionContext.from_conv_manager(user_context, conv_manager)
 
         # Check if mutation tool requires confirmation
         is_mutation = tool.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}

@@ -29,7 +29,9 @@ from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("context_service")
-settings = get_settings()
+def _get_settings():
+    """Lazy settings access — avoid module-level parsing before env vars are set."""
+    return get_settings()
 
 
 # ---
@@ -84,7 +86,7 @@ class UserContext(BaseModel):
         return cls(
             person_id=None,
             phone=phone,
-            tenant_id=settings.tenant_id,
+            tenant_id=_get_settings().tenant_id,
             display_name="Korisnik",
             vehicle=None,
             is_guest=True,
@@ -102,7 +104,7 @@ class UserContext(BaseModel):
         return cls(
             person_id=data.get("person_id"),
             phone=data.get("phone", ""),
-            tenant_id=data.get("tenant_id", settings.tenant_id),
+            tenant_id=data.get("tenant_id", _get_settings().tenant_id),
             display_name=data.get("display_name", "Korisnik"),
             vehicle=vehicle,
             is_guest=data.get("is_guest", False),
@@ -208,7 +210,7 @@ async def _get_user_context_inner(
                     await cache_service.set_json(
                         cache_key,
                         context.to_dict(),
-                        ttl=settings.CACHE_TTL_USER
+                        ttl=_get_settings().CACHE_TTL_USER
                     )
 
                 logger.info(f"USER_CONTEXT: DB lookup SUCCESS for {phone[-4:]}")
@@ -233,7 +235,7 @@ async def _get_user_context_inner(
                         await cache_service.set_json(
                             cache_key,
                             context.to_dict(),
-                            ttl=settings.CACHE_TTL_USER
+                            ttl=_get_settings().CACHE_TTL_USER
                         )
 
                     logger.info(f"USER_CONTEXT: Auto-onboard SUCCESS for {phone[-4:]}")
@@ -267,7 +269,7 @@ class ContextService:
             redis_client: Redis async client
         """
         self.redis = redis_client
-        self.ttl = settings.CACHE_TTL_CONTEXT
+        self.ttl = _get_settings().CACHE_TTL_CONTEXT
         self.max_history = 10  # Matches MAX_HISTORY_MESSAGES in ai_orchestrator
 
     def _validate_user_id(self, user_id: str) -> bool:

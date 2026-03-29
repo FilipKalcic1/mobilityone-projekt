@@ -23,6 +23,7 @@ import sys
 from collections import deque
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import PlainTextResponse
 import redis.asyncio as aioredis
 import logging
 
@@ -38,6 +39,9 @@ _tracer = get_tracer(__name__)
 # ---
 _MAX_DIAG_ENTRIES = 50
 _diag_buffer: deque = deque(maxlen=_MAX_DIAG_ENTRIES)
+# Stats lock: writes are atomic in asyncio's cooperative model (no await between
+# read-modify-write), but the lock ensures a consistent snapshot on read.
+_stats_lock = asyncio.Lock()
 _stats = {
     "total_received": 0,
     "total_pushed": 0,
@@ -537,7 +541,8 @@ async def whatsapp_webhook_verify(request: Request):
         logger.info("WhatsApp webhook verified successfully")
         if not challenge:
             raise HTTPException(status_code=400, detail="Missing challenge parameter")
-        return int(challenge)
+        # Return challenge as-is (Meta/Infobip sends strings, not necessarily ints)
+        return PlainTextResponse(content=str(challenge), status_code=200)
 
     logger.warning(f"Webhook verification failed: mode={mode}")
     raise HTTPException(status_code=403, detail="Verification failed")
@@ -574,8 +579,10 @@ async def webhook_debug(request: Request):
     if not expected_tokens or token not in expected_tokens:
         raise HTTPException(status_code=404, detail="Not found")
 
+    async with _stats_lock:
+        stats_snapshot = dict(_stats)
     diag = {
-        "stats": dict(_stats),
+        "stats": stats_snapshot,
         "recent_events": list(_diag_buffer),
         "redis": {"status": "unknown"},
         "stream": {},
@@ -584,7 +591,7 @@ async def webhook_debug(request: Request):
             "has_secret_key": bool(settings.INFOBIP_SECRET_KEY),
             "has_api_key": bool(settings.INFOBIP_API_KEY),
             "sender_number": settings.INFOBIP_SENDER_NUMBER,
-            "redis_url_masked": settings.REDIS_URL.split("@")[-1] if "@" in settings.REDIS_URL else settings.REDIS_URL,
+            "redis_url_masked": "redis://***@" + settings.REDIS_URL.split("@")[-1] if "@" in settings.REDIS_URL else "redis://<no-auth>",
         }
     }
 

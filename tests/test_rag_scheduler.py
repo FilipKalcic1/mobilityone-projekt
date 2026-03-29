@@ -278,7 +278,10 @@ class TestDoRefresh:
         cb = AsyncMock(return_value={"tools_count": 0, "embeddings_count": 0})
         s = _sched(redis=redis, callback=cb)
         await s._do_refresh()
-        redis.delete.assert_called_with("rag:scheduler:lock")
+        # Lock release uses atomic Lua eval (compare-and-delete)
+        redis.eval.assert_called_once()
+        call_args = redis.eval.call_args
+        assert "rag:scheduler:lock" in call_args[0]  # Lock key in args
 
     @pytest.mark.asyncio
     async def test_lock_not_released_if_stolen(self):
@@ -305,7 +308,10 @@ class TestDoRefresh:
         cb = AsyncMock(return_value={"tools_count": 0, "embeddings_count": 0})
         s = _sched(redis=redis, callback=cb)
         await s._do_refresh()
-        redis.delete.assert_called_with("rag:scheduler:lock")
+        # Lock release uses atomic Lua eval (compare-and-delete)
+        redis.eval.assert_called_once()
+        call_args = redis.eval.call_args
+        assert "rag:scheduler:lock" in call_args[0]  # Lock key in args
 
     @pytest.mark.asyncio
     async def test_lock_release_error(self):

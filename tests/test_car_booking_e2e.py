@@ -552,7 +552,8 @@ class TestCostTracking:
 
     def test_cost_calculation(self):
         """Test cost calculation with V2 simplified pricing."""
-        from services.cost_tracker import CostTracker, INPUT_PRICE, OUTPUT_PRICE
+        from services.cost_tracker import CostTracker
+        from config import get_settings
 
         tracker = CostTracker(MagicMock())
         cost = tracker._calculate_cost(1000, 500)

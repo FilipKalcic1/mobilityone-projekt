@@ -53,7 +53,7 @@ async def test_dlq_falls_back_to_file_when_redis_fails(tmp_path):
 
     # File should contain the entry
     assert os.path.exists(dlq_path)
-    with open(dlq_path) as f:
+    with open(dlq_path, encoding="utf-8") as f:
         lines = f.readlines()
     assert len(lines) == 1
     parsed = json.loads(lines[0].strip())
@@ -74,7 +74,7 @@ async def test_dlq_file_appends_multiple_entries(tmp_path):
         await _write_dlq(json.dumps({"dlq": "webhook", "message_id": "msg_1"}))
         await _write_dlq(json.dumps({"dlq": "webhook", "message_id": "msg_2"}))
 
-    with open(dlq_path) as f:
+    with open(dlq_path, encoding="utf-8") as f:
         lines = f.readlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["message_id"] == "msg_1"
@@ -85,7 +85,7 @@ async def test_dlq_file_appends_multiple_entries(tmp_path):
 async def test_dlq_does_not_use_only_stderr():
     """DLQ must NOT rely solely on stderr (the old bug)."""
     import webhook_simple
-    source = open(webhook_simple.__file__).read()
+    source = open(webhook_simple.__file__, encoding="utf-8").read()
 
     # The old pattern was: sys.stderr.write(f"DLQ_WEBHOOK: {dlq_entry}\n")
     # directly in the webhook handler. Now it should go through _write_dlq

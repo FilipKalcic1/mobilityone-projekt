@@ -38,6 +38,7 @@ import math
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Sequence, Optional
+import threading
 
 
 # ---------------------------------------------------------------------------
@@ -442,11 +443,14 @@ class DecisionEngine:
 # ---------------------------------------------------------------------------
 
 _engine: Optional[DecisionEngine] = None
+_engine_lock = threading.Lock()
 
 
 def get_engine(alpha: float = 0.0) -> DecisionEngine:
     """Get or create the DecisionEngine singleton."""
     global _engine
     if _engine is None or _engine.alpha != alpha:
-        _engine = DecisionEngine(alpha=alpha)
+        with _engine_lock:
+            if _engine is None or _engine.alpha != alpha:
+                _engine = DecisionEngine(alpha=alpha)
     return _engine

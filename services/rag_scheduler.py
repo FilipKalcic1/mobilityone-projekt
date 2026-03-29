@@ -38,6 +38,8 @@ from typing import Dict, Optional, Callable, Awaitable
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+from services.retry_utils import calculate_backoff
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,14 +53,12 @@ def _task_error_logger(task: asyncio.Task) -> None:
         pass
 
 
-# Thread-safe singleton lock (lazy to avoid event loop issues at import time)
-_singleton_lock: Optional[asyncio.Lock] = None
+# Singleton lock — created at module level. Safe because asyncio.Lock() does not
+# require a running event loop at construction time (only at acquire time).
+_singleton_lock = asyncio.Lock()
 
 
 def _get_singleton_lock() -> asyncio.Lock:
-    global _singleton_lock
-    if _singleton_lock is None:
-        _singleton_lock = asyncio.Lock()
     return _singleton_lock
 
 
@@ -107,7 +107,7 @@ class RAGScheduler:
     def __init__(
         self,
         redis_client,
-        refresh_interval_hours: float = None,
+        refresh_interval_hours: Optional[float] = None,
         on_refresh_callback: Callable[[], Awaitable[Dict]] = None
     ):
         """
@@ -267,7 +267,14 @@ class RAGScheduler:
                         logger.warning(
                             f"RAG refresh failed, backing off for {backoff}s"
                         )
-                        await asyncio.sleep(backoff)
+                        try:
+                            await asyncio.wait_for(
+                                self._shutdown_event.wait(),
+                                timeout=backoff,
+                            )
+                            break  # Shutdown requested during backoff
+                        except asyncio.TimeoutError:
+                            pass  # Backoff complete, continue loop
 
             except asyncio.CancelledError:
                 break
@@ -320,11 +327,7 @@ class RAGScheduler:
     def _calculate_backoff(self) -> int:
         """Calculate exponential backoff based on consecutive failures."""
         failures = self.metrics.consecutive_failures
-        backoff = min(
-            self.MIN_RETRY_DELAY_SECONDS * (2 ** failures),
-            self.MAX_RETRY_DELAY_SECONDS
-        )
-        return backoff
+        return int(calculate_backoff(failures, base_delay=self.MIN_RETRY_DELAY_SECONDS, max_delay=self.MAX_RETRY_DELAY_SECONDS, jitter=0))
 
     async def _pubsub_listener(self) -> None:
         """Listen for force refresh commands via Redis pub/sub."""
@@ -415,7 +418,7 @@ class RAGScheduler:
     async def _do_refresh(
         self,
         trigger: str = "unknown",
-        reason: str = None
+        reason: Optional[str] = None
     ) -> bool:
         """
         Execute refresh operation.
@@ -489,14 +492,15 @@ class RAGScheduler:
 
         finally:
             self._refresh_in_progress = False
-            # Release lock only if we still hold it
+            # Atomic lock release via Lua (prevents TOCTOU race)
             try:
-                current_lock = await self.redis.get(self.REDIS_KEY_LOCK)
-                if current_lock:
-                    if isinstance(current_lock, bytes):
-                        current_lock = current_lock.decode('utf-8')
-                    if current_lock == lock_value:
-                        await self.redis.delete(self.REDIS_KEY_LOCK)
+                from services.retry_utils import ATOMIC_LOCK_RELEASE_LUA
+                await self.redis.eval(
+                    ATOMIC_LOCK_RELEASE_LUA,
+                    1,
+                    self.REDIS_KEY_LOCK,
+                    lock_value,
+                )
             except Exception as e:
                 logger.warning(f"Failed to release lock: {e}")
 

@@ -57,7 +57,7 @@ class TestDLQFallbackChain:
 
         # Verify file was written
         assert os.path.exists(dlq_file)
-        with open(dlq_file, "r") as f:
+        with open(dlq_file, "r", encoding="utf-8") as f:
             content = f.read()
         assert '{"test": "redis_failed"}' in content
 
@@ -92,7 +92,7 @@ class TestDLQFallbackChain:
 
         dlq_file = str(tmp_path / "dlq.jsonl")
         # Create a file that's already at the cap
-        with open(dlq_file, "w") as f:
+        with open(dlq_file, "w", encoding="utf-8") as f:
             f.write("x" * (5 * 1024 * 1024 + 1))
 
         with (

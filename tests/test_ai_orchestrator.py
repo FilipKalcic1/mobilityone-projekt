@@ -51,7 +51,7 @@ def _make_orchestrator(mock_settings=None):
     if mock_settings is None:
         mock_settings = _make_mock_settings()
 
-    with patch("services.ai_orchestrator.settings", mock_settings):
+    with patch("services.ai_orchestrator._get_settings", return_value=mock_settings):
         with patch("services.ai_orchestrator.get_openai_client") as MockGetClient:
             with patch("services.ai_orchestrator.get_llm_circuit_breaker") as MockGetCB:
                 mock_client_instance = MagicMock()
@@ -112,7 +112,7 @@ class TestInit:
         """Client is obtained from shared openai_client singleton."""
         ms = _make_mock_settings()
         mock_client = MagicMock()
-        with patch("services.ai_orchestrator.settings", ms):
+        with patch("services.ai_orchestrator._get_settings", return_value=ms):
             with patch("services.ai_orchestrator.get_openai_client", return_value=mock_client):
                 with patch("services.ai_orchestrator.get_llm_circuit_breaker", return_value=MagicMock()):
                     from services.ai_orchestrator import AIOrchestrator
@@ -133,7 +133,7 @@ class TestInit:
     def test_init_tokenizer_none_when_tiktoken_unavailable(self):
         """When tiktoken import fails, tokenizer is None."""
         ms = _make_mock_settings()
-        with patch("services.ai_orchestrator.settings", ms):
+        with patch("services.ai_orchestrator._get_settings", return_value=ms):
             with patch("services.ai_orchestrator.get_openai_client", return_value=MagicMock()):
                 with patch("services.ai_orchestrator.get_llm_circuit_breaker", return_value=MagicMock()):
                     with patch("services.ai_orchestrator.tiktoken", None):
@@ -473,21 +473,21 @@ class TestRetryAndErrorHandling:
 class TestCalculateBackoff:
     def test_backoff_attempt_0(self):
         orch = _make_orchestrator()
-        with patch("services.ai_orchestrator.random.uniform", return_value=0.25):
+        with patch("services.retry_utils.random.uniform", return_value=0.25):
             delay = orch._calculate_backoff(0)
         # 2^0 * 1.0 + 0.25 = 1.25
         assert delay == pytest.approx(1.25)
 
     def test_backoff_attempt_1(self):
         orch = _make_orchestrator()
-        with patch("services.ai_orchestrator.random.uniform", return_value=0.0):
+        with patch("services.retry_utils.random.uniform", return_value=0.0):
             delay = orch._calculate_backoff(1)
         # 2^1 * 1.0 + 0.0 = 2.0
         assert delay == pytest.approx(2.0)
 
     def test_backoff_attempt_2(self):
         orch = _make_orchestrator()
-        with patch("services.ai_orchestrator.random.uniform", return_value=0.5):
+        with patch("services.retry_utils.random.uniform", return_value=0.5):
             delay = orch._calculate_backoff(2)
         # 2^2 * 1.0 + 0.5 = 4.5
         assert delay == pytest.approx(4.5)

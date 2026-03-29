@@ -6,7 +6,6 @@ Handles booking, mileage input, and case creation flows.
 """
 
 import logging
-import re
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from services.context import UserContextManager
@@ -121,15 +120,10 @@ class FlowExecutors:
 
         # Clean European number format (45.000 or 45,000 → 45000)
         if raw_value and isinstance(raw_value, str):
-            cleaned = raw_value
-            # Loop to handle multiple separators (e.g., 1.234.567 → 1234567)
-            while True:
-                new = re.sub(r'(\d)[.,](\d{3})\b', r'\1\2', cleaned)
-                if new == cleaned:
-                    break
-                cleaned = new
-            numbers = re.findall(r'\d+', cleaned)
-            raw_value = int(numbers[0]) if numbers else raw_value
+            from services.text_normalizer import clean_european_number
+            parsed = clean_european_number(raw_value)
+            if parsed is not None:
+                raw_value = parsed
 
         mileage_params = {"Value": raw_value}
 
@@ -338,11 +332,7 @@ class FlowExecutors:
 
         # Execute list API
         from services.tool_contracts import ToolExecutionContext
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs={},
-            conversation_state={}
-        )
+        execution_context = ToolExecutionContext.from_conv_manager(user_context, None)
 
         result = await self.flow_handler.executor.execute(list_tool, {}, execution_context)
 
