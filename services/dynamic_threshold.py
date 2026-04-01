@@ -427,7 +427,7 @@ class DecisionEngine:
             return base
 
         # CP set size 2-5 → mediation path (LLM reranks small candidate set)
-        if prediction_set.size <= 5:
+        if 2 <= prediction_set.size <= 5:
             return ThresholdDecision(
                 DecisionAction.BOOST, signal, base.effective_score
             )

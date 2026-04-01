@@ -388,24 +388,41 @@ class IntentClassifier:
 
     def _predict_fasttext(self, text: str) -> IntentPrediction:
         """Predict using FastText model."""
-        labels, probs = self.model.predict(text, k=3)
+        # k=-1 returns ALL classes so we get the full probability vector
+        # needed for accurate ClassificationSignal and CP prediction sets.
+        labels, probs_arr = self.model.predict(text, k=-1)
 
+        probs_list = [float(p) for p in probs_arr]
         intent = labels[0].replace("__label__", "")
-        confidence = float(probs[0])
+        confidence = probs_list[0]
 
         meta = self.intent_to_metadata.get(intent, {})
 
         alternatives = [
-            (label.replace("__label__", ""), float(prob))
-            for label, prob in zip(labels[1:], probs[1:])
+            (label.replace("__label__", ""), prob)
+            for label, prob in zip(labels[1:3], probs_list[1:3])
         ]
+
+        # Full signal from complete probability vector (exact, not estimated)
+        signal = ClassificationSignal.from_probabilities(probs_list)
+
+        # Conformal prediction set (if calibrated)
+        prediction_set = None
+        if self._q_hat is not None:
+            label_names = [lbl.replace("__label__", "") for lbl in labels]
+            prediction_set = PredictionSet.from_probabilities(
+                probs_list, label_names, self._q_hat,
+                self._cp_coverage if self._cp_coverage is not None else 0.70,
+            )
 
         return IntentPrediction(
             intent=intent,
             action=meta.get("action", "NONE"),
             tool=meta.get("tool"),
             confidence=confidence,
-            alternatives=alternatives
+            alternatives=alternatives,
+            signal=signal,
+            prediction_set=prediction_set,
         )
 
     def _predict_azure_embedding(self, text: str) -> IntentPrediction:
