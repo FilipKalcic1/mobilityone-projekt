@@ -249,8 +249,13 @@ async def _write_dlq(dlq_entry: str) -> None:
         redis = await get_redis()
         if redis:
             await redis.lpush("dlq:webhook", dlq_entry)
-            await redis.ltrim("dlq:webhook", 0, 9999)  # Cap at 10K entries
-            await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
+            # ltrim/expire are best-effort maintenance — failure doesn't
+            # un-store the message, so we return immediately regardless.
+            try:
+                await redis.ltrim("dlq:webhook", 0, 9999)  # Cap at 10K entries
+                await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
+            except Exception as maint_err:
+                logger.warning(f"DLQ Redis ltrim/expire failed (message stored, maintenance skipped): {maint_err}")
             logger.info("DLQ message stored in Redis (dlq:webhook)")
             return
     except (ConnectionError, TimeoutError, OSError, RedisConnectionError, RedisError) as redis_dlq_err:
@@ -440,12 +445,10 @@ async def _process_webhook(request: Request, request_id: str, span) -> dict:
             }
 
             # Push with retry (max 3 attempts with exponential backoff)
-            push_success = False
             for redis_attempt in range(3):
                 try:
                     redis = await get_redis()
                     await redis.xadd("whatsapp_stream_inbound", stream_data)
-                    push_success = True
                     pushed += 1
                     _stats["total_pushed"] += 1
                     _stats["last_success_at"] = datetime.now(timezone.utc).isoformat()
@@ -604,7 +607,7 @@ async def webhook_debug(request: Request):
             "has_secret_key": bool(settings.INFOBIP_SECRET_KEY),
             "has_api_key": bool(settings.INFOBIP_API_KEY),
             "sender_number": settings.INFOBIP_SENDER_NUMBER,
-            "redis_url_masked": "redis://***@" + settings.REDIS_URL.split("@")[-1] if "@" in settings.REDIS_URL else "redis://<no-auth>",
+            "redis_url_masked": "redis://***" if settings.REDIS_URL else "not-configured",
         }
     }
 

@@ -5,6 +5,7 @@ Main entry point with automatic database initialization.
 """
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -490,15 +491,21 @@ async def metrics(request: Request):
     # In production, only allow Prometheus scraper (by IP or token)
     if settings.is_production:
         token = request.query_params.get("token", "")
-        admin_tokens = set()
+        admin_tokens = []
         for i in range(1, 5):
             env_token = os.environ.get(f"ADMIN_TOKEN_{i}")
             if env_token:
-                admin_tokens.add(env_token)
+                admin_tokens.append(env_token)
         if not admin_tokens:
             logger.error("ADMIN_TOKENS not configured — denying /metrics access in production")
             return JSONResponse(status_code=503, content={"detail": "Metrics unavailable: admin tokens not configured"})
-        if token not in admin_tokens:
+        # Constant-time comparison: iterate all tokens to prevent timing oracle
+        token_bytes = token.encode()
+        valid = False
+        for stored in admin_tokens:
+            if hmac.compare_digest(token_bytes, stored.encode()):
+                valid = True
+        if not valid:
             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
     # Read tools count from Redis (written by worker after registry init)

@@ -1274,10 +1274,10 @@ class Worker:
             chunks = self._split_message(text, MAX_WA_LENGTH)
             log("info", "message_split", {"chunks": len(chunks), "original_len": len(text)})
             for idx, chunk in enumerate(chunks):
-                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}:{idx}"}
+                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{time.time_ns()}:{idx}"}
                 await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
         else:
-            payload = {"to": to, "text": text, "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}
+            payload = {"to": to, "text": text, "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{time.time_ns()}"}
             await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
 
     @staticmethod
