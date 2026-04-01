@@ -229,12 +229,12 @@ def is_ip_allowed(client_ip: str) -> bool:
 async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
     """Verify admin token and return admin_id."""
     # Constant-time comparison prevents timing oracle attacks
-    admin_id = None
+    found_user = None
     token_bytes = token.encode()
     for stored_token, stored_user in VALID_ADMIN_TOKENS.items():
         if hmac.compare_digest(token_bytes, stored_token.encode()):
-            admin_id = stored_user
-            break
+            found_user = stored_user  # no break — iterate all tokens for constant-time
+    admin_id = found_user
     if not admin_id:
         logger.warning(f"Invalid admin token attempt (len={len(token)}, hash={hashlib.sha256(token.encode()).hexdigest()[:8]})")
         raise HTTPException(
@@ -256,7 +256,7 @@ class RedisRateLimiter:
     redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
     local count = redis.call('ZCARD', KEYS[1])
     if count < tonumber(ARGV[3]) then
-        redis.call('ZADD', KEYS[1], ARGV[2], ARGV[2])
+        redis.call('ZADD', KEYS[1], ARGV[2], ARGV[2] .. ':' .. tostring(math.random(1000000000)))
         redis.call('EXPIRE', KEYS[1], 120)
         return 1
     end
@@ -512,7 +512,9 @@ async def metrics(request: Request):
     """Prometheus metrics endpoint (requires admin token)."""
     auth_header = request.headers.get("authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else request.headers.get("x-admin-token", "")
-    if VALID_ADMIN_TOKENS and token not in VALID_ADMIN_TOKENS:
+    if not VALID_ADMIN_TOKENS:
+        return JSONResponse(status_code=503, content={"error": "Metrics unavailable: admin tokens not configured"})
+    if token not in VALID_ADMIN_TOKENS:
         return JSONResponse(status_code=403, content={"error": "Forbidden"})
     return PlainTextResponse(
         content=generate_latest(),

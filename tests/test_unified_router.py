@@ -595,6 +595,7 @@ class TestMediationPath:
 
         assert result.action == "simple_api"
         assert result.tool == "get_MasterData"
+        router.client.chat.completions.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_non_mediation_flow_skips_reranker(self):
@@ -648,6 +649,7 @@ class TestMediationPath:
 
         result = await router.route("vozilo info", _user_context())
         assert result.action == "simple_api"
+        router.client.chat.completions.create.assert_called_once()
 
 
 # ==========================================================================
