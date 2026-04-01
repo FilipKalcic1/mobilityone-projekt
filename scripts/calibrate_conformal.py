@@ -285,8 +285,8 @@ def calibrate_query_type(alpha=DEFAULT_ALPHA):
     # WARNING: intent_training.train_query_type() trains on 100% of this file.
     # For a valid CP coverage guarantee, the calibration set must be independent
     # from the training set. The 20% holdout here gives approximate guarantees
-    # only; for a formal guarantee, run training on the first 80% exclusively
-    # (set QUERY_TYPE_TRAIN_ONLY_80PCT=1) or provide a separate calibration file.
+    # only; for a formal guarantee, retrain the model on only the first 80%
+    # of examples, or collect a separate held-out calibration file.
     rng = np.random.RandomState(42)
     indices = rng.permutation(len(all_data))
     split_idx = int(len(all_data) * 0.8)

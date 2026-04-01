@@ -508,14 +508,8 @@ async def readiness_check(request: Request):
     return {"ready": True}
 
 @app.get("/metrics")
-async def metrics(request: Request):
-    """Prometheus metrics endpoint (requires admin token)."""
-    auth_header = request.headers.get("authorization", "")
-    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.headers.get("x-admin-token", "")
-    if not VALID_ADMIN_TOKENS:
-        return JSONResponse(status_code=503, content={"error": "Metrics unavailable: admin tokens not configured"})
-    if token not in VALID_ADMIN_TOKENS:
-        return JSONResponse(status_code=403, content={"error": "Forbidden"})
+async def metrics(_: str = Depends(check_rate_limit)):
+    """Prometheus metrics endpoint (requires admin token + rate limit)."""
     return PlainTextResponse(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST

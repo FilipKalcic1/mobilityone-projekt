@@ -206,16 +206,25 @@ class PredictionSet:
     ) -> PredictionSet:
         """APS (Adaptive Prediction Sets) algorithm.
 
-        Sort probabilities descending.  Include label y in the set iff
-        the cumulative probability up to (and including) y is <= q_hat.
-        This guarantees coverage >= 1 - alpha by the conformal guarantee.
+        Sort probabilities descending.  Include labels greedily until the
+        cumulative probability *exceeds* q_hat — that is, include the label
+        that pushes cumulative over the threshold (boundary-inclusive).
+
+        This matches the calibration in calibrate_conformal.py: the APS
+        nonconformity score for example i is the cumulative probability
+        up to and including the true label (breaks after matching label).
+        The coverage guarantee P(true_label ∈ set) >= 1-alpha holds because
+        we include the boundary label in both calibration and inference.
+
+        Reference: Angelopoulos et al. 2021, "Least Ambiguous Set-Valued
+        Classifiers with Bounded Error Levels".
 
         O(K log K) from the sort.
         """
         # Sort (label, prob) pairs by probability descending
         pairs = sorted(zip(label_names, probs), key=lambda x: x[1], reverse=True)
 
-        # APS: include labels while cumulative <= q_hat
+        # APS: accumulate until cumulative exceeds q_hat; include boundary label
         cumulative = 0.0
         selected_labels = []
         selected_probs = []
@@ -225,7 +234,7 @@ class PredictionSet:
             selected_labels.append(label)
             selected_probs.append(prob)
             if cumulative > q_hat:
-                break  # Include this boundary label for coverage guarantee
+                break  # Boundary label included — matches calibration scoring
 
         # Always include at least one label
         if not selected_labels and pairs:
