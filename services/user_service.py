@@ -7,7 +7,6 @@ DEPENDS ON: api_gateway.py, cache_service.py, models.py, config.py
 Uses SchemaExtractor for schema-driven field access
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
@@ -459,10 +458,10 @@ class UserService:
         cache_key = f"context:{person_id}"
         if self.cache:
             try:
-                cached = await self.cache.get(cache_key)
-                if cached:
+                cached = await self.cache.get_json(cache_key)
+                if cached is not None:
                     logger.info(f"BUILD_CONTEXT: Using cached context for {person_id[:8]}...")
-                    return json.loads(cached)
+                    return cached
             except Exception as e:
                 logger.debug(f"Cache read failed: {e}")
 
@@ -509,7 +508,7 @@ class UserService:
                     # Prevents hammering a dead API on every message
                     cache_ttl = 60
                     logger.info(f"BUILD_CONTEXT: Negative-cached context for {person_id[:8]}... (60s TTL, no vehicle data)")
-                await self.cache.set(cache_key, json.dumps(context), ttl=cache_ttl)
+                await self.cache.set_json(cache_key, context, ttl=cache_ttl)
             except Exception as e:
                 logger.debug(f"Cache write failed: {e}")
 

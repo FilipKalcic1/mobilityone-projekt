@@ -590,7 +590,7 @@ def _predict_with_ensemble_inner(query: str, span) -> IntentPrediction:
             span.set_attribute("ml.source", "semantic")
             return sem_pred
     except Exception as e:
-        if not _semantic_model_unavailable:
+        if _semantic_model_unavailable_until <= time.monotonic():
             err = ClassificationError(
                 ErrorCode.ENSEMBLE_ALL_FAILED,
                 f"Semantic fallback failed: {e}",

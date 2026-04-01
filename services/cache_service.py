@@ -69,7 +69,7 @@ class CacheService:
         """Get JSON value from cache."""
         try:
             data = await self.redis.get(key)
-            if data:
+            if data is not None:
                 return json.loads(data)
             return None
         except Exception as e:
@@ -266,10 +266,17 @@ class CacheService:
             New value
         """
         try:
-            value = await self.redis.incr(key)
-            if ttl and value == 1:
-                await self.redis.expire(key, ttl)
-            return value
+            if ttl:
+                # Atomic INCR + conditional EXPIRE via Lua to avoid TOCTOU race
+                lua = (
+                    "local v = redis.call('INCR', KEYS[1]) "
+                    "if v == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end "
+                    "return v"
+                )
+                value = await self.redis.eval(lua, 1, key, ttl)
+                return int(value)
+            else:
+                return await self.redis.incr(key)
         except Exception as e:
             logger.warning(f"Cache increment failed: {e}")
             return 0

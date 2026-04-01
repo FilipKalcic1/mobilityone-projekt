@@ -12,6 +12,15 @@ import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+try:
+    import fastapi.responses  # noqa: F401 — webhook_simple.py requires fastapi at import time
+    # Only proceed if fastapi is the real package (not a MagicMock stub)
+    import fastapi as _fa
+    if not (hasattr(_fa, '__version__') or (hasattr(_fa, 'FastAPI') and isinstance(_fa.FastAPI, type))):
+        raise ImportError("fastapi is a test stub, not the real package")
+except Exception:
+    pytest.skip("fastapi not properly installed", allow_module_level=True)
+
 
 @pytest.mark.asyncio
 async def test_dlq_writes_to_redis_primary():

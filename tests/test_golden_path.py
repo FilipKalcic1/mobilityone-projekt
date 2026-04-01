@@ -30,10 +30,12 @@ def _has_faiss() -> bool:
 
 
 def _has_fastapi() -> bool:
+    """True only when the real fastapi package is installed (not a test stub)."""
     try:
-        import fastapi  # noqa: F401
-        return True
-    except ImportError:
+        import fastapi
+        # MagicMock stubs don't have __version__ or a real FastAPI class
+        return isinstance(getattr(fastapi, 'FastAPI', None), type)
+    except Exception:
         return False
 
 

@@ -241,8 +241,9 @@ class APIGateway:
                     await asyncio.sleep(delay)
                     continue
 
-                # Reset circuit breaker only on actual success (2xx)
-                if 200 <= response.status_code < 300:
+                # Reset circuit breaker on non-server-error responses
+                # 4xx are client errors (not API failures), so don't count them
+                if response.status_code < 500:
                     self._consecutive_failures = 0
                 return self._parse_response(response)
 
@@ -529,8 +530,11 @@ class APIGateway:
         failures_above_threshold = self._consecutive_failures - self.CIRCUIT_FAILURE_THRESHOLD
         base = self.CIRCUIT_BASE_COOLDOWN_SECONDS * (2 ** max(0, failures_above_threshold))
         capped = min(base, self.CIRCUIT_MAX_COOLDOWN_SECONDS)
-        # Jitter: 0.5x to 1.5x of base cooldown
-        return random.uniform(capped * 0.5, capped * 1.5)
+        # Jitter: 0.5x to 1.5x of capped cooldown, hard-capped at max
+        return min(
+            self.CIRCUIT_MAX_COOLDOWN_SECONDS * 1.5,
+            random.uniform(capped * 0.5, capped * 1.5),
+        )
 
     # === CONVENIENCE METHODS ===
 

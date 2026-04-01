@@ -12,6 +12,7 @@ from services.context import (
     get_multiple_missing_prompts,
     UserContextManager,
 )
+from services.tool_contracts import ToolExecutionContext
 
 if TYPE_CHECKING:
     from services.conversation_manager import ConversationManager
@@ -147,7 +148,6 @@ class DeterministicExecutor:
             return self.build_missing_data_prompt(missing_user_params)
 
         # Create execution context
-        from services.tool_contracts import ToolExecutionContext
         execution_context = ToolExecutionContext.from_conv_manager(user_context, conv_manager)
 
         # Check if mutation tool requires confirmation

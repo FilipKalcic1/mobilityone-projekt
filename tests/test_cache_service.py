@@ -287,9 +287,10 @@ class TestIncrement:
         assert result == 1
 
     async def test_increment_with_ttl(self, cache, mock_redis):
-        mock_redis.incr.return_value = 1
+        mock_redis.eval.return_value = 1
         result = await cache.increment("counter", ttl=3600)
-        mock_redis.expire.assert_called_once()
+        assert result == 1
+        mock_redis.eval.assert_called_once()
 
     async def test_increment_failure(self, cache, mock_redis):
         mock_redis.incr.side_effect = Exception("fail")

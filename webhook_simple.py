@@ -25,6 +25,19 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 import redis.asyncio as aioredis
+try:
+    from redis.exceptions import (
+        ConnectionError as RedisConnectionError,
+        RedisError,
+        ResponseError,
+    )
+    # Guard: test stubs may inject MagicMocks that aren't real exception classes
+    if not (isinstance(RedisConnectionError, type) and issubclass(RedisConnectionError, BaseException)):
+        raise TypeError("redis.exceptions returned stub types")
+except Exception:
+    RedisConnectionError = OSError  # type: ignore[assignment,misc]
+    RedisError = Exception  # type: ignore[assignment,misc]
+    ResponseError = Exception  # type: ignore[assignment,misc]
 import logging
 
 from config import get_settings
@@ -240,7 +253,7 @@ async def _write_dlq(dlq_entry: str) -> None:
             await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
             logger.info("DLQ message stored in Redis (dlq:webhook)")
             return
-    except (ConnectionError, TimeoutError, OSError, aioredis.ConnectionError, aioredis.RedisError) as redis_dlq_err:
+    except (ConnectionError, TimeoutError, OSError, RedisConnectionError, RedisError) as redis_dlq_err:
         logger.warning(f"DLQ Redis write failed, falling back to file: {redis_dlq_err}")
     except Exception as redis_dlq_err:
         logger.error(f"DLQ Redis unexpected error (possible bug): {type(redis_dlq_err).__name__}: {redis_dlq_err}")
@@ -407,7 +420,7 @@ async def _process_webhook(request: Request, request_id: str, span) -> dict:
                         pushed += 1
                         logger.info(f"Non-text message forwarded: {sender[-4:]}... type={msg_type}")
                         break
-                    except (ConnectionError, TimeoutError, OSError, aioredis.ConnectionError, aioredis.RedisError) as redis_err:
+                    except (ConnectionError, TimeoutError, OSError, RedisConnectionError, RedisError) as redis_err:
                         if redis_attempt < 2:
                             await asyncio.sleep(0.5 * (2 ** redis_attempt))
                             async with _redis_lock:
@@ -440,7 +453,7 @@ async def _process_webhook(request: Request, request_id: str, span) -> dict:
                     _diag_log("pushed", {"sender": sender[-4:], "text_preview": text[:30]})
                     break
 
-                except (ConnectionError, OSError, TimeoutError, aioredis.ConnectionError, aioredis.RedisError) as redis_err:
+                except (ConnectionError, OSError, TimeoutError, RedisConnectionError, RedisError) as redis_err:
                     if redis_attempt < 2:
                         delay = 0.5 * (2 ** redis_attempt)  # 0.5s, 1.0s
                         logger.warning(
@@ -609,7 +622,7 @@ async def webhook_debug(request: Request):
                 "first_entry": stream_info.get("first-entry"),
                 "last_entry": stream_info.get("last-entry"),
             }
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             diag["stream"] = {"error": str(e)}
 
         # Get consumer group info
@@ -624,7 +637,7 @@ async def webhook_debug(request: Request):
                 }
                 for g in groups
             ]
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             diag["consumer_groups"] = {"error": str(e)}
 
     except Exception as e:

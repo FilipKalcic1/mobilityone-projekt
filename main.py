@@ -495,7 +495,10 @@ async def metrics(request: Request):
             env_token = os.environ.get(f"ADMIN_TOKEN_{i}")
             if env_token:
                 admin_tokens.add(env_token)
-        if admin_tokens and token not in admin_tokens:
+        if not admin_tokens:
+            logger.error("ADMIN_TOKENS not configured — denying /metrics access in production")
+            return JSONResponse(status_code=503, content={"detail": "Metrics unavailable: admin tokens not configured"})
+        if token not in admin_tokens:
             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
     # Read tools count from Redis (written by worker after registry init)

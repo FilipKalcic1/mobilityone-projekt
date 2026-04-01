@@ -18,6 +18,7 @@ from services.booking_contracts import AssigneeType, EntryType
 from services.error_translator import get_error_translator
 from services.confirmation_dialog import get_confirmation_dialog
 from services.context import get_multiple_missing_prompts
+from services.text_normalizer import clean_european_number
 from services.context.user_context_manager import UserContextManager
 from services.errors import ConversationError, ErrorCode
 from services.tracing import get_tracer, trace_span
@@ -48,6 +49,13 @@ _QUESTION_PATTERNS = [re.compile(p) for p in [  # Applied to lowered text only
 ]]
 
 # Pre-compiled regex patterns for _extract_filter_text() hot path
+_QUESTION_PHRASES = (
+    "reci mi", "kaži mi", "kazi mi",
+    "pokaži mi", "pokazi mi",
+    "daj mi info", "trebam znati",
+    "što je s", "sta je s", "sto je s",
+)
+
 _FILTER_PATTERNS = [re.compile(p) for p in [
     r'pokaži\s+(?:samo\s+)?(.+)',        # "pokaži Passat", "pokaži samo ZG"
     r'pokazi\s+(?:samo\s+)?(.+)',        # "pokazi Passat" (without č)
@@ -264,7 +272,7 @@ class FlowHandler:
                 self._is_question, self._extract_filter_text,
                 sender, text, user_context, conv_manager
             )
-            span.set_attribute("result.response_length", len(result) if result else 0)
+            span.set_attribute("result.response_length", len(result) if isinstance(result, str) else 0)
             return result
 
     # Semantic parameter descriptions for AI extraction
@@ -350,7 +358,6 @@ class FlowHandler:
                         logger.info(f"GATHERING FALLBACK: Using raw text '{text.strip()}' as {param}")
                 # For Value (mileage), try to parse the number
                 elif param.lower() in ['value', 'mileage']:
-                    from services.text_normalizer import clean_european_number
                     parsed = clean_european_number(text)
                     if parsed is not None:
                         extracted[param] = parsed
@@ -566,14 +573,7 @@ class FlowHandler:
             return True
 
         # Check for common question phrases
-        question_phrases = [
-            "reci mi", "kaži mi", "kazi mi",
-            "pokaži mi", "pokazi mi",
-            "daj mi info", "trebam znati",
-            "što je s", "sta je s", "sto je s",
-        ]
-
-        for phrase in question_phrases:
+        for phrase in _QUESTION_PHRASES:
             if phrase in text_lower:
                 return True
 

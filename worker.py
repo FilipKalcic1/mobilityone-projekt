@@ -40,6 +40,18 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 
 import redis.asyncio as aioredis
+try:
+    from redis.exceptions import (
+        ConnectionError as RedisConnectionError,
+        RedisError,
+        ResponseError,
+    )
+    if not (isinstance(RedisConnectionError, type) and issubclass(RedisConnectionError, BaseException)):
+        raise TypeError("redis.exceptions returned stub types")
+except Exception:
+    RedisConnectionError = OSError  # type: ignore[assignment,misc]
+    RedisError = Exception  # type: ignore[assignment,misc]
+    ResponseError = Exception  # type: ignore[assignment,misc]
 
 from config import get_settings
 from database import AsyncSessionLocal
@@ -530,7 +542,7 @@ class Worker:
                 mkstream=True
             )
             log("info", "consumer_group_created", {"group": self.group_name})
-        except aioredis.ResponseError as e:
+        except ResponseError as e:
             if "BUSYGROUP" not in str(e):
                 raise
             log("info", "consumer_group_exists", {"group": self.group_name})
@@ -587,7 +599,7 @@ class Worker:
                         )
                         claimed_msgs = result[1] if len(result) > 1 else []
                         reclaimed += len(claimed_msgs)
-                    except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+                    except (ResponseError, RedisConnectionError, RedisError) as e:
                         log("warn", "xautoclaim_stale_failed", {"consumer": name, "error": str(e)})
 
                 try:
@@ -597,7 +609,7 @@ class Worker:
                         name
                     )
                     removed += 1
-                except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+                except (ResponseError, RedisConnectionError, RedisError) as e:
                     log("warn", "delconsumer_failed", {"consumer": name, "error": str(e)})
 
             if removed or reclaimed:
@@ -608,7 +620,7 @@ class Worker:
                     "remaining": len(consumers) - removed
                 })
 
-        except (ConnectionError, TimeoutError, aioredis.RedisError) as e:
+        except (ConnectionError, TimeoutError, RedisError) as e:
             log("warn", "consumer_cleanup_failed", {"error": str(e)})
 
     async def _cleanup_stale_pending(self):
@@ -646,7 +658,7 @@ class Worker:
                 claimed_msgs = result[1] if len(result) > 1 else []
                 if claimed_msgs:
                     log("info", "stale_pending_reclaimed", {"count": len(claimed_msgs)})
-            except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+            except (ResponseError, RedisConnectionError, RedisError) as e:
                 log("warn", "xautoclaim_failed", {"error": str(e)})
 
             # Only delete messages pending > 10 minutes (likely unrecoverable)
@@ -677,7 +689,7 @@ class Worker:
             if cleaned:
                 log("info", "stale_pending_cleaned", {"cleaned": cleaned, "total": total_pending})
 
-        except (ConnectionError, TimeoutError, aioredis.RedisError) as e:
+        except (ConnectionError, TimeoutError, RedisError) as e:
             log("warn", "stale_cleanup_failed", {"error": str(e)})
 
     async def _process_inbound_loop(self):
@@ -1045,7 +1057,7 @@ class Worker:
                         break
                     requeued += 1
                 log("info", "requeued_abandoned_outbound", {"requeued": requeued})
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             log("warn", "requeue_abandoned_failed", {"error": str(e)})
 
     async def _process_outbound_loop(self):
@@ -1219,7 +1231,7 @@ class Worker:
             )
 
             log("info", "queued_delayed", {"to": to[-4:], "delay": delay})
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             log("error", "queue_delayed_failed", {"error": str(e)})
 
     async def _process_delayed_outbound_loop(self):

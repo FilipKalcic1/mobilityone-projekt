@@ -217,9 +217,11 @@ class SearchEngine:
         # Expansion search if needed
         if len(scored) < top_k and len(scored) > 0:
             keyword_matches = self._description_keyword_search(query, search_pool, tools)
+            scored_ids = {s[1] for s in scored}
             for op_id, desc_score in keyword_matches:
-                if op_id not in [s[1] for s in scored]:
+                if op_id not in scored_ids:
                     scored.append((desc_score * 0.7, op_id))
+                    scored_ids.add(op_id)
             scored.sort(key=lambda x: x[0], reverse=True)
 
         if not scored:

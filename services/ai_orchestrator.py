@@ -113,11 +113,12 @@ class AIOrchestrator:
 
         self.model = _get_settings().AZURE_OPENAI_DEPLOYMENT_NAME
 
-        # Token tracking
+        # Token tracking (approximate — asyncio single-thread safe)
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
         self._total_requests = 0
         self._rate_limit_hits = 0
+        self._current_retry_status = None
 
         self.tokenizer = None
         if tiktoken:
@@ -455,9 +456,10 @@ class AIOrchestrator:
         else:
             conversation = messages
 
-        # 2. Enforce message count cap
+        # 2. Enforce message count cap (keep first + last N-1)
         if len(conversation) > MAX_HISTORY_MESSAGES:
-            conversation = conversation[-MAX_HISTORY_MESSAGES:]
+            first_msg = conversation[0]
+            conversation = [first_msg] + conversation[-(MAX_HISTORY_MESSAGES - 1):]
 
         # 3. Check token budget for conversation portion only
         conv_tokens = self._count_tokens(conversation)
@@ -473,12 +475,17 @@ class AIOrchestrator:
         # 4. Over budget — middle-out truncation
         # Keep first message + last 4 messages, summarize the middle
         keep_recent = min(4, len(conversation))
+        first_message = conversation[0] if conversation else None
         recent_history = conversation[-keep_recent:]
-        to_summarize = conversation[:-keep_recent] if keep_recent < len(conversation) else []
+        # Summarize everything between first message and recent messages
+        to_summarize = conversation[1:-keep_recent] if keep_recent < len(conversation) - 1 else []
 
         final_messages = []
         if system_message:
             final_messages.append(system_message)
+
+        if first_message and first_message not in recent_history:
+            final_messages.append(first_message)
 
         if to_summarize:
             summary_text = self._summarize_conversation(to_summarize)

@@ -273,13 +273,20 @@ def calibrate_query_type(alpha=DEFAULT_ALPHA):
     all_data = load_jsonl(QUERY_TYPE_PATH, text_field="text", label_field="query_type")
     print(f"Loaded {len(all_data)} total examples from query_type.jsonl")
 
-    # 80/20 split (deterministic shuffle)
+    # 80/20 split (deterministic shuffle).
+    # WARNING: intent_training.train_query_type() trains on 100% of this file.
+    # For a valid CP coverage guarantee, the calibration set must be independent
+    # from the training set. The 20% holdout here gives approximate guarantees
+    # only; for a formal guarantee, run training on the first 80% exclusively
+    # (set QUERY_TYPE_TRAIN_ONLY_80PCT=1) or provide a separate calibration file.
     rng = np.random.RandomState(42)
     indices = rng.permutation(len(all_data))
     split_idx = int(len(all_data) * 0.8)
     cal_indices = indices[split_idx:]
     cal_data = [all_data[i] for i in cal_indices]
     print(f"Using {len(cal_data)} examples for calibration (20% holdout)")
+    print("  NOTE: query_type model trains on 100% of data; "
+          "coverage guarantee is approximate (empirical, not formal)")
 
     # Load model
     import pickle

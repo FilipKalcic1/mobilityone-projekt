@@ -5,7 +5,7 @@ Extracted from engine/__init__.py for better modularity.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from services.user_service import UserService
 from services.context import UserContextManager
@@ -35,11 +35,11 @@ class UserHandler:
         self.gateway = gateway
         self.cache = cache_service
 
-    async def identify_user(self, phone: str, db_session=None) -> Optional[Dict[str, Any]]:
+    async def identify_user(self, phone: str, db_session=None) -> Dict[str, Any]:
         """
         Identify user and build context with dynamic tenant resolution.
 
-        ALWAYS returns a context - never None.
+        ALWAYS returns a context — never None.
         If user is not in MobilityOne, returns guest context so bot still works.
 
         Args:
@@ -126,19 +126,19 @@ class UserHandler:
         if vehicle and vehicle.plate:
             greeting += "Vidim da vam je dodijeljeno vozilo:\n"
             greeting += f"   **{vehicle.name or 'vozilo'}** ({vehicle.plate})\n"
-            greeting += f"   Kilometraza: {vehicle.mileage or 'N/A'} km\n\n"
-            greeting += "Kako vam mogu pomoci?\n"
-            greeting += "* Unos kilometraze\n"
+            greeting += f"   Kilometraža: {vehicle.mileage or 'N/A'} km\n\n"
+            greeting += "Kako vam mogu pomoći?\n"
+            greeting += "* Unos kilometraže\n"
             greeting += "* Prijava kvara\n"
             greeting += "* Rezervacija vozila\n"
             greeting += "* Pitanja o vozilu"
         elif vehicle and vehicle.id:
             greeting += f"Vidim da vam je dodijeljeno vozilo: {vehicle.name or 'vozilo'}\n\n"
-            greeting += "Kako vam mogu pomoci?"
+            greeting += "Kako vam mogu pomoći?"
         else:
             greeting += "Trenutno nemate dodijeljeno vozilo.\n\n"
-            greeting += "Zelite li rezervirati vozilo? Recite mi:\n"
+            greeting += "Želite li rezervirati vozilo? Recite mi:\n"
             greeting += "* Za koji period (npr. 'sutra od 8 do 17')\n"
-            greeting += "* Ili samo recite 'Trebam vozilo' pa cemo dalje"
+            greeting += "* Ili samo recite 'Trebam vozilo' pa ćemo dalje"
 
         return greeting

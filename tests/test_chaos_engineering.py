@@ -19,10 +19,20 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 import pytest
 
 
+def _has_fastapi() -> bool:
+    """True only when the real fastapi package is installed (not a test stub)."""
+    try:
+        import fastapi
+        return isinstance(getattr(fastapi, 'FastAPI', None), type)
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # 1. DLQ FALLBACK CHAIN: Redis -> File -> stderr
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _has_fastapi(), reason="fastapi not installed")
 class TestDLQFallbackChain:
     """Verify 3-tier DLQ operates correctly when tiers fail."""
 
@@ -267,6 +277,7 @@ class TestWorkerLockFailOpen:
 # 4. WEBHOOK SIGNATURE VALIDATION UNDER FAILURE
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _has_fastapi(), reason="fastapi not installed")
 class TestWebhookResilience:
     """Verify webhook handler remains resilient under failure conditions."""
 
@@ -334,6 +345,7 @@ class TestSSRFProtection:
 # 6. GRACEFUL SHUTDOWN SIGNALS
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _has_fastapi(), reason="fastapi not installed")
 class TestGracefulShutdown:
     """Verify APP_STOPPING flag prevents new message acceptance."""
 

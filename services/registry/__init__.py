@@ -537,12 +537,13 @@ class ToolRegistry:
                 if r.tool_id not in reranked_ids:
                     reordered.append(r)
 
-            logger.info(
-                f"LLM rerank: {faiss_results[0].tool_id} → {reordered[0].tool_id} "
-                f"(confidence={reranked[0].confidence:.2f})"
-            )
+            if reordered:
+                logger.info(
+                    f"LLM rerank: {faiss_results[0].tool_id} → {reordered[0].tool_id} "
+                    f"(confidence={reranked[0].confidence:.2f})"
+                )
 
-            return reordered[:top_k]
+            return reordered[:top_k] if reordered else faiss_results[:top_k]
 
         except ImportError as e:
             logger.debug(f"LLM reranker not available: {e}")

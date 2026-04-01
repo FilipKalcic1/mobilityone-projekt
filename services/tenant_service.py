@@ -260,10 +260,10 @@ def get_tenant_service(db_session=None, redis_client=None) -> TenantService:
             if _tenant_service is None:
                 _tenant_service = TenantService(db_session, redis_client)
                 return _tenant_service
-    # Late-bind dependencies — simple attr assignment is atomic under CPython GIL
-    if db_session and not _tenant_service.db:
+    # Always update dependencies — sessions are request-scoped and go stale
+    if db_session:
         _tenant_service.db = db_session
-    if redis_client and not _tenant_service.redis:
+    if redis_client:
         _tenant_service.redis = redis_client
 
     return _tenant_service

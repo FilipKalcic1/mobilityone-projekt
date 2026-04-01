@@ -8,9 +8,9 @@ Architecture:
 4. Execute based on decision OR ask clarification
 """
 
-import asyncio
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 
@@ -840,13 +840,13 @@ class UnifiedRouter:
                 else:
                     # For other templates, use format() with simple context
                     simple_context = {
-                        k: v for k, v in user_context.items()
+                        k: str(v) for k, v in user_context.items()
                         if not isinstance(v, (dict, list))
                     }
                     try:
-                        response_text = response_text.format(**simple_context)
+                        from string import Template
+                        response_text = Template(response_text).safe_substitute(simple_context)
                     except (KeyError, ValueError):
-                        # If format fails, return template as-is
                         pass
 
             return RouterDecision(
@@ -890,15 +890,17 @@ class UnifiedRouter:
 
 # Singleton
 _router: Optional[UnifiedRouter] = None
-_router_lock = asyncio.Lock()
+_router_lock = threading.Lock()
 
 
 async def get_unified_router() -> UnifiedRouter:
-    """Get or create singleton router instance (async-safe)."""
+    """Get or create singleton router instance."""
     global _router
-    if _router is None:
-        async with _router_lock:
-            if _router is None:
-                _router = UnifiedRouter()
-                await _router.initialize()
+    if _router is not None:
+        return _router
+    with _router_lock:
+        if _router is None:
+            router = UnifiedRouter()
+            await router.initialize()
+            _router = router
     return _router

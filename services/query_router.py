@@ -199,17 +199,22 @@ class QueryRouter:
 
         return None
 
-    def _deep_get(self, data: Any, key: str) -> Optional[Any]:
-        """Recursively search for key in nested dict."""
+    def _deep_get(self, data: Any, key: str, _depth: int = 0) -> Optional[Any]:
+        """Recursively search for key in nested dict/list."""
+        if _depth > 10:
+            return None
         if isinstance(data, dict):
             if key in data:
                 return data[key]
             for v in data.values():
-                result = self._deep_get(v, key)
+                result = self._deep_get(v, key, _depth + 1)
                 if result is not None:
                     return result
-        elif isinstance(data, list) and data:
-            return self._deep_get(data[0], key)
+        elif isinstance(data, list):
+            for item in data:
+                result = self._deep_get(item, key, _depth + 1)
+                if result is not None:
+                    return result
         return None
 
     def _format_value(self, value: Any, field_name: str) -> str:

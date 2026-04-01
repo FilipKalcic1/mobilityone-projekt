@@ -27,6 +27,7 @@ import re
 import time
 import logging
 import hashlib
+import hmac
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
@@ -227,7 +228,13 @@ def is_ip_allowed(client_ip: str) -> bool:
 
 async def verify_admin_token(token: str = Security(admin_api_key)) -> str:
     """Verify admin token and return admin_id."""
-    admin_id = VALID_ADMIN_TOKENS.get(token)
+    # Constant-time comparison prevents timing oracle attacks
+    admin_id = None
+    token_bytes = token.encode()
+    for stored_token, stored_user in VALID_ADMIN_TOKENS.items():
+        if hmac.compare_digest(token_bytes, stored_token.encode()):
+            admin_id = stored_user
+            break
     if not admin_id:
         logger.warning(f"Invalid admin token attempt (len={len(token)}, hash={hashlib.sha256(token.encode()).hexdigest()[:8]})")
         raise HTTPException(

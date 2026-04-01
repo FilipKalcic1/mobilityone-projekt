@@ -280,7 +280,14 @@ class RAGScheduler:
                 break
             except Exception as e:
                 logger.error(f"RAG refresh loop error: {e}")
-                await asyncio.sleep(self.MIN_RETRY_DELAY_SECONDS)
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(),
+                        timeout=self.MIN_RETRY_DELAY_SECONDS,
+                    )
+                    break  # Shutdown requested during retry delay
+                except asyncio.TimeoutError:
+                    pass  # Normal — continue loop
 
     async def _detect_swagger_change(self) -> bool:
         """

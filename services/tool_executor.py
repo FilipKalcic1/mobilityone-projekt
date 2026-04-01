@@ -200,12 +200,10 @@ class ToolExecutor:
             # All business logic (EntryType, AssigneeType, etc.) is defined in
             # ToolRegistry._HIDDEN_DEFAULTS, not here. Executor is "dumb".
             if self.registry:
-                # Use get_merged_params for body (POST/PUT/PATCH)
-                if body:
+                # Merge hidden defaults into body only (POST/PUT/PATCH/DELETE)
+                # Defaults like EntryType=0 are body params — don't inject into GET query strings
+                if body and tool.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
                     body = self.registry.get_merged_params(operation_id, body)
-                # Also merge for query params if needed
-                if query_params:
-                    query_params = self.registry.get_merged_params(operation_id, query_params)
 
             # Build full URL using STRICT Master Prompt v3.1 formula
             full_url = self._build_url(tool, resolved_path=path)

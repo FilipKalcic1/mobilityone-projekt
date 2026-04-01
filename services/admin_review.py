@@ -51,11 +51,6 @@ MIN_LIMIT = 1
 QUERY_TIMEOUT_SECONDS = 30  # Database query timeout
 
 
-class SecurityError(BotError):
-    """Raised when potential injection or security issue detected."""
-    pass
-
-
 class ValidationError(BotError):
     """Raised when input validation fails."""
     def __init__(self, message: str, **kwargs):
