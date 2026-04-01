@@ -310,7 +310,7 @@ class IntentClassifier:
             prediction_set = None
             if self._q_hat is not None:
                 prediction_set = PredictionSet.from_probabilities(
-                    probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                    probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
                 )
 
             result = IntentPrediction(
@@ -373,7 +373,7 @@ class IntentClassifier:
         prediction_set = None
         if self._q_hat is not None:
             prediction_set = PredictionSet.from_probabilities(
-                probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
             )
 
         return IntentPrediction(
@@ -457,7 +457,7 @@ class IntentClassifier:
         prediction_set = None
         if self._q_hat is not None:
             prediction_set = PredictionSet.from_probabilities(
-                probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
             )
 
         return IntentPrediction(
@@ -789,7 +789,7 @@ class QueryTypeClassifierML:
             if self._q_hat is not None:
                 label_names = self.model.classes_.tolist()
                 prediction_set = PredictionSet.from_probabilities(
-                    probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                    probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
                 )
 
             # Get suffix rules

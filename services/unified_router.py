@@ -372,7 +372,7 @@ class UnifiedRouter:
                     trace["ml_intent"] = parts[1].split(" ")[0]
             if qr_result.prediction_set:
                 trace["cp_set_size"] = qr_result.prediction_set.size
-                trace["cp_labels"] = list(qr_result.prediction_set.labels[:5])
+                trace["cp_labels"] = list(qr_result.prediction_set.labels)
 
         logger.info(f"UNIFIED ROUTER: QR result: matched={qr_result.matched}, conf={qr_result.confidence}, flow={qr_result.flow_type if qr_result.matched else None}")
 

@@ -77,6 +77,12 @@ def compute_aps_scores(predict_proba_fn, label_names, calibration_data):
             zip(label_names, probs), key=lambda x: x[1], reverse=True
         )
 
+        # Skip examples where true label is not in model classes
+        # (data/model mismatch — would produce APS score = 1.0, inflating q_hat)
+        if true_label not in label_names:
+            print(f"  WARNING: true label '{true_label}' not in model classes — skipping")
+            continue
+
         # APS score: cumulative prob until true label is included
         cumulative = 0.0
         for label, prob in pairs:
@@ -99,6 +105,8 @@ def compute_q_hat(scores, alpha=DEFAULT_ALPHA):
     This guarantees marginal coverage >= 1 - alpha on exchangeable data.
     """
     n = len(scores)
+    if n == 0:
+        raise ValueError("No valid calibration scores — check that true labels match model classes")
     level = math.ceil((n + 1) * (1 - alpha)) / n
     level = min(level, 1.0)
     aps_values = [s[0] for s in scores]
