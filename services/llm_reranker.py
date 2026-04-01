@@ -53,11 +53,13 @@ async def rerank_with_llm(
         tool_id = c.get('tool_id', '')
         score = c.get('score', 0)
 
-        # Get tool description if available
+        # Get tool description: prefer tool_documentation, fall back to candidate's own description
         description = ""
         if tool_documentation and tool_id in tool_documentation:
             doc = tool_documentation[tool_id]
             description = doc.get('purpose', '')
+        if not description:
+            description = c.get('description', '')
 
         candidate_info.append({
             "index": i + 1,

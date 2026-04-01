@@ -16,7 +16,7 @@ import pickle
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import ClassVar, Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 import numpy as np
 
@@ -70,7 +70,8 @@ class IntentPrediction:
 
     # Number of intent classes — read from model metadata at load time,
     # fallback to this default for signal estimation without a loaded model.
-    _N_CLASSES_DEFAULT: int = 29
+    # ClassVar prevents dataclass from treating this as an __init__ field.
+    _N_CLASSES_DEFAULT: ClassVar[int] = 28
 
     def __post_init__(self):
         if self.alternatives is None:
