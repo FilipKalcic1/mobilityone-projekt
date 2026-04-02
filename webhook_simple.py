@@ -36,8 +36,9 @@ try:
         raise TypeError("redis.exceptions returned stub types")
 except Exception:
     RedisConnectionError = OSError  # type: ignore[assignment,misc]
-    RedisError = Exception  # type: ignore[assignment,misc]
-    ResponseError = Exception  # type: ignore[assignment,misc]
+    RedisError = OSError  # type: ignore[assignment,misc]
+    class ResponseError(Exception):  # type: ignore[assignment]
+        """Sentinel — never raised; safe fallback when redis.exceptions unavailable."""
 import logging
 
 from config import get_settings
@@ -612,7 +613,11 @@ async def webhook_debug(request: Request):
             "has_secret_key": bool(settings.INFOBIP_SECRET_KEY),
             "has_api_key": bool(settings.INFOBIP_API_KEY),
             "sender_number": settings.INFOBIP_SENDER_NUMBER,
-            "redis_url_masked": "redis://***" if settings.REDIS_URL else "not-configured",
+            "redis_url_masked": (
+                "redis://***@" + settings.REDIS_URL.split("@")[-1]
+                if "@" in settings.REDIS_URL
+                else "redis://<no-auth>"
+            ) if settings.REDIS_URL else "not-configured",
         }
     }
 

@@ -50,8 +50,9 @@ try:
         raise TypeError("redis.exceptions returned stub types")
 except Exception:
     RedisConnectionError = OSError  # type: ignore[assignment,misc]
-    RedisError = Exception  # type: ignore[assignment,misc]
-    ResponseError = Exception  # type: ignore[assignment,misc]
+    RedisError = OSError  # type: ignore[assignment,misc]
+    class ResponseError(Exception):  # type: ignore[assignment]
+        """Sentinel — never raised; safe fallback when redis.exceptions unavailable."""
 
 from config import get_settings
 from database import AsyncSessionLocal
