@@ -110,7 +110,6 @@ def engine(engine_and_mocks):
 class TestInit:
     def test_engine_created(self, engine):
         assert engine is not None
-        assert engine is not None  # Engine initializes successfully
 
     def test_engine_has_handlers(self, engine):
         assert engine._tool_handler is not None
