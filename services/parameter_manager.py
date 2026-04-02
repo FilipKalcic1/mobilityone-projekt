@@ -680,8 +680,8 @@ class ParameterManager:
 
             # STEP 2: Already ISO format - ensure timezone
             if "T" in value and len(value) >= 19:
-                # Check if already has timezone
-                if "+" in value[-6:] or "Z" in value:
+                # Check if already has timezone (+HH:MM, -HH:MM, or Z suffix)
+                if "+" in value[-6:] or value[-6] == "-" or "Z" in value:
                     return value
                 return value + timezone_offset
 
@@ -913,11 +913,11 @@ class ParameterManager:
                 else:  # body
                     body_params[param_name] = value
 
-            # For GET/DELETE: all params go to query
+            # For GET/DELETE: separated query params only (path params already substituted)
             if tool.method in ("GET", "DELETE"):
                 return (
                     path,
-                    params if params else None,
+                    query_params if query_params else None,
                     None
                 )
 
