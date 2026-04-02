@@ -530,7 +530,7 @@ class ParameterManager:
                     param_def.format
                 )
                 validated[param_name] = casted
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, OverflowError) as e:
                 err = ConversationError(
                     ErrorCode.PARAMETER_INVALID,
                     f"Parameter '{param_name}' has invalid value: {e}",

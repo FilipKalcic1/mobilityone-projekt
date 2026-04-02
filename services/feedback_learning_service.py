@@ -390,6 +390,10 @@ class FeedbackLearningService:
                     for p in boost.patterns:
                         if p not in existing.patterns and len(existing.patterns) < MAX_BOOSTS_PER_TOOL:
                             existing.patterns.append(p)
+                    # Merge negative patterns (tools to penalize)
+                    for np in boost.negative_patterns:
+                        if np not in existing.negative_patterns:
+                            existing.negative_patterns.append(np)
                     # Update confidence (weighted average)
                     existing.confidence = (existing.confidence + boost.confidence) / 2
                     existing.occurrence_count += boost.occurrence_count

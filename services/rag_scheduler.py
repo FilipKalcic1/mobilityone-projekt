@@ -334,7 +334,7 @@ class RAGScheduler:
     def _calculate_backoff(self) -> int:
         """Calculate exponential backoff based on consecutive failures."""
         failures = self.metrics.consecutive_failures
-        return int(calculate_backoff(failures, base_delay=self.MIN_RETRY_DELAY_SECONDS, max_delay=self.MAX_RETRY_DELAY_SECONDS, jitter=0))
+        return int(calculate_backoff(failures, base_delay=self.MIN_RETRY_DELAY_SECONDS, max_delay=self.MAX_RETRY_DELAY_SECONDS))
 
     async def _pubsub_listener(self) -> None:
         """Listen for force refresh commands via Redis pub/sub."""

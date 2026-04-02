@@ -263,8 +263,10 @@ class DependencyResolver:
         with trace_span(_tracer, "dependency_resolver.resolve_dependency", {"missing_param": missing_param, "has_user_value": user_value is not None}) as span:
             logger.info(f"Resolving dependency: {missing_param}")
 
-            # Check cache first
-            cache_key = f"{missing_param}:{user_value}"
+            # Check cache first — include person_id to prevent cross-user cache poisoning
+            _ctx_for_cache = UserContextManager(user_context)
+            _person_id_for_cache = _ctx_for_cache.person_id or "anon"
+            cache_key = f"{_person_id_for_cache}:{missing_param}:{user_value}"
             if cache_key in self._resolution_cache:
                 cached = self._resolution_cache[cache_key]
                 logger.info(f"Cache hit for {cache_key}")
@@ -772,7 +774,7 @@ class DependencyResolver:
 
             if vehicle_id:
                 # Cache for future use (evict oldest if full)
-                cache_key = f"ordinal:{reference.value}"
+                cache_key = f"{person_id or 'anon'}:ordinal:{reference.value}"
                 if len(self._resolution_cache) >= self._CACHE_MAX_SIZE:
                     oldest_key = next(iter(self._resolution_cache))
                     del self._resolution_cache[oldest_key]
