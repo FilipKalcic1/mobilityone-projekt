@@ -198,8 +198,9 @@ def train_fasttext(classifier, texts: List[str], labels: List[str]) -> Dict[str,
     model_file = classifier.model_path / "fasttext_model.bin"
     classifier.model.save_model(str(model_file))
 
+    # FastText model.test() returns (n_samples, precision@1, recall@1)
     return {
-        "accuracy": test_result[1],
+        "n_samples": test_result[0],
         "precision": test_result[1],
         "recall": test_result[2]
     }

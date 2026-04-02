@@ -290,7 +290,10 @@ class TestDoRefresh:
         cb = AsyncMock(return_value={"tools_count": 0, "embeddings_count": 0})
         s = _sched(redis=redis, callback=cb)
         await s._do_refresh()
-        redis.delete.assert_not_called()
+        # Lock release is always attempted via Lua eval (compare-and-delete).
+        # The Lua script does nothing when the stored token != our token,
+        # so the lock is NOT deleted even though eval IS called.
+        redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_lock_bytes_decoded(self):

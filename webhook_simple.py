@@ -553,7 +553,7 @@ async def whatsapp_webhook_verify(request: Request):
         logger.warning("WHATSAPP_VERIFY_TOKEN not configured, skipping verification")
         return {"status": "ok"}
 
-    if mode == "subscribe" and token == expected_token:
+    if mode == "subscribe" and hmac.compare_digest(token or "", expected_token):
         logger.info("WhatsApp webhook verified successfully")
         if not challenge:
             raise HTTPException(status_code=400, detail="Missing challenge parameter")
@@ -592,7 +592,12 @@ async def webhook_debug(request: Request):
         if env_token:
             expected_tokens.add(env_token)
 
-    if not expected_tokens or token not in expected_tokens:
+    token_bytes = (token or "").encode()
+    valid = any(
+        hmac.compare_digest(token_bytes, stored.encode())
+        for stored in expected_tokens
+    )
+    if not expected_tokens or not valid:
         raise HTTPException(status_code=404, detail="Not found")
 
     async with _stats_lock:
