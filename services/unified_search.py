@@ -172,7 +172,8 @@ class UnifiedSearch:
         if self._tool_documentation:
             for tool_id, doc in self._tool_documentation.items():
                 for example in doc.get("example_queries_hr", []):
-                    key = example.lower().strip().rstrip('.')
+                    # Normalize diacritics to match search path normalization
+                    key = normalize_diacritics(example.lower().strip().rstrip('.'))
                     # First tool wins for duplicate queries
                     if key not in self._exact_match_index:
                         self._exact_match_index[key] = tool_id
@@ -265,7 +266,7 @@ class UnifiedSearch:
             )
 
             # Step 2.5: EXACT MATCH DETECTION (O(1) lookup via pre-computed index)
-            query_normalized = query.lower().strip().rstrip('.')
+            query_normalized = normalize_diacritics(query.lower().strip().rstrip('.'))
             exact_match_tool = self._exact_match_index.get(query_normalized)
             if exact_match_tool:
                 logger.info(f"UnifiedSearch: EXACT MATCH found: {exact_match_tool}")
