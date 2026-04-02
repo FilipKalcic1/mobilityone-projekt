@@ -77,9 +77,17 @@ class TokenManager:
                 cached = await self._redis.get(self._cache_key)
                 if cached:
                     self._token = cached
-                    self._expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    # Use actual Redis TTL so we don't serve a nearly-expired token.
+                    # We stored the token with TTL = expires_in - 120 (120s safety buffer),
+                    # so remaining TTL accurately reflects how long the token is still usable.
+                    ttl_seconds = await self._redis.ttl(self._cache_key)
+                    if ttl_seconds > 0:
+                        self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+                    else:
+                        # TTL unavailable or already expired — force refresh next call
+                        self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
                     self._last_failure = None
-                    logger.debug("Token loaded from Redis")
+                    logger.debug(f"Token loaded from Redis, TTL={ttl_seconds}s")
                     return self._token
             except Exception as e:
                 logger.warning(f"Redis cache read failed: {e}")

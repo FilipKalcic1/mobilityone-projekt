@@ -347,6 +347,8 @@ def apply_documentation_boosting(
         # Match against example_queries
         example_queries = doc.get("example_queries", [])
         for example in example_queries:
+            if not isinstance(example, str):
+                continue
             example_lower = example.lower()
             example_words = set(example_lower.split())
             if query_words & example_words:

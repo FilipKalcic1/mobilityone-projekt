@@ -163,7 +163,7 @@ _cost_tracker: Optional[CostTracker] = None
 _cost_tracker_lock = threading.Lock()
 
 
-async def get_cost_tracker(redis_client) -> CostTracker:
+def get_cost_tracker(redis_client) -> CostTracker:
     """Get or create cost tracker singleton."""
     global _cost_tracker
     if _cost_tracker is None:

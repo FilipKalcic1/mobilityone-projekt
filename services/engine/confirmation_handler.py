@@ -283,7 +283,7 @@ async def handle_confirmation_flow(
             "ToTime": to_time,
             "AssigneeType": int(AssigneeType.PERSON),  # Explicit int conversion
             "EntryType": int(EntryType.BOOKING),  # Explicit int conversion
-            **({"Description": desc} if (desc := params.get("Description") or params.get("description")) else {})
+            **({"Description": desc} if (desc := params.get("Description") if params.get("Description") is not None else params.get("description")) is not None else {})
         }
     else:
         if selected:

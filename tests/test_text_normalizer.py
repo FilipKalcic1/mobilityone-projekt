@@ -57,8 +57,9 @@ class TestCleanEuropeanNumber:
     def test_number_in_sentence(self):
         assert clean_european_number("Kilometraža je 120.000 km") == 120000
 
-    def test_small_number_with_dot_not_stripped(self):
-        # "3.14" — dot before only 2 digits, not a thousands separator
+    def test_small_number_with_dot_stripped_to_integer(self):
+        # "3.14" — dot followed by only 2 digits, not a thousands separator.
+        # Function returns the integer part (3) because mileage values must be integers.
         assert clean_european_number("3.14") == 3
 
 

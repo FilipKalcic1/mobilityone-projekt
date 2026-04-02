@@ -108,7 +108,9 @@ class BM25Index:
 
         self._n_docs = len(self._tool_ids)
         total_tokens = sum(len(d) for d in self._doc_tokens)
-        self._avg_dl = total_tokens / max(self._n_docs, 1)
+        # Guard: if all tools tokenize to empty (malformed docs), avg_dl would be 0
+        # causing ZeroDivisionError in _bm25_term_score(). Default to 1.0.
+        self._avg_dl = (total_tokens / max(self._n_docs, 1)) if total_tokens > 0 else 1.0
         self._built = True
 
         logger.info(
