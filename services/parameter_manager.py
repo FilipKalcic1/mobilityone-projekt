@@ -895,8 +895,11 @@ class ParameterManager:
 
                 param_def = tool.parameters.get(param_name)
                 if not param_def:
-                    # Unknown param - add to body by default
-                    body_params[param_name] = value
+                    # Unknown param: query for GET/DELETE, body for POST/PUT/PATCH
+                    if tool.method in ("GET", "DELETE"):
+                        query_params[param_name] = value
+                    else:
+                        body_params[param_name] = value
                     continue
 
                 location = param_def.location

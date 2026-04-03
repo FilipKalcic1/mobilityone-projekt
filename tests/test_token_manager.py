@@ -58,6 +58,7 @@ class TestGetToken:
 
     async def test_loads_from_redis(self, tm, mock_redis):
         mock_redis.get.return_value = "redis_token"
+        mock_redis.ttl.return_value = 3000  # seconds remaining
         token = await tm.get_token()
         assert token == "redis_token"
 
