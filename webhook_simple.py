@@ -144,41 +144,41 @@ def extract_text_and_type(result: dict) -> tuple:
     # Format 1 & 2: message object (most common Infobip format)
     message_obj = result.get("message")
     if message_obj and isinstance(message_obj, dict):
-        msg_type = message_obj.get("type", "UNKNOWN")
+        msg_type = message_obj.get("type") or "UNKNOWN"
 
         # Case-insensitive type check
-        if msg_type.upper() == "TEXT":
+        if str(msg_type).upper() == "TEXT":
             text = message_obj.get("text", "")
-            if text:
+            if isinstance(text, str) and text.strip():
                 return text.strip(), "TEXT"
 
         # Format 6: message object without type field but with text
         if not text and "text" in message_obj:
             text = message_obj.get("text", "")
-            if text:
+            if isinstance(text, str) and text.strip():
                 return text.strip(), msg_type or "TEXT"
 
         # Non-text message - return type for handling
-        return "", msg_type
+        return "", str(msg_type)
 
     # Format 3 & 4: content field
     content = result.get("content")
     if content:
         if isinstance(content, dict):
-            content_type = content.get("type", "")
-            if content_type.upper() == "TEXT":
+            content_type = content.get("type") or ""
+            if str(content_type).upper() == "TEXT":
                 text = content.get("text", "")
-                if text:
+                if isinstance(text, str) and text.strip():
                     return text.strip(), "TEXT"
-            return "", content_type or "UNKNOWN"
+            return "", str(content_type) or "UNKNOWN"
 
         if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict):
-                    item_type = item.get("type", "")
-                    if item_type.upper() == "TEXT":
+                    item_type = item.get("type") or ""
+                    if str(item_type).upper() == "TEXT":
                         text = item.get("text", "")
-                        if text:
+                        if isinstance(text, str) and text.strip():
                             return text.strip(), "TEXT"
             # Return type of first item if no text found
             if content and isinstance(content[0], dict):

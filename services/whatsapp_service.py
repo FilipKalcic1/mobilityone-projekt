@@ -516,7 +516,10 @@ class WhatsAppService:
 
                 # Rate limit - MUST retry with backoff
                 if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", 0))
+                    try:
+                        retry_after = int(response.headers.get("Retry-After", 0))
+                    except (ValueError, TypeError):
+                        retry_after = 0
 
                     if attempt < self.MAX_RETRIES - 1:
                         delay = self._calculate_backoff(attempt, retry_after)

@@ -657,7 +657,7 @@ class UnifiedRouter:
             return RouterDecision(
                 action=action,
                 tool=result.get("tool"),
-                params=result.get("params", {}),
+                params=result.get("params") if isinstance(result.get("params"), dict) else {},
                 flow_type=result.get("flow_type"),
                 response=result.get("response"),
                 reasoning=result.get("reasoning", ""),
