@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _tracer = get_tracer("error_learning")
 
 # Cache file path for JSON persistence
-ERROR_LEARNING_CACHE_FILE = Path.cwd() / ".cache" / "error_learning.json"
+ERROR_LEARNING_CACHE_FILE = Path(__file__).parent.parent / ".cache" / "error_learning.json"
 
 @dataclass
 class ErrorPattern:
@@ -140,7 +140,11 @@ class ErrorLearningService:
         self.redis = redis_client
         self.db = db_session
         self._error_patterns: Dict[str, ErrorPattern] = {}
-        self._correction_rules: List[CorrectionRule] = self.KNOWN_CORRECTIONS.copy()
+        # Deep copy to prevent mutation of class-level shared objects
+        from dataclasses import replace as _dc_replace
+        self._correction_rules: List[CorrectionRule] = [
+            _dc_replace(rule) for rule in self.KNOWN_CORRECTIONS
+        ]
         self._learned_rules: List[CorrectionRule] = []
 
         # Hallucination reports - in-memory cache (DB is source of truth)

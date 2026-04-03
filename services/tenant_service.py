@@ -24,6 +24,7 @@ import logging
 import re
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
+import threading
 
 from sqlalchemy import update
 from config import get_settings
@@ -31,7 +32,8 @@ from models import UserMapping
 from services.errors import ConversationError, ErrorCode
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 @dataclass
 class TenantConfig:
@@ -75,7 +77,7 @@ class TenantService:
         """
         self.db = db_session
         self.redis = redis_client
-        self.default_tenant = settings.MOBILITY_TENANT_ID
+        self.default_tenant = _get_settings().MOBILITY_TENANT_ID
 
         # Compile regex patterns once
         self._compiled_rules = [
@@ -165,7 +167,7 @@ class TenantService:
         self,
         phone: str,
         new_tenant_id: str,
-        admin_id: str = None
+        admin_id: Optional[str] = None
     ) -> bool:
         """
         Update tenant for a user (admin operation).
@@ -238,6 +240,7 @@ class TenantService:
 
 # Singleton instance
 _tenant_service: Optional[TenantService] = None
+_tenant_singleton_lock = threading.Lock()
 
 def get_tenant_service(db_session=None, redis_client=None) -> TenantService:
     """
@@ -253,10 +256,14 @@ def get_tenant_service(db_session=None, redis_client=None) -> TenantService:
     global _tenant_service
 
     if _tenant_service is None:
-        _tenant_service = TenantService(db_session, redis_client)
-    elif db_session and not _tenant_service.db:
+        with _tenant_singleton_lock:
+            if _tenant_service is None:
+                _tenant_service = TenantService(db_session, redis_client)
+                return _tenant_service
+    # Always update dependencies — sessions are request-scoped and go stale
+    if db_session:
         _tenant_service.db = db_session
-    elif redis_client and not _tenant_service.redis:
+    if redis_client:
         _tenant_service.redis = redis_client
 
     return _tenant_service

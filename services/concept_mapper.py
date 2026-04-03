@@ -17,8 +17,14 @@ Examples:
 import logging
 import re
 from typing import Dict, List, Set, Optional
+import threading
+
+from services.text_normalizer import normalize_diacritics
 
 logger = logging.getLogger(__name__)
+
+# Pre-compiled regex for stripping non-word characters in expand_query()
+_NON_WORD_RE = re.compile(r'[^\w]')
 
 
 class ConceptMapper:
@@ -187,23 +193,23 @@ class ConceptMapper:
         "hijerarhija": ["tree", "stablo", "struktura"],
     }
 
-    # Phrase patterns that should trigger concept expansion
+    # Phrase patterns that should trigger concept expansion (pre-compiled)
     # These are regex patterns that capture common query structures
     PHRASE_PATTERNS = [
         # "daj mi [X]" patterns
-        (r'\bdaj\s+mi\b', ["prikaži", "dohvati", "get"]),
+        (re.compile(r'\bdaj\s+mi\b'), ["prikaži", "dohvati", "get"]),
         # "trebam [X]" patterns
-        (r'\btreba(m)?\s+mi?\b', ["dohvati", "prikaži", "get", "potrebno"]),
+        (re.compile(r'\btreba(m)?\s+mi?\b'), ["dohvati", "prikaži", "get", "potrebno"]),
         # "pokaži mi [X]" = "show me [X]"
-        (r'\bpoka[zž]i\s+mi\b', ["prikaži", "dohvati", "get", "list"]),
+        (re.compile(r'\bpoka[zž]i\s+mi\b'), ["prikaži", "dohvati", "get", "list"]),
         # "upiši/unesi [X]" = "enter/input [X]"
-        (r'\b(upi[sš]i|unesi)\b', ["dodaj", "kreiraj", "post", "add"]),
+        (re.compile(r'\b(upi[sš]i|unesi)\b'), ["dodaj", "kreiraj", "post", "add"]),
         # "koliko [X]" patterns
-        (r'\bkoliko\b', ["broj", "count", "get", "količina"]),
+        (re.compile(r'\bkoliko\b'), ["broj", "count", "get", "količina"]),
         # "koji/koja/koje [X]" = "which [X]"
-        (r'\bkoj[aei]\b', ["lista", "popis", "get", "which"]),
+        (re.compile(r'\bkoj[aei]\b'), ["lista", "popis", "get", "which"]),
         # "ima li" = "is there / does it have"
-        (r'\bima\s+li\b', ["dostupnost", "provjeri", "check", "available"]),
+        (re.compile(r'\bima\s+li\b'), ["dostupnost", "provjeri", "check", "available"]),
     ]
 
     def __init__(self, enabled: bool = True):
@@ -237,20 +243,7 @@ class ConceptMapper:
 
         This allows matching both "šef" and "sef", "čekaj" and "cekaj", etc.
         """
-        replacements = {
-            'č': 'c', 'ć': 'c',
-            'ž': 'z',
-            'š': 's',
-            'đ': 'd',
-            'Č': 'C', 'Ć': 'C',
-            'Ž': 'Z',
-            'Š': 'S',
-            'Đ': 'D',
-        }
-        result = text
-        for old, new in replacements.items():
-            result = result.replace(old, new)
-        return result
+        return normalize_diacritics(text)
 
     def expand_query(self, query: str) -> str:
         """
@@ -277,9 +270,9 @@ class ConceptMapper:
         # Collect all expansions
         expansions: Set[str] = set()
 
-        # 1. Check phrase patterns first (multi-word patterns)
+        # 1. Check phrase patterns first (multi-word patterns, pre-compiled)
         for pattern, terms in self.PHRASE_PATTERNS:
-            if re.search(pattern, query_lower) or re.search(pattern, query_normalized):
+            if pattern.search(query_lower) or pattern.search(query_normalized):
                 expansions.update(terms)
 
         # 2. Check individual terms
@@ -287,8 +280,8 @@ class ConceptMapper:
         normalized_words = query_normalized.split()
 
         for word in words + normalized_words:
-            # Remove punctuation for matching
-            clean_word = re.sub(r'[^\w]', '', word)
+            # Remove punctuation for matching (pre-compiled at module level)
+            clean_word = _NON_WORD_RE.sub('', word)
 
             if clean_word in self._normalized_map:
                 expansions.update(self._normalized_map[clean_word])
@@ -348,13 +341,16 @@ class ConceptMapper:
 
 # Singleton instance
 _concept_mapper: Optional[ConceptMapper] = None
+_singleton_lock = threading.Lock()
 
 
 def get_concept_mapper(enabled: bool = True) -> ConceptMapper:
     """Get or create singleton ConceptMapper instance."""
     global _concept_mapper
     if _concept_mapper is None:
-        _concept_mapper = ConceptMapper(enabled=enabled)
+        with _singleton_lock:
+            if _concept_mapper is None:
+                _concept_mapper = ConceptMapper(enabled=enabled)
     return _concept_mapper
 
 

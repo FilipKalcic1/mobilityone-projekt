@@ -40,6 +40,19 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 
 import redis.asyncio as aioredis
+try:
+    from redis.exceptions import (
+        ConnectionError as RedisConnectionError,
+        RedisError,
+        ResponseError,
+    )
+    if not (isinstance(RedisConnectionError, type) and issubclass(RedisConnectionError, BaseException)):
+        raise TypeError("redis.exceptions returned stub types")
+except Exception:
+    RedisConnectionError = OSError  # type: ignore[assignment,misc]
+    RedisError = OSError  # type: ignore[assignment,misc]
+    class ResponseError(Exception):  # type: ignore[assignment]
+        """Sentinel — never raised; safe fallback when redis.exceptions unavailable."""
 
 from config import get_settings
 from database import AsyncSessionLocal
@@ -106,7 +119,7 @@ def get_memory_usage_mb() -> float:
     except ImportError:
         # psutil not installed, try /proc/self/status on Linux
         try:
-            with open('/proc/self/status', 'r') as f:
+            with open('/proc/self/status', 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.startswith('VmRSS:'):
                         return int(line.split()[1]) / 1024  # Convert KB to MB
@@ -530,7 +543,7 @@ class Worker:
                 mkstream=True
             )
             log("info", "consumer_group_created", {"group": self.group_name})
-        except aioredis.ResponseError as e:
+        except ResponseError as e:
             if "BUSYGROUP" not in str(e):
                 raise
             log("info", "consumer_group_exists", {"group": self.group_name})
@@ -587,7 +600,7 @@ class Worker:
                         )
                         claimed_msgs = result[1] if len(result) > 1 else []
                         reclaimed += len(claimed_msgs)
-                    except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+                    except (ResponseError, RedisConnectionError, RedisError) as e:
                         log("warn", "xautoclaim_stale_failed", {"consumer": name, "error": str(e)})
 
                 try:
@@ -597,7 +610,7 @@ class Worker:
                         name
                     )
                     removed += 1
-                except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+                except (ResponseError, RedisConnectionError, RedisError) as e:
                     log("warn", "delconsumer_failed", {"consumer": name, "error": str(e)})
 
             if removed or reclaimed:
@@ -608,7 +621,7 @@ class Worker:
                     "remaining": len(consumers) - removed
                 })
 
-        except (ConnectionError, TimeoutError, aioredis.RedisError) as e:
+        except (ConnectionError, TimeoutError, RedisError) as e:
             log("warn", "consumer_cleanup_failed", {"error": str(e)})
 
     async def _cleanup_stale_pending(self):
@@ -646,7 +659,7 @@ class Worker:
                 claimed_msgs = result[1] if len(result) > 1 else []
                 if claimed_msgs:
                     log("info", "stale_pending_reclaimed", {"count": len(claimed_msgs)})
-            except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+            except (ResponseError, RedisConnectionError, RedisError) as e:
                 log("warn", "xautoclaim_failed", {"error": str(e)})
 
             # Only delete messages pending > 10 minutes (likely unrecoverable)
@@ -677,7 +690,7 @@ class Worker:
             if cleaned:
                 log("info", "stale_pending_cleaned", {"cleaned": cleaned, "total": total_pending})
 
-        except (ConnectionError, TimeoutError, aioredis.RedisError) as e:
+        except (ConnectionError, TimeoutError, RedisError) as e:
             log("warn", "stale_cleanup_failed", {"error": str(e)})
 
     async def _process_inbound_loop(self):
@@ -918,6 +931,11 @@ class Worker:
         # Per-sender lock: serialize processing for same user within this pod.
         # Prevents conversation state race when user sends rapid messages.
         if sender not in self._processing_locks:
+            # Hard cap to prevent unbounded growth under adversarial conditions
+            if len(self._processing_locks) >= 10000:
+                oldest = min(self._lock_access_times, key=self._lock_access_times.get)
+                del self._processing_locks[oldest]
+                del self._lock_access_times[oldest]
             self._processing_locks[sender] = asyncio.Lock()
         self._lock_access_times[sender] = time.time()
         sender_lock = self._processing_locks[sender]
@@ -1040,7 +1058,7 @@ class Worker:
                         break
                     requeued += 1
                 log("info", "requeued_abandoned_outbound", {"requeued": requeued})
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             log("warn", "requeue_abandoned_failed", {"error": str(e)})
 
     async def _process_outbound_loop(self):
@@ -1214,7 +1232,7 @@ class Worker:
             )
 
             log("info", "queued_delayed", {"to": to[-4:], "delay": delay})
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             log("error", "queue_delayed_failed", {"error": str(e)})
 
     async def _process_delayed_outbound_loop(self):
@@ -1256,11 +1274,11 @@ class Worker:
         if len(text) > MAX_WA_LENGTH:
             chunks = self._split_message(text, MAX_WA_LENGTH)
             log("info", "message_split", {"chunks": len(chunks), "original_len": len(text)})
-            for chunk in chunks:
-                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}
+            for idx, chunk in enumerate(chunks):
+                payload = {"to": to, "text": chunk, "idempotency_key": f"{to}:{hashlib.md5(chunk.encode(), usedforsecurity=False).hexdigest()[:12]}:{time.time_ns()}:{idx}"}
                 await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
         else:
-            payload = {"to": to, "text": text, "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{int(time.time())}"}
+            payload = {"to": to, "text": text, "idempotency_key": f"{to}:{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]}:{time.time_ns()}"}
             await self.redis.rpush("whatsapp_outbound", json.dumps(payload))
 
     @staticmethod

@@ -8,9 +8,9 @@ Architecture:
 4. Execute based on decision OR ask clarification
 """
 
-import asyncio
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 
@@ -32,6 +32,7 @@ from services.flow_phrases import (
     matches_item_selection,
     matches_greeting,
 )
+from services.text_normalizer import sanitize_for_llm
 from services.tracing import get_tracer, trace_span
 from services.domain_models import RoutingTrace, RoutingTier
 from services.errors import RoutingError, ErrorCode
@@ -41,7 +42,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("unified_router")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 @dataclass
@@ -80,7 +82,7 @@ class UnifiedRouter:
         # Shared client: rate limiting + connection pooling across all services
         self.client = get_openai_client()
         self._circuit_breaker = get_llm_circuit_breaker()
-        self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
+        self.model = _get_settings().AZURE_OPENAI_DEPLOYMENT_NAME
 
         # Tool Registry for semantic search (injected)
         self._registry = registry
@@ -370,7 +372,7 @@ class UnifiedRouter:
                     trace["ml_intent"] = parts[1].split(" ")[0]
             if qr_result.prediction_set:
                 trace["cp_set_size"] = qr_result.prediction_set.size
-                trace["cp_labels"] = list(qr_result.prediction_set.labels[:5])
+                trace["cp_labels"] = list(qr_result.prediction_set.labels)
 
         logger.info(f"UNIFIED ROUTER: QR result: matched={qr_result.matched}, conf={qr_result.confidence}, flow={qr_result.flow_type if qr_result.matched else None}")
 
@@ -569,7 +571,10 @@ class UnifiedRouter:
             "confidence": 0.0-1.0
         }}"""
 
-        user_prompt = f'Korisnikov upit: "{query}"'
+        # Sanitize user query to mitigate prompt injection:
+        # Strip control characters and limit length to prevent token abuse
+        sanitized_query = sanitize_for_llm(query) if query else ""
+        user_prompt = f'Korisnikov upit: "{sanitized_query}"'
 
         try:
             with trace_span(_tracer, "router.llm_call", {
@@ -652,7 +657,7 @@ class UnifiedRouter:
             return RouterDecision(
                 action=action,
                 tool=result.get("tool"),
-                params=result.get("params", {}),
+                params=result.get("params") if isinstance(result.get("params"), dict) else {},
                 flow_type=result.get("flow_type"),
                 response=result.get("response"),
                 reasoning=result.get("reasoning", ""),
@@ -835,13 +840,13 @@ class UnifiedRouter:
                 else:
                     # For other templates, use format() with simple context
                     simple_context = {
-                        k: v for k, v in user_context.items()
+                        k: str(v) for k, v in user_context.items()
                         if not isinstance(v, (dict, list))
                     }
                     try:
-                        response_text = response_text.format(**simple_context)
+                        from string import Template
+                        response_text = Template(response_text).safe_substitute(simple_context)
                     except (KeyError, ValueError):
-                        # If format fails, return template as-is
                         pass
 
             return RouterDecision(
@@ -885,15 +890,17 @@ class UnifiedRouter:
 
 # Singleton
 _router: Optional[UnifiedRouter] = None
-_router_lock = asyncio.Lock()
+_router_lock = threading.Lock()
 
 
 async def get_unified_router() -> UnifiedRouter:
-    """Get or create singleton router instance (async-safe)."""
+    """Get or create singleton router instance."""
     global _router
-    if _router is None:
-        async with _router_lock:
-            if _router is None:
-                _router = UnifiedRouter()
-                await _router.initialize()
+    if _router is not None:
+        return _router
+    with _router_lock:
+        if _router is None:
+            router = UnifiedRouter()
+            await router.initialize()
+            _router = router
     return _router

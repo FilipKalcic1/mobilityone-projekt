@@ -224,7 +224,7 @@ def generate_examples(tool_id: str, method: str, entity: str, suffix: str) -> Li
 
 def improve_documentation():
     """Main function to improve tool documentation."""
-    doc_path = Path("config/tool_documentation.json")
+    doc_path = Path(__file__).parent.parent / "config" / "tool_documentation.json"
 
     with open(doc_path, "r", encoding="utf-8") as f:
         docs = json.load(f)

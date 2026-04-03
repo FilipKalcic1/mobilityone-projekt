@@ -20,10 +20,11 @@ from typing import Optional, List
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import threading
 
 logger = logging.getLogger(__name__)
 
-ERROR_PATTERNS_FILE = Path.cwd() / ".cache" / "error_patterns.json"
+ERROR_PATTERNS_FILE = Path(__file__).parent.parent / ".cache" / "error_patterns.json"
 
 @dataclass
 class ErrorPattern:
@@ -368,10 +369,13 @@ class ErrorTranslator:
 
 # Global instance
 _error_translator: Optional[ErrorTranslator] = None
+_singleton_lock = threading.Lock()
 
 def get_error_translator() -> ErrorTranslator:
     """Get global error translator instance."""
     global _error_translator
     if _error_translator is None:
-        _error_translator = ErrorTranslator()
+        with _singleton_lock:
+            if _error_translator is None:
+                _error_translator = ErrorTranslator()
     return _error_translator

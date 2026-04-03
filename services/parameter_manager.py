@@ -13,7 +13,7 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Tuple, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from services.tool_contracts import (
     UnifiedToolDefinition,
@@ -184,11 +184,20 @@ class ParameterManager:
             warnings.extend(output_warnings)
 
             # Step 3: Add LLM-provided parameters
+            # SECURITY: Do NOT let LLM overwrite context-injected params
+            # (e.g., tenant_id, user_id) — context takes precedence.
             user_params, user_warnings = self._process_user_params(
                 tool,
                 llm_params
             )
-            resolved.update(user_params)
+            for key, value in user_params.items():
+                if key in context_params:
+                    logger.warning(
+                        f"LLM tried to set context param '{key}' "
+                        f"(blocked, keeping context value)"
+                    )
+                    continue
+                resolved[key] = value
             warnings.extend(user_warnings)
 
             # Step 3.5: CONTEXT -> USER fallback
@@ -521,7 +530,7 @@ class ParameterManager:
                     param_def.format
                 )
                 validated[param_name] = casted
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, OverflowError) as e:
                 err = ConversationError(
                     ErrorCode.PARAMETER_INVALID,
                     f"Parameter '{param_name}' has invalid value: {e}",
@@ -628,7 +637,7 @@ class ParameterManager:
             value_lower = value.lower().strip()
 
             # STEP 1: Handle Croatian natural language dates
-            today = datetime.now()
+            today = datetime.now(timezone.utc)
             time_part = None
 
             # Extract time if present (e.g., "sutra u 9:00" or "sutra 9h")
@@ -671,8 +680,8 @@ class ParameterManager:
 
             # STEP 2: Already ISO format - ensure timezone
             if "T" in value and len(value) >= 19:
-                # Check if already has timezone
-                if "+" in value[-6:] or "Z" in value:
+                # Check if already has timezone (+HH:MM, -HH:MM, or Z suffix)
+                if "+" in value[-6:] or value[-6] == "-" or "Z" in value:
                     return value
                 return value + timezone_offset
 
@@ -852,7 +861,6 @@ class ParameterManager:
 
         # Priority 3: Generate question from param name
         # Convert camelCase/PascalCase to readable format
-        import re
         readable = re.sub(r'([a-z])([A-Z])', r'\1 \2', param_name)
         readable = readable.replace("_", " ").lower()
 
@@ -887,8 +895,11 @@ class ParameterManager:
 
                 param_def = tool.parameters.get(param_name)
                 if not param_def:
-                    # Unknown param - add to body by default
-                    body_params[param_name] = value
+                    # Unknown param: query for GET/DELETE, body for POST/PUT/PATCH
+                    if tool.method in ("GET", "DELETE"):
+                        query_params[param_name] = value
+                    else:
+                        body_params[param_name] = value
                     continue
 
                 location = param_def.location
@@ -905,11 +916,11 @@ class ParameterManager:
                 else:  # body
                     body_params[param_name] = value
 
-            # For GET/DELETE: all params go to query
+            # For GET/DELETE: separated query params only (path params already substituted)
             if tool.method in ("GET", "DELETE"):
                 return (
                     path,
-                    params if params else None,
+                    query_params if query_params else None,
                     None
                 )
 

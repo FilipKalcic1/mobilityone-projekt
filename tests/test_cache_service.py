@@ -2,7 +2,7 @@
 
 import pytest
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
 from uuid import UUID
 from services.cache_service import CacheService, SafeJSONEncoder
@@ -137,6 +137,9 @@ class TestInvalidatePattern:
             for k in ["key1", "key2"]:
                 yield k
         mock_redis.scan_iter = mock_scan_iter
+        mock_pipe = AsyncMock()
+        mock_pipe.execute = AsyncMock(return_value=[1, 1])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
         count = await cache.invalidate_pattern("key*")
         assert count == 2
 
@@ -180,6 +183,101 @@ class TestGetOrCompute:
         compute_fn.assert_called_once()
 
 
+class TestGetOrComputeStampede:
+    """Tests for SETNX-based stampede protection in get_or_compute."""
+    pytestmark = pytest.mark.asyncio
+
+    async def test_acquires_lock_on_cache_miss(self, cache, mock_redis):
+        """Lock should be acquired with unique token when cache is empty."""
+        mock_redis.get.return_value = None
+        mock_redis.set.return_value = True  # Lock acquired
+        mock_redis.eval = AsyncMock(return_value=1)
+        compute_fn = AsyncMock(return_value={"data": "result"})
+
+        result = await cache.get_or_compute("key", compute_fn, ttl=300)
+
+        assert result == {"data": "result"}
+        # Verify SETNX was called with lock key
+        lock_call = [c for c in mock_redis.set.call_args_list
+                     if c.args and str(c.args[0]).startswith("lock:")]
+        assert len(lock_call) == 1
+        assert lock_call[0].kwargs.get("nx") is True
+
+    async def test_releases_lock_with_lua_after_compute(self, cache, mock_redis):
+        """Lock should be released via Lua compare-and-delete after computing."""
+        mock_redis.get.return_value = None
+        mock_redis.set.return_value = True
+        mock_redis.eval = AsyncMock(return_value=1)
+        compute_fn = AsyncMock(return_value={"data": "result"})
+
+        await cache.get_or_compute("key", compute_fn, ttl=300)
+
+        # Verify Lua eval was called for lock release
+        mock_redis.eval.assert_called_once()
+        lua_script = mock_redis.eval.call_args.args[0]
+        assert "redis.call('get'" in lua_script
+        assert "redis.call('del'" in lua_script
+
+    async def test_waits_and_returns_cached_when_lock_held(self, cache, mock_redis):
+        """When lock is held by another caller, should poll then return cached value."""
+        call_count = 0
+
+        async def mock_get(key):
+            nonlocal call_count
+            call_count += 1
+            if key.startswith("lock:"):
+                return None
+            # First call: miss, subsequent calls: hit (other caller computed)
+            if call_count <= 2:
+                return None
+            return '{"data": "from_other_caller"}'
+
+        mock_redis.get = AsyncMock(side_effect=mock_get)
+        mock_redis.set.return_value = False  # Lock NOT acquired
+        compute_fn = AsyncMock(return_value={"data": "fallback"})
+
+        import asyncio
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(asyncio, "sleep", AsyncMock())
+            result = await cache.get_or_compute("key", compute_fn, ttl=300)
+
+        assert result == {"data": "from_other_caller"}
+        compute_fn.assert_not_called()
+
+    async def test_lock_release_failure_does_not_crash(self, cache, mock_redis):
+        """If Lua lock release fails, compute result should still be returned."""
+        mock_redis.get.return_value = None
+        mock_redis.set.return_value = True
+        mock_redis.eval = AsyncMock(side_effect=Exception("Redis gone"))
+        compute_fn = AsyncMock(return_value={"data": "result"})
+
+        result = await cache.get_or_compute("key", compute_fn, ttl=300)
+        assert result == {"data": "result"}
+
+
+class TestInvalidatePatternAccuracy:
+    """Tests for batched pipeline delete count accuracy."""
+    pytestmark = pytest.mark.asyncio
+
+    async def test_counts_actual_deletions(self, cache, mock_redis):
+        """Deleted count should reflect actual Redis delete results, not batch size."""
+        mock_redis.scan_iter = self._make_scan_iter(["k1", "k2", "k3"])
+        mock_pipe = AsyncMock()
+        # Simulate: k1 deleted (1), k2 already gone (0), k3 deleted (1)
+        mock_pipe.execute = AsyncMock(return_value=[1, 0, 1])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+
+        deleted = await cache.invalidate_pattern("test:*")
+        assert deleted == 2  # Only 2 actually deleted, not 3
+
+    @staticmethod
+    def _make_scan_iter(keys):
+        async def scan_iter(**kwargs):
+            for k in keys:
+                yield k
+        return scan_iter
+
+
 class TestIncrement:
     pytestmark = pytest.mark.asyncio
 
@@ -189,9 +287,10 @@ class TestIncrement:
         assert result == 1
 
     async def test_increment_with_ttl(self, cache, mock_redis):
-        mock_redis.incr.return_value = 1
+        mock_redis.eval.return_value = 1
         result = await cache.increment("counter", ttl=3600)
-        mock_redis.expire.assert_called_once()
+        assert result == 1
+        mock_redis.eval.assert_called_once()
 
     async def test_increment_failure(self, cache, mock_redis):
         mock_redis.incr.side_effect = Exception("fail")

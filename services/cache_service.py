@@ -11,8 +11,10 @@ Phase 4:
 - Fail-Open design (returns None/False, never crashes)
 """
 
+import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, date
 from typing import Any, Optional, Callable, Awaitable
 from uuid import UUID
@@ -67,7 +69,7 @@ class CacheService:
         """Get JSON value from cache."""
         try:
             data = await self.redis.get(key)
-            if data:
+            if data is not None:
                 return json.loads(data)
             return None
         except Exception as e:
@@ -140,23 +142,39 @@ class CacheService:
         """
         return await self.delete(key)
 
-    async def invalidate_pattern(self, pattern: str) -> int:
+    async def invalidate_pattern(self, pattern: str, batch_size: int = 100) -> int:
         """
-        Invalidate all keys matching pattern.
+        Invalidate all keys matching pattern using batched deletes.
 
-        CAUTION: Use sparingly - SCAN can be slow on large datasets.
+        Collects keys in batches and deletes them with a single pipeline call
+        instead of one-by-one, reducing round trips from N to N/batch_size.
 
         Args:
             pattern: Redis key pattern (e.g., "user:*", "context:*")
+            batch_size: Number of keys to delete per pipeline batch
 
         Returns:
             Number of keys deleted
         """
         try:
             deleted = 0
-            async for key in self.redis.scan_iter(match=pattern, count=100):
-                await self.redis.delete(key)
-                deleted += 1
+            batch = []
+            async for key in self.redis.scan_iter(match=pattern, count=batch_size):
+                batch.append(key)
+                if len(batch) >= batch_size:
+                    pipe = self.redis.pipeline(transaction=False)
+                    for k in batch:
+                        pipe.delete(k)
+                    results = await pipe.execute()
+                    deleted += sum(1 for r in results if r)
+                    batch.clear()
+            # Flush remaining keys
+            if batch:
+                pipe = self.redis.pipeline(transaction=False)
+                for k in batch:
+                    pipe.delete(k)
+                results = await pipe.execute()
+                deleted += sum(1 for r in results if r)
             if deleted > 0:
                 logger.info(f"Invalidated {deleted} keys matching '{pattern}'")
             return deleted
@@ -176,15 +194,20 @@ class CacheService:
         self,
         key: str,
         compute_fn: Callable[[], Awaitable[Any]],
-        ttl: int = 300
+        ttl: int = 300,
+        lock_timeout: int = 10
     ) -> Any:
         """
-        Get from cache or compute value.
+        Get from cache or compute value with stampede protection.
+
+        Uses SETNX-based distributed lock to ensure only one caller computes
+        the value when multiple requests hit a cold cache simultaneously.
 
         Args:
             key: Cache key
             compute_fn: Async function to compute value if not cached
             ttl: Time to live
+            lock_timeout: Max seconds to hold the compute lock
 
         Returns:
             Cached or computed value
@@ -194,14 +217,42 @@ class CacheService:
         if cached is not None:
             return cached
 
-        # Compute value
-        result = await compute_fn()
+        # Acquire distributed lock to prevent stampede
+        lock_key = f"lock:{key}"
+        lock_token = uuid.uuid4().hex
+        acquired = False
+        try:
+            acquired = await self.redis.set(
+                lock_key, lock_token, nx=True, ex=lock_timeout
+            )
+        except Exception:
+            pass
 
-        # Cache result (set_json matches get_json read path)
-        if result is not None:
-            await self.set_json(key, result, ttl)
+        if not acquired:
+            # Another caller is computing — poll with backoff then fallback
+            for wait in (0.1, 0.2, 0.4):
+                await asyncio.sleep(wait)
+                cached = await self.get_json(key)
+                if cached is not None:
+                    return cached
+            # Fallback: compute anyway (lock holder may have failed)
 
-        return result
+        try:
+            result = await compute_fn()
+            if result is not None:
+                await self.set_json(key, result, ttl)
+            return result
+        finally:
+            if acquired:
+                try:
+                    # Owner-safe release: only delete if we still hold the lock
+                    from services.retry_utils import ATOMIC_LOCK_RELEASE_LUA
+                    await self.redis.eval(
+                        ATOMIC_LOCK_RELEASE_LUA,
+                        1, lock_key, lock_token
+                    )
+                except Exception:
+                    pass
 
     async def increment(self, key: str, ttl: Optional[int] = None) -> int:
         """
@@ -215,10 +266,17 @@ class CacheService:
             New value
         """
         try:
-            value = await self.redis.incr(key)
-            if ttl and value == 1:
-                await self.redis.expire(key, ttl)
-            return value
+            if ttl:
+                # Atomic INCR + conditional EXPIRE via Lua to avoid TOCTOU race
+                lua = (
+                    "local v = redis.call('INCR', KEYS[1]) "
+                    "if v == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end "
+                    "return v"
+                )
+                value = await self.redis.eval(lua, 1, key, ttl)
+                return int(value)
+            else:
+                return await self.redis.incr(key)
         except Exception as e:
             logger.warning(f"Cache increment failed: {e}")
             return 0

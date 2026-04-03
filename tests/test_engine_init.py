@@ -37,8 +37,7 @@ def _make_engine():
     ms = _mock_settings()
 
     patches = {
-        "settings": patch("services.engine.settings", ms),
-        "get_settings": patch("services.engine.get_settings", return_value=ms),
+        "get_settings": patch("services.engine._get_settings", return_value=ms),
         "ToolExecutor": patch("services.engine.ToolExecutor"),
         "AIOrchestrator": patch("services.engine.AIOrchestrator"),
         "ResponseFormatter": patch("services.engine.ResponseFormatter"),
@@ -111,7 +110,6 @@ def engine(engine_and_mocks):
 class TestInit:
     def test_engine_created(self, engine):
         assert engine is not None
-        assert engine is not None  # Engine initializes successfully
 
     def test_engine_has_handlers(self, engine):
         assert engine._tool_handler is not None
@@ -123,8 +121,7 @@ class TestInit:
 
     def test_engine_no_redis(self):
         ms = _mock_settings()
-        with patch("services.engine.settings", ms), \
-             patch("services.engine.get_settings", return_value=ms), \
+        with patch("services.engine._get_settings", return_value=ms), \
              patch("services.engine.ToolExecutor"), \
              patch("services.engine.AIOrchestrator"), \
              patch("services.engine.ResponseFormatter"), \

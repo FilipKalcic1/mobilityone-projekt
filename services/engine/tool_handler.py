@@ -6,14 +6,19 @@ Single responsibility: Execute tools with automatic dependency resolution.
 
 import json
 import logging
+import re
 from typing import Dict, Any, Optional, List
 
 from services.api_capabilities import get_capability_registry
 from services.error_translator import get_error_translator
 from services.tool_evaluator import get_tool_evaluator
 from services.context import UserContextManager
+from services.tool_contracts import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+_MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class ToolHandler:
@@ -96,19 +101,7 @@ class ToolHandler:
             }
 
         # Create execution context
-        from services.tool_contracts import ToolExecutionContext
-
-        tool_outputs = (
-            conv_manager.context.tool_outputs
-            if hasattr(conv_manager.context, 'tool_outputs')
-            else {}
-        )
-
-        execution_context = ToolExecutionContext(
-            user_context=user_context,
-            tool_outputs=tool_outputs,
-            conversation_state={}
-        )
+        execution_context = ToolExecutionContext.from_conv_manager(user_context, conv_manager)
 
         # Inject PersonId filter for GET methods
         parameters = self._inject_person_filter(tool, parameters, user_context)
@@ -363,8 +356,6 @@ class ToolHandler:
         if not error_message:
             return None
 
-        import re
-
         match = re.search(r'parametri?:\s*(\w+)', error_message, re.IGNORECASE)
         if match:
             return match.group(1)
@@ -421,16 +412,14 @@ class ToolHandler:
         This ensures user explicitly approves any data-changing operation.
         """
         # Method 1: Check HTTP method (most reliable)
-        MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-
-        if method and method.upper() in MUTATION_METHODS:
+        if method and method.upper() in _MUTATION_METHODS:
             return True
 
         # Method 2: Try to get method from registry
         if self.registry:
             tool = self.registry.get_tool(tool_name)
             if tool and hasattr(tool, 'method'):
-                if tool.method.upper() in MUTATION_METHODS:
+                if tool.method.upper() in _MUTATION_METHODS:
                     return True
 
         # Method 3: Infer from tool name prefix (fallback)

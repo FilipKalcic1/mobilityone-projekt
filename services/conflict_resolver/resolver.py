@@ -347,7 +347,7 @@ class ConflictResolver:
         changes: Dict[str, Any],
         expected_version: int,
         admin_id: str,
-        ip_address: str = None
+        ip_address: Optional[str] = None
     ) -> SaveResult:
         """
         Save changes with optimistic locking conflict check.
@@ -503,7 +503,7 @@ class ConflictResolver:
         record_id: str,
         your_changes: Dict[str, Any],
         admin_id: str,
-        ip_address: str = None
+        ip_address: Optional[str] = None
     ) -> SaveResult:
         """
         Attempt automatic merge of non-conflicting changes.
@@ -541,8 +541,8 @@ class ConflictResolver:
         version: int,
         changes: Dict[str, Any],
         admin_id: str,
-        ip_address: str = None,
-        old_values: Dict[str, Any] = None
+        ip_address: Optional[str] = None,
+        old_values: Optional[Dict[str, Any]] = None
     ) -> None:
         """Record change in history for audit trail with full old values."""
         if not self.redis:
@@ -698,7 +698,7 @@ class ConflictResolver:
         record_id: str,
         target_version: int,
         admin_id: str,
-        ip_address: str = None
+        ip_address: Optional[str] = None
     ) -> SaveResult:
         """
         Rollback a record to a previous version using stored snapshots.

@@ -28,7 +28,7 @@ def _prediction(intent="GET_MILEAGE", confidence=0.99, tool="get_MasterData"):
     p.intent = intent
     p.confidence = confidence
     p.tool = tool
-    p.signal = ClassificationSignal.from_confidence_only(confidence, n_classes=29)
+    p.signal = ClassificationSignal.from_confidence_only(confidence, n_classes=28)
     p.prediction_set = None
     return p
 

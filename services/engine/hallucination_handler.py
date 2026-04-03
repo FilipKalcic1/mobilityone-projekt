@@ -111,7 +111,7 @@ class HallucinationHandler:
             last_user_query = None
 
             # Find the most recent assistant message and the query before it
-            for i, msg in enumerate(reversed(history)):
+            for msg in reversed(history):
                 if msg.get("role") == "assistant" and not last_bot_response:
                     last_bot_response = msg.get("content", "")
                 elif msg.get("role") == "user" and last_bot_response and not last_user_query:

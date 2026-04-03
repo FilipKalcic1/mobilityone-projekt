@@ -10,17 +10,20 @@ Added circuit breaker for fail-fast when Azure OpenAI is down.
 """
 
 import logging
+import threading
 from openai import AsyncAzureOpenAI
 
 from config import get_settings
 from services.circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 _shared_client = None
 _shared_embedding_client = None
 _circuit_breaker = None
+_singleton_lock = threading.Lock()
 
 
 def get_openai_client() -> AsyncAzureOpenAI:
@@ -33,13 +36,15 @@ def get_openai_client() -> AsyncAzureOpenAI:
     """
     global _shared_client
     if _shared_client is None:
-        _shared_client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-            max_retries=0,
-            timeout=15.0  # Reduced from 30s - gpt-4o-mini responds in 1-5s typical
-        )
+        with _singleton_lock:
+            if _shared_client is None:
+                _shared_client = AsyncAzureOpenAI(
+                    azure_endpoint=_get_settings().AZURE_OPENAI_ENDPOINT,
+                    api_key=_get_settings().AZURE_OPENAI_API_KEY,
+                    api_version=_get_settings().AZURE_OPENAI_API_VERSION,
+                    max_retries=0,
+                    timeout=15.0  # Reduced from 30s - gpt-4o-mini responds in 1-5s typical
+                )
     return _shared_client
 
 
@@ -53,13 +58,15 @@ def get_embedding_client() -> AsyncAzureOpenAI:
     """
     global _shared_embedding_client
     if _shared_embedding_client is None:
-        _shared_embedding_client = AsyncAzureOpenAI(
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-            max_retries=1,
-            timeout=10.0  # Embeddings are fast
-        )
+        with _singleton_lock:
+            if _shared_embedding_client is None:
+                _shared_embedding_client = AsyncAzureOpenAI(
+                    azure_endpoint=_get_settings().AZURE_OPENAI_ENDPOINT,
+                    api_key=_get_settings().AZURE_OPENAI_API_KEY,
+                    api_version=_get_settings().AZURE_OPENAI_API_VERSION,
+                    max_retries=1,
+                    timeout=10.0  # Embeddings are fast
+                )
     return _shared_embedding_client
 
 
@@ -71,6 +78,8 @@ def get_llm_circuit_breaker() -> CircuitBreaker:
     """
     global _circuit_breaker
     if _circuit_breaker is None:
-        _circuit_breaker = CircuitBreaker()
-        logger.info("LLM CircuitBreaker initialized")
+        with _singleton_lock:
+            if _circuit_breaker is None:
+                _circuit_breaker = CircuitBreaker()
+                logger.info("LLM CircuitBreaker initialized")
     return _circuit_breaker

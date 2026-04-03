@@ -17,7 +17,9 @@ This module has been refactored into smaller components:
 """
 
 import asyncio
+import atexit
 import logging
+import time as _time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, Optional
 
@@ -62,12 +64,16 @@ from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("message_engine")
-settings = get_settings()
+# Lazy settings access — avoid module-level get_settings() which
+# forces config parsing at import time (before env vars may be set).
+def _get_settings():
+    return get_settings()
 
 # Bounded pool for CPU-bound ML predictions (TF-IDF predict_proba).
 # 2 threads is enough — the GIL serializes numpy anyway, but releasing
 # the event loop prevents coroutine starvation at concurrency > 5.
 _ml_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ml_route")
+atexit.register(_ml_thread_pool.shutdown, wait=False)
 
 __all__ = ['MessageEngine']
 
@@ -215,7 +221,7 @@ class MessageEngine:
         db_session=None
     ) -> str:
         """Inner implementation of process(), wrapped by OTel span."""
-        import time as _time
+
         _t0 = _time.perf_counter()
         logger.info(f"Processing: {sender[-4:]} - {text[:50]}")
 
@@ -236,7 +242,7 @@ class MessageEngine:
                 logger.error(f"{err}")
                 user_context = {
                     "person_id": None, "phone": sender,
-                    "tenant_id": settings.tenant_id,
+                    "tenant_id": _get_settings().tenant_id,
                     "display_name": "Korisnik", "vehicle": {},
                     "is_new": True, "is_guest": True
                 }
@@ -278,7 +284,6 @@ class MessageEngine:
             # 5. Handle new user greeting (delegated to UserHandler)
             if UserContextManager(user_context).is_new:
                 greeting = self._user_handler.build_greeting(user_context)
-                await self.context.add_message(sender, "assistant", greeting)
 
                 response = await self._process_with_state(
                     sender, text, user_context, conv_manager
@@ -288,7 +293,7 @@ class MessageEngine:
                 logger.info(f"TIMING total (new user): {int((_t3-_t0)*1000)}ms")
 
                 full_response = f"{greeting}\n\n---\n\n{response}"
-                await self.context.add_message(sender, "assistant", response)
+                await self.context.add_message(sender, "assistant", full_response)
                 return full_response
 
             # 6. Process based on state
@@ -350,8 +355,8 @@ class MessageEngine:
             consent_key = f"gdpr_consent:{sender}"
             try:
                 await self.redis.set(consent_key, "unknown", ex=300)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Redis best-effort consent cache write failed (guest): {e}")
             err = ConversationError(
                 ErrorCode.CONSENT_REQUIRED,
                 f"Unregistered user blocked at consent gate: ***{sender[-4:]}",
@@ -389,8 +394,8 @@ class MessageEngine:
             # Cache consent in Redis (24h TTL) to avoid future DB lookups
             try:
                 await self.redis.set(consent_key, "1", ex=86400)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Redis best-effort consent cache write failed: {e}")
             return None  # Already consented
 
         if not user:
@@ -412,8 +417,8 @@ class MessageEngine:
             try:
                 await self.redis.set(consent_key, "1", ex=86400)
                 await self.redis.delete(f"gdpr_consent_pending:{sender}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Redis best-effort consent accept cache write failed: {e}")
             logger.info(f"GDPR consent accepted by ***{sender[-4:]}")
             greeting = self._user_handler.build_greeting(user_context)
             return f"Hvala na pristanku!\n\n{greeting}"
@@ -426,7 +431,8 @@ class MessageEngine:
         pending_key = f"gdpr_consent_pending:{sender}"
         try:
             already_asked = await self.redis.get(pending_key)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Redis best-effort consent pending check failed: {e}")
             already_asked = None
 
         if already_asked:
@@ -441,8 +447,8 @@ class MessageEngine:
         logger.info(f"{err}")
         try:
             await self.redis.set(pending_key, "1", ex=86400)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Redis best-effort consent pending flag write failed: {e}")
         return GDPR_CONSENT_MESSAGE
 
     async def _process_with_state(
@@ -453,7 +459,7 @@ class MessageEngine:
         conv_manager: ConversationManager
     ) -> str:
         """Process message based on conversation state using Unified Router."""
-        import time as _time
+
         _pws_start = _time.perf_counter()
 
         state = conv_manager.get_state()
@@ -590,7 +596,7 @@ class MessageEngine:
                     else:
                         logger.warning("P1: Skipping nested mid-flow question to prevent recursion")
                         return "Potvrdite prethodnu operaciju s **Da** ili **Ne**."
-                return result
+                return result if isinstance(result, str) else str(result)
             if state == ConversationState.GATHERING_PARAMS:
                 return await self._flow_handler.handle_gathering(
                     sender, text, user_context, conv_manager, self._handle_new_request
@@ -602,7 +608,7 @@ class MessageEngine:
                     metadata={"flow": conv_manager.get_current_flow()},
                 )
                 logger.warning(f"STATE MISMATCH: {err}")
-                conv_manager.reset_flow()
+                await conv_manager.reset()
 
         if decision.action == "start_flow":
             # Guest users cannot use flows (booking, mileage, case) - require registration

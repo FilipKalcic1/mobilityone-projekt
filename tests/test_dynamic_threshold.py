@@ -387,6 +387,23 @@ class TestDecisionEngineDecideWithCp:
         result = engine.decide_with_cp(sig, DecisionEngine.ML_FAST_PATH, ps)
         assert result.is_accept
 
+    def test_cp_size_1_reject_defers(self):
+        """CP set size=1 + base REJECT → DEFER (not BOOST).
+
+        Regression test: the old `<= 5` guard would have returned BOOST here
+        because size=1 falls in 1..5. After the `2 <= size <= 5` fix, the
+        code falls through to the final DEFER branch instead.
+        """
+        engine = DecisionEngine()
+        # Very low confidence so base decision is REJECT
+        sig = ClassificationSignal.from_confidence_only(0.30, n_classes=29)
+        ps = PredictionSet(labels=("a",), probabilities=(0.3,),
+                           coverage=0.98, q_hat=0.85)
+        result = engine.decide_with_cp(sig, DecisionEngine.ML_FAST_PATH, ps)
+        assert result.is_defer, (
+            f"size=1 + low confidence should DEFER, got {result.action}"
+        )
+
     def test_cp_size_3_boost(self):
         """CP set size=3 → BOOST (mediation path)."""
         engine = DecisionEngine()

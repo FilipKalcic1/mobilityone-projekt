@@ -12,6 +12,15 @@ import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+try:
+    import fastapi.responses  # noqa: F401 — webhook_simple.py requires fastapi at import time
+    # Only proceed if fastapi is the real package (not a MagicMock stub)
+    import fastapi as _fa
+    if not (hasattr(_fa, '__version__') or (hasattr(_fa, 'FastAPI') and isinstance(_fa.FastAPI, type))):
+        raise ImportError("fastapi is a test stub, not the real package")
+except Exception:
+    pytest.skip("fastapi not properly installed", allow_module_level=True)
+
 
 @pytest.mark.asyncio
 async def test_dlq_writes_to_redis_primary():
@@ -53,7 +62,7 @@ async def test_dlq_falls_back_to_file_when_redis_fails(tmp_path):
 
     # File should contain the entry
     assert os.path.exists(dlq_path)
-    with open(dlq_path) as f:
+    with open(dlq_path, encoding="utf-8") as f:
         lines = f.readlines()
     assert len(lines) == 1
     parsed = json.loads(lines[0].strip())
@@ -74,7 +83,7 @@ async def test_dlq_file_appends_multiple_entries(tmp_path):
         await _write_dlq(json.dumps({"dlq": "webhook", "message_id": "msg_1"}))
         await _write_dlq(json.dumps({"dlq": "webhook", "message_id": "msg_2"}))
 
-    with open(dlq_path) as f:
+    with open(dlq_path, encoding="utf-8") as f:
         lines = f.readlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["message_id"] == "msg_1"
@@ -85,7 +94,7 @@ async def test_dlq_file_appends_multiple_entries(tmp_path):
 async def test_dlq_does_not_use_only_stderr():
     """DLQ must NOT rely solely on stderr (the old bug)."""
     import webhook_simple
-    source = open(webhook_simple.__file__).read()
+    source = open(webhook_simple.__file__, encoding="utf-8").read()
 
     # The old pattern was: sys.stderr.write(f"DLQ_WEBHOOK: {dlq_entry}\n")
     # directly in the webhook handler. Now it should go through _write_dlq

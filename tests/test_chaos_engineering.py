@@ -19,10 +19,20 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 import pytest
 
 
+def _has_fastapi() -> bool:
+    """True only when the real fastapi package is installed (not a test stub)."""
+    try:
+        import fastapi
+        return isinstance(getattr(fastapi, 'FastAPI', None), type)
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # 1. DLQ FALLBACK CHAIN: Redis -> File -> stderr
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _has_fastapi(), reason="fastapi not installed")
 class TestDLQFallbackChain:
     """Verify 3-tier DLQ operates correctly when tiers fail."""
 
@@ -57,7 +67,7 @@ class TestDLQFallbackChain:
 
         # Verify file was written
         assert os.path.exists(dlq_file)
-        with open(dlq_file, "r") as f:
+        with open(dlq_file, "r", encoding="utf-8") as f:
             content = f.read()
         assert '{"test": "redis_failed"}' in content
 
@@ -92,7 +102,7 @@ class TestDLQFallbackChain:
 
         dlq_file = str(tmp_path / "dlq.jsonl")
         # Create a file that's already at the cap
-        with open(dlq_file, "w") as f:
+        with open(dlq_file, "w", encoding="utf-8") as f:
             f.write("x" * (5 * 1024 * 1024 + 1))
 
         with (
@@ -267,6 +277,7 @@ class TestWorkerLockFailOpen:
 # 4. WEBHOOK SIGNATURE VALIDATION UNDER FAILURE
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _has_fastapi(), reason="fastapi not installed")
 class TestWebhookResilience:
     """Verify webhook handler remains resilient under failure conditions."""
 
@@ -334,6 +345,7 @@ class TestSSRFProtection:
 # 6. GRACEFUL SHUTDOWN SIGNALS
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _has_fastapi(), reason="fastapi not installed")
 class TestGracefulShutdown:
     """Verify APP_STOPPING flag prevents new message acceptance."""
 

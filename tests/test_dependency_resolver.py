@@ -306,7 +306,7 @@ class TestResolveDependency:
     @pytest.mark.asyncio
     async def test_cache_hit(self, setup_dr):
         dr, _ = setup_dr
-        dr._resolution_cache["VehicleId:ZG-1234-AB"] = {
+        dr._resolution_cache[f"{VALID_UUID}:VehicleId:ZG-1234-AB"] = {
             "value": "cached-uuid",
             "tool": "get_Vehicles",
         }
@@ -357,8 +357,8 @@ class TestResolveDependency:
         assert result.success is True
         assert result.resolved_value == "uuid-resolved"
         assert result.provider_tool == "get_Vehicles"
-        # should be cached
-        assert "VehicleId:ZG-1234-AB" in dr._resolution_cache
+        # should be cached with person_id prefix
+        assert f"{VALID_UUID}:VehicleId:ZG-1234-AB" in dr._resolution_cache
 
     @pytest.mark.asyncio
     async def test_provider_call_failure(self, setup_dr):
@@ -1147,7 +1147,7 @@ class TestEdgeCases:
         with patch("services.tool_contracts.ToolExecutionContext", MagicMock()):
             result = await dr._resolve_by_ordinal(ref, _user_ctx_no_vehicle(), executor)
         assert result.success is True
-        assert "ordinal:vozilo 1" in dr._resolution_cache
+        assert f"{VALID_UUID}:ordinal:vozilo 1" in dr._resolution_cache
 
     @pytest.mark.asyncio
     async def test_resolve_dependency_with_person_id_filter_injection(self):

@@ -7,8 +7,10 @@ scattered across the codebase.
 These values come from the MobilityOne API specification.
 """
 
+from enum import IntEnum
 
-class AssigneeType:
+
+class AssigneeType(IntEnum):
     """
     Type of entity assigned to the booking.
 
@@ -18,7 +20,7 @@ class AssigneeType:
     TEAM = 2
 
 
-class EntryType:
+class EntryType(IntEnum):
     """
     Type of calendar entry.
 

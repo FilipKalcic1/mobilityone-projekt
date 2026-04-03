@@ -10,7 +10,11 @@ import json
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
+
+try:
+    from fastapi.testclient import TestClient
+except Exception:
+    pytest.skip("fastapi.testclient not available", allow_module_level=True)
 
 
 class FakeRedisStream:

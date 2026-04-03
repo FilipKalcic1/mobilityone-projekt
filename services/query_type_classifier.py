@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional
 from enum import Enum
+import threading
 
 from services.dynamic_threshold import ClassificationSignal
 
@@ -93,13 +94,16 @@ class QueryTypeClassifier:
 
 # Singleton instance
 _classifier: Optional[QueryTypeClassifier] = None
+_singleton_lock = threading.Lock()
 
 
 def get_query_type_classifier() -> QueryTypeClassifier:
     """Get singleton instance - returns ML-backed classifier."""
     global _classifier
     if _classifier is None:
-        _classifier = QueryTypeClassifier()
+        with _singleton_lock:
+            if _classifier is None:
+                _classifier = QueryTypeClassifier()
     return _classifier
 
 

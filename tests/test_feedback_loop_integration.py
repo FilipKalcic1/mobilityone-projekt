@@ -376,10 +376,11 @@ class TestCostTracker:
 
     def test_pricing_config(self):
         """Test pricing is loaded from config."""
-        from services.cost_tracker import INPUT_PRICE, OUTPUT_PRICE
+        from config import get_settings
+        s = get_settings()
 
-        assert INPUT_PRICE > 0
-        assert OUTPUT_PRICE > 0
+        assert s.LLM_INPUT_PRICE_PER_1K > 0
+        assert s.LLM_OUTPUT_PRICE_PER_1K > 0
 
     def test_calculate_cost(self, tracker):
         """Test cost calculation."""

@@ -38,7 +38,7 @@ def load_training_data():
             for line in f:
                 if line.strip():
                     item = json.loads(line)
-                    examples.append((item.get("text", ""), item.get("label", "")))
+                    examples.append((item.get("text", ""), item.get("query_type", "")))
     return examples
 
 

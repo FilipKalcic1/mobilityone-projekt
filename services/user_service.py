@@ -24,7 +24,8 @@ from services.errors import ConversationError, ErrorCode
 from services.tracing import get_tracer, trace_span
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("user_service")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 class UserService:
     """
@@ -56,7 +57,7 @@ class UserService:
         self.gateway = gateway
         self.cache = cache
         self.redis = redis_client
-        self.default_tenant_id = settings.tenant_id
+        self.default_tenant_id = _get_settings().tenant_id
 
         # Initialize tenant service for dynamic tenant resolution
         self._tenant_service = get_tenant_service(db_session=db, redis_client=redis_client)
@@ -397,13 +398,14 @@ class UserService:
         tenant_id = self._tenant_service.resolve_tenant_from_phone(phone)
 
         try:
+            now = datetime.now(timezone.utc)
             stmt = pg_insert(UserMapping).values(
                 phone_number=phone,
                 api_identity=person_id,
                 display_name=name,
                 tenant_id=tenant_id,  # Dynamic tenant!
                 is_active=True,
-                updated_at=datetime.now(timezone.utc)
+                updated_at=now
             ).on_conflict_do_update(
                 index_elements=['phone_number'],
                 set_={
@@ -411,7 +413,7 @@ class UserService:
                     'display_name': name,
                     # NOTE: Don't overwrite tenant_id on conflict - admin may have changed it
                     'is_active': True,
-                    'updated_at': datetime.now(timezone.utc)
+                    'updated_at': now
                 }
             )
             await self.db.execute(stmt)
@@ -456,11 +458,10 @@ class UserService:
         cache_key = f"context:{person_id}"
         if self.cache:
             try:
-                cached = await self.cache.get(cache_key)
-                if cached:
-                    import json
+                cached = await self.cache.get_json(cache_key)
+                if cached is not None:
                     logger.info(f"BUILD_CONTEXT: Using cached context for {person_id[:8]}...")
-                    return json.loads(cached)
+                    return cached
             except Exception as e:
                 logger.debug(f"Cache read failed: {e}")
 
@@ -498,7 +499,6 @@ class UserService:
         # ALWAYS cache context - with different TTLs based on data quality
         if self.cache:
             try:
-                import json
                 if context.get("vehicle"):
                     # Full context with vehicle data - cache 5 minutes
                     cache_ttl = 300
@@ -508,7 +508,7 @@ class UserService:
                     # Prevents hammering a dead API on every message
                     cache_ttl = 60
                     logger.info(f"BUILD_CONTEXT: Negative-cached context for {person_id[:8]}... (60s TTL, no vehicle data)")
-                await self.cache.set(cache_key, json.dumps(context), ttl=cache_ttl)
+                await self.cache.set_json(cache_key, context, ttl=cache_ttl)
             except Exception as e:
                 logger.debug(f"Cache write failed: {e}")
 

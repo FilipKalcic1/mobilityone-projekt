@@ -193,10 +193,15 @@ class GDPRMaskingService:
             self.hash_salt = hash_salt
         else:
             from config import get_settings
-            self.hash_salt = get_settings().GDPR_HASH_SALT
+            _settings = get_settings()
+            self.hash_salt = _settings.GDPR_HASH_SALT
             if not self.hash_salt:
-                # Generate a secure random salt for this session
-                # WARNING: This means hashes won't be consistent across restarts!
+                if getattr(_settings, 'is_production', False):
+                    raise RuntimeError(
+                        "GDPR_HASH_SALT must be set in production! "
+                        "Pseudonymized IDs will not be consistent without a stable salt."
+                    )
+                # Dev/test: generate a session salt with a warning
                 self.hash_salt = secrets.token_hex(32)
                 logger.warning(
                     "GDPR_HASH_SALT not set! Using random salt. "
@@ -653,10 +658,11 @@ class GDPRMaskingService:
                 anonymized["conversations"] = conv_anon_result.rowcount
 
             # 3. Mark user mapping as anonymized with timestamp
+            # NOTE: phone_number was already changed to DELETED_{hashed_id} in step 1
             from datetime import datetime, timezone as tz
             await db_session.execute(
                 update(UserMapping)
-                .where(UserMapping.phone_number == user_id)
+                .where(UserMapping.phone_number == f"DELETED_{hashed_id}")
                 .values(
                     phone_number=f"[GDPR:{hashed_id[:12]}]",
                     display_name="[GDPR DELETED]",
@@ -721,11 +727,14 @@ class GDPRMaskingService:
                 "tenant:{phone}",
             ]
 
+            keys_to_delete = []
             for phone in phone_variants:
                 for pattern in key_patterns:
                     key = pattern.format(phone=phone)
-                    deleted = await redis_client.delete(key)
-                    erased["keys_deleted"] += deleted
+                    keys_to_delete.append(key)
+            if keys_to_delete:
+                deleted = await redis_client.delete(*keys_to_delete)
+                erased["keys_deleted"] += deleted
 
             # 2. Scrub DLQ entries containing this user's data
             dlq_key = "dlq:webhook"
@@ -826,13 +835,22 @@ class GDPRMaskingService:
             )
             conversations = conv_result.scalars().all()
 
-            for conv in conversations:
+            # Batch-fetch all messages for all conversations in one query (avoid N+1)
+            all_conv_ids = [c.id for c in conversations]
+            from collections import defaultdict
+            msgs_by_conv = defaultdict(list)
+            if all_conv_ids:
                 msg_result = await db_session.execute(
                     select(Message)
-                    .where(Message.conversation_id == conv.id)
+                    .where(Message.conversation_id.in_(all_conv_ids))
                     .order_by(Message.timestamp)
                 )
-                messages = msg_result.scalars().all()
+                all_messages = msg_result.scalars().all()
+                for m in all_messages:
+                    msgs_by_conv[m.conversation_id].append(m)
+
+            for conv in conversations:
+                messages = msgs_by_conv[conv.id]
 
                 conv_data = {
                     "conversation_id": str(conv.id),

@@ -32,11 +32,10 @@ def planner():
     mock_settings.AZURE_OPENAI_API_KEY = "test-key"
     mock_settings.AZURE_OPENAI_API_VERSION = "2024-02-15"
     mock_settings.AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-4"
-    with patch("services.chain_planner.get_settings", return_value=mock_settings):
-        with patch("services.chain_planner.settings", mock_settings):
-            with patch("services.chain_planner.get_openai_client", return_value=MagicMock()):
-                with patch("services.chain_planner.get_llm_circuit_breaker", return_value=_make_passthrough_cb()):
-                    p = ChainPlanner()
+    with patch("services.chain_planner._get_settings", return_value=mock_settings):
+        with patch("services.chain_planner.get_openai_client", return_value=MagicMock()):
+            with patch("services.chain_planner.get_llm_circuit_breaker", return_value=_make_passthrough_cb()):
+                p = ChainPlanner()
     return p
 
 

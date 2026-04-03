@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+import threading
 
 from services.entity_detector import detect_entity as _detect_entity_from_query
 from services.tracing import get_tracer, trace_span
@@ -342,10 +343,13 @@ class AmbiguityDetector:
 
 # Singleton instance
 _detector: Optional[AmbiguityDetector] = None
+_singleton_lock = threading.Lock()
 
 def get_ambiguity_detector(tool_documentation: Optional[Dict] = None) -> AmbiguityDetector:
     """Get singleton AmbiguityDetector instance."""
     global _detector
     if _detector is None:
-        _detector = AmbiguityDetector(tool_documentation)
+        with _singleton_lock:
+            if _detector is None:
+                _detector = AmbiguityDetector(tool_documentation)
     return _detector

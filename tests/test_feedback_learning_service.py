@@ -337,7 +337,7 @@ class TestFeedbackLearningService:
             assert updates > 0
 
             # Verify file was updated
-            with open(doc_path, "r") as f:
+            with open(doc_path, "r", encoding="utf-8") as f:
                 docs = json.load(f)
                 assert "get_vehiclevin" in docs
                 assert "example_queries_hr" in docs["get_vehiclevin"]

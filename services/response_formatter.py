@@ -105,6 +105,12 @@ class ResponseFormatter:
         r'(?i)(manufacturer|proizvođač)': '🏭',
     }
 
+    # Pre-compiled emoji patterns (built once at class load)
+    _COMPILED_EMOJI_PATTERNS = [
+        (re.compile(pattern), emoji)
+        for pattern, emoji in EMOJI_PATTERNS.items()
+    ]
+
     def __init__(self) -> None:
         self._current_query: Optional[str] = None
 
@@ -430,8 +436,8 @@ class ResponseFormatter:
         if not field_name:
             return "•"
 
-        for pattern, emoji in self.EMOJI_PATTERNS.items():
-            if re.search(pattern, field_name):
+        for compiled_re, emoji in self._COMPILED_EMOJI_PATTERNS:
+            if compiled_re.search(field_name):
                 return emoji
 
         return "•"
@@ -450,8 +456,8 @@ class ResponseFormatter:
             return "👤"
 
         # Try pattern matching on all keys
-        for pattern, emoji in self.EMOJI_PATTERNS.items():
-            if re.search(pattern, key_str):
+        for compiled_re, emoji in self._COMPILED_EMOJI_PATTERNS:
+            if compiled_re.search(key_str):
                 return emoji
 
         return "📋"
@@ -470,20 +476,23 @@ class ResponseFormatter:
         if key.startswith("_") or key.startswith("$"):
             return True
 
-        # Skip common ID fields that are just GUIDs
-        skip_patterns = [
-            r'^Id$', r'.*Id$', r'.*ID$',  # Internal IDs
-            r'^Guid$', r'.*Guid$',
-            r'^CreatedBy$', r'^ModifiedBy$',
-            r'^TenantId$', r'^ApiIdentity$',
-        ]
+        # Skip internal/meta ID fields (GUIDs that add no user value)
+        skip_exact = {
+            "Id", "Guid", "CreatedBy", "ModifiedBy",
+            "TenantId", "ApiIdentity", "RowVersion",
+        }
+        if key in skip_exact:
+            return True
 
-        for pattern in skip_patterns:
-            if re.match(pattern, key):
-                # Exception: some IDs are useful
-                if key in ["ExternalId", "Code", "AssetId"]:
-                    return False
-                return True
+        # Skip fields ending in Guid (always internal)
+        if key.endswith("Guid"):
+            return True
+
+        # Skip FK-style *Id fields (e.g. VehicleId, PersonId, CompanyId)
+        # but keep user-visible identifiers (ExternalId, AssetId, Code)
+        keep_ids = {"ExternalId", "AssetId", "SourceId", "DocumentId"}
+        if key not in keep_ids and (key.endswith("Id") or key.endswith("ID")):
+            return True
 
         return False
 

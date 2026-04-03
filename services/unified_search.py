@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
+import threading
 
 from tool_routing import PRIMARY_ACTION_TOOLS as _PRIMARY_ACTION_TOOLS
 
@@ -132,17 +133,11 @@ class UnifiedSearch:
 
         config_dir = Path(__file__).parent.parent / "config"
 
-        # Load tool documentation
-        try:
-            doc_path = config_dir / "tool_documentation.json"
-            if doc_path.exists():
-                with open(doc_path, 'r', encoding='utf-8') as f:
-                    self._tool_documentation = json.load(f)
-                logger.info(f"UnifiedSearch v2.0: Loaded {len(self._tool_documentation)} tool docs")
-        except Exception as e:
-            err = SearchError(ErrorCode.TOOL_DOCS_NOT_LOADED, f"Failed to load tool documentation: {e}")
-            logger.warning(str(err))
-            self._tool_documentation = {}
+        # Load tool documentation — shared cache (single source of truth)
+        from services.schema_sanitizer import get_tool_documentation
+        self._tool_documentation = get_tool_documentation()
+        if self._tool_documentation:
+            logger.info(f"UnifiedSearch v2.0: Loaded {len(self._tool_documentation)} tool docs (shared cache)")
 
         # Load tool categories
         try:
@@ -177,7 +172,8 @@ class UnifiedSearch:
         if self._tool_documentation:
             for tool_id, doc in self._tool_documentation.items():
                 for example in doc.get("example_queries_hr", []):
-                    key = example.lower().strip().rstrip('.')
+                    # Normalize diacritics to match search path normalization
+                    key = normalize_diacritics(example.lower().strip().rstrip('.'))
                     # First tool wins for duplicate queries
                     if key not in self._exact_match_index:
                         self._exact_match_index[key] = tool_id
@@ -270,7 +266,7 @@ class UnifiedSearch:
             )
 
             # Step 2.5: EXACT MATCH DETECTION (O(1) lookup via pre-computed index)
-            query_normalized = query.lower().strip().rstrip('.')
+            query_normalized = normalize_diacritics(query.lower().strip().rstrip('.'))
             exact_match_tool = self._exact_match_index.get(query_normalized)
             if exact_match_tool:
                 logger.info(f"UnifiedSearch: EXACT MATCH found: {exact_match_tool}")
@@ -301,7 +297,7 @@ class UnifiedSearch:
             is_mutation = (
                 (intent_result.intent in (ActionIntent.DELETE, ActionIntent.UPDATE, ActionIntent.PATCH, ActionIntent.CREATE)
                  and not _engine.decide(_intent_signal, DecisionEngine.MUTATION).is_defer)
-                or detected_method in ("delete", "put", "patch", "post")
+                or (detected_method in ("delete", "put", "patch", "post"))
             )
 
             # Override 1: bare entity names (1-2 words) without ID indicators → LIST
@@ -499,7 +495,7 @@ class UnifiedSearch:
                         boosted_results.insert(0, SearchResult(
                             tool_id=exact_match_tool,
                             score=15.0,
-                            method=self._tool_methods.get(exact_match_tool, "GET") if hasattr(self, '_tool_methods') else "GET"
+                            method="GET"
                         ))
             else:
                 boosted_results = faiss_results
@@ -653,13 +649,16 @@ class UnifiedSearch:
 
 # Singleton instance
 _unified_search: Optional[UnifiedSearch] = None
+_singleton_lock = threading.Lock()
 
 
 def get_unified_search() -> UnifiedSearch:
     """Get singleton UnifiedSearch instance."""
     global _unified_search
     if _unified_search is None:
-        _unified_search = UnifiedSearch()
+        with _singleton_lock:
+            if _unified_search is None:
+                _unified_search = UnifiedSearch()
     return _unified_search
 
 

@@ -10,7 +10,7 @@ NO business logic - purely error interpretation.
 """
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ class ErrorParser:
     @staticmethod
     def generate_missing_param_feedback(
         missing_params: list,
-        suggested_tools: list = None
+        suggested_tools: Optional[list] = None
     ) -> str:
         """
         Generate feedback for missing parameters.

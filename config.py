@@ -16,7 +16,7 @@ logger = logging.getLogger("configuration")
 
 class Settings(BaseSettings):
     
-    VERIFY_WHATSAPP_SIGNATURE: bool = False
+    VERIFY_WHATSAPP_SIGNATURE: bool = True
     # ---
     # APPLICATION
     # ---

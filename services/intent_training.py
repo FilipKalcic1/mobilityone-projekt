@@ -101,13 +101,16 @@ def train_tfidf_lr(classifier, texts: List[str], labels: List[str]) -> Dict[str,
     )
     classifier.model.fit(X, y)
 
-    cv_scores = cross_val_score(classifier.model, X, y, cv=5, scoring="accuracy")
+    # Evaluate on held-out folds (not training data) for honest metrics
+    from sklearn.model_selection import cross_val_predict
+    cv_scores = cross_val_score(base_model, X, y, cv=5, scoring="accuracy")
 
-    y_prob = classifier.model.predict_proba(X)
+    # Brier score on cross-validated predictions (not training data)
+    y_prob_cv = cross_val_predict(base_model, X, y, cv=5, method="predict_proba")
     classes = classifier.model.classes_
     y_bin = label_binarize(y, classes=classes)
     brier = float(np.mean([
-        brier_score_loss(y_bin[:, i], y_prob[:, i])
+        brier_score_loss(y_bin[:, i], y_prob_cv[:, i])
         for i in range(len(classes))
     ]))
 
@@ -195,8 +198,9 @@ def train_fasttext(classifier, texts: List[str], labels: List[str]) -> Dict[str,
     model_file = classifier.model_path / "fasttext_model.bin"
     classifier.model.save_model(str(model_file))
 
+    # FastText model.test() returns (n_samples, precision@1, recall@1)
     return {
-        "accuracy": test_result[1],
+        "n_samples": test_result[0],
         "precision": test_result[1],
         "recall": test_result[2]
     }
@@ -232,7 +236,16 @@ def train_azure_embedding(classifier, texts: List[str], labels: List[str]) -> Di
         return np.array(embeddings)
 
     logger.info("Generating Azure OpenAI embeddings for training data...")
-    X = asyncio.run(embed_all())
+    # Handle both running and non-running event loop contexts
+    try:
+        loop = asyncio.get_running_loop()
+        # Already in async context — use nest_asyncio or thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            X = pool.submit(lambda: asyncio.run(embed_all())).result()
+    except RuntimeError:
+        # No running loop — safe to use asyncio.run
+        X = asyncio.run(embed_all())
 
     classifier.label_encoder = LabelEncoder()
     y = classifier.label_encoder.fit_transform(labels)
@@ -262,7 +275,9 @@ def train_azure_embedding(classifier, texts: List[str], labels: List[str]) -> Di
 
 
 def save_model(classifier, include_vectorizer: bool = True) -> None:
-    """Save model to disk."""
+    """Save model to disk with SHA-256 integrity sidecar."""
+    import hashlib
+
     classifier.model_path.mkdir(parents=True, exist_ok=True)
     model_file = classifier.model_path / f"{classifier.algorithm}_model.pkl"
 
@@ -276,7 +291,15 @@ def save_model(classifier, include_vectorizer: bool = True) -> None:
     with open(model_file, "wb") as f:
         pickle.dump(save_data, f)
 
-    logger.info(f"Saved model to {model_file}")
+    # SECURITY: Generate SHA-256 integrity hash sidecar
+    h = hashlib.sha256()
+    with open(model_file, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    hash_file = model_file.with_suffix(model_file.suffix + ".sha256")
+    hash_file.write_text(h.hexdigest(), encoding="utf-8")
+
+    logger.info(f"Saved model to {model_file} (SHA-256: {h.hexdigest()[:16]}...)")
 
 
 def save_metadata(classifier) -> None:

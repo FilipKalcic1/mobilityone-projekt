@@ -26,6 +26,7 @@ USAGE:
 import re
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
+import threading
 
 
 @dataclass
@@ -48,14 +49,14 @@ class TranslationHelper:
     """
 
     def __init__(self) -> None:
-        """Initialize with dictionaries from EmbeddingEngine."""
-        # Import here to avoid circular imports
-        from services.registry.embedding_engine import EmbeddingEngine
+        """Initialize with dictionaries from entity_mappings."""
+        from services.registry.entity_mappings import (
+            PATH_ENTITY_MAP, OUTPUT_KEY_MAP, CROATIAN_SYNONYMS
+        )
 
-        engine = EmbeddingEngine()
-        self.path_entity_map = engine.PATH_ENTITY_MAP
-        self.output_key_map = engine.OUTPUT_KEY_MAP
-        self.synonyms = engine.CROATIAN_SYNONYMS
+        self.path_entity_map = PATH_ENTITY_MAP
+        self.output_key_map = OUTPUT_KEY_MAP
+        self.synonyms = CROATIAN_SYNONYMS
 
         # Build reverse lookup (Croatian -> English)
         self.croatian_to_english: Dict[str, str] = {}
@@ -279,12 +280,15 @@ class TranslationHelper:
 
 
 _cached_helper: Optional["TranslationHelper"] = None
+_singleton_lock = threading.Lock()
 
 
 def _get_helper() -> "TranslationHelper":
     global _cached_helper
     if _cached_helper is None:
-        _cached_helper = TranslationHelper()
+        with _singleton_lock:
+            if _cached_helper is None:
+                _cached_helper = TranslationHelper()
     return _cached_helper
 
 

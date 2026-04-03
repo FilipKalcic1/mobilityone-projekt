@@ -502,6 +502,157 @@ class TestRouteQueryRouterFastPath:
 
 
 # ==========================================================================
+# Mediation path (CP prediction set → LLM reranker)
+# ==========================================================================
+
+class TestMediationPath:
+    """Integration tests for CP mediation: QR returns prediction_set → LLM reranks."""
+
+    @pytest.mark.asyncio
+    async def test_mediation_routes_through_llm_reranker(self):
+        """CP set size=3 → mediation → LLM picks winner."""
+        from services.dynamic_threshold import PredictionSet
+        from services.llm_reranker import RerankResult
+
+        router = _make_router()
+
+        # Use 3 intents that map to different tools so deduplication keeps all 3
+        # GET_VEHICLE_INFO → get_MasterData
+        # GET_VEHICLE_DOCUMENTS → get_Vehicles_id_documents
+        # BOOK_VEHICLE → get_AvailableVehicles
+        ps = PredictionSet(
+            labels=("GET_VEHICLE_INFO", "GET_VEHICLE_DOCUMENTS", "BOOK_VEHICLE"),
+            probabilities=(0.45, 0.30, 0.25),
+            coverage=0.98,
+            q_hat=0.85,
+        )
+        qr_result = RouteResult(
+            matched=True,
+            tool_name="get_MasterData",
+            flow_type="mediation",
+            confidence=0.45,
+            reason="ML+CP: GET_VEHICLE_INFO (set=3)",
+            prediction_set=ps,
+        )
+        router.query_router.route.return_value = qr_result
+
+        mock_rerank = AsyncMock(return_value=[
+            RerankResult(tool_id="get_MasterData", confidence=0.92,
+                         reasoning="User asks about vehicle info"),
+        ])
+        with patch("services.unified_router.rerank_with_llm", mock_rerank):
+            result = await router.route("podaci o mom vozilu", _user_context())
+
+        assert result.tool == "get_MasterData"
+        assert result.confidence == 0.92
+        assert "CP mediation" in result.reasoning
+        mock_rerank.assert_called_once()
+        # Verify at least 2 candidates were passed to the reranker
+        call_args = mock_rerank.call_args
+        candidates = call_args.kwargs.get("candidates") or call_args[0][1]
+        assert len(candidates) >= 2
+
+    @pytest.mark.asyncio
+    async def test_mediation_fallback_to_llm_on_reranker_failure(self):
+        """If LLM reranker fails, mediation falls through to full LLM routing."""
+        from services.dynamic_threshold import PredictionSet
+
+        router = _make_router()
+
+        ps = PredictionSet(
+            labels=("GET_VEHICLE_INFO", "GET_VEHICLE_DOCUMENTS"),
+            probabilities=(0.55, 0.45),
+            coverage=0.98,
+            q_hat=0.85,
+        )
+        qr_result = RouteResult(
+            matched=True,
+            tool_name="get_MasterData",
+            flow_type="mediation",
+            confidence=0.55,
+            reason="ML+CP: GET_VEHICLE_INFO (set=2)",
+            prediction_set=ps,
+        )
+        router.query_router.route.return_value = qr_result
+
+        mock_rerank = AsyncMock(side_effect=Exception("LLM timeout"))
+        with patch("services.unified_router.rerank_with_llm", mock_rerank):
+            # Should fall through to _llm_route
+            router.client = MagicMock()
+            router.client.chat = MagicMock()
+            router.client.chat.completions = MagicMock()
+            router.client.chat.completions.create = AsyncMock(
+                return_value=_llm_response({
+                    "action": "simple_api",
+                    "tool": "get_MasterData",
+                    "params": {},
+                    "flow_type": None,
+                    "reasoning": "Vehicle info from LLM fallback",
+                    "confidence": 0.80,
+                })
+            )
+            result = await router.route("podaci o vozilu", _user_context())
+
+        assert result.action == "simple_api"
+        assert result.tool == "get_MasterData"
+        router.client.chat.completions.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_mediation_flow_skips_reranker(self):
+        """QR match without mediation flow_type goes straight to fast path."""
+        router = _make_router()
+
+        qr_result = RouteResult(
+            matched=True,
+            tool_name="get_MasterData",
+            flow_type="simple",
+            confidence=0.95,
+            reason="ML: GET_VEHICLE_INFO",
+        )
+        router.query_router.route.return_value = qr_result
+
+        with patch("services.unified_router.rerank_with_llm") as mock_rerank:
+            result = await router.route("podaci o vozilu", _user_context())
+
+        mock_rerank.assert_not_called()
+        assert result.action == "simple_api"
+        assert result.confidence == 0.95
+
+    @pytest.mark.asyncio
+    async def test_mediation_with_no_prediction_set_falls_through(self):
+        """Mediation flow_type but no prediction_set → falls to LLM."""
+        router = _make_router()
+
+        qr_result = RouteResult(
+            matched=True,
+            tool_name="get_MasterData",
+            flow_type="mediation",
+            confidence=0.55,
+            reason="ML+CP",
+            prediction_set=None,
+        )
+        router.query_router.route.return_value = qr_result
+
+        router.client = MagicMock()
+        router.client.chat = MagicMock()
+        router.client.chat.completions = MagicMock()
+        router.client.chat.completions.create = AsyncMock(
+            return_value=_llm_response({
+                "action": "simple_api",
+                "tool": "get_MasterData",
+                "params": {},
+                "flow_type": None,
+                "reasoning": "LLM fallback",
+                "confidence": 0.75,
+            })
+        )
+
+        result = await router.route("vozilo info", _user_context())
+        assert result.action == "simple_api"
+        router.client.chat.completions.create.assert_called_once()
+
+
+# ==========================================================================
 # _llm_route
 # ==========================================================================
 

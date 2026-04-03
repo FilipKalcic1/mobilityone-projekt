@@ -9,16 +9,19 @@ Uses trained ML model for intent classification.
 Accuracy updated after each retrain — see training output for current metrics.
 """
 
+import hashlib
 import json
 import logging
 import pickle
+import threading
+import time
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import ClassVar, Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 import numpy as np
 
 from services.dynamic_threshold import ClassificationSignal, NO_SIGNAL, PredictionSet
-from services.errors import ClassificationError, ErrorCode
+from services.errors import ClassificationError, ErrorCode, SecurityError
 from services.tracing import get_tracer, trace_span
 
 # Text normalization — canonical source is text_normalizer.py.
@@ -33,6 +36,7 @@ from services.text_normalizer import (  # noqa: F401 — re-export
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("intent_classifier")
+
 
 
 # Action intent detection — canonical source is action_intent_detector.py.
@@ -60,9 +64,14 @@ class IntentPrediction:
     action: str
     tool: Optional[str]
     confidence: float
-    alternatives: List[Tuple[str, float]] = None
-    signal: ClassificationSignal = None
+    alternatives: Optional[List[Tuple[str, float]]] = None
+    signal: Optional[ClassificationSignal] = None
     prediction_set: Optional[PredictionSet] = None
+
+    # Number of intent classes — read from model metadata at load time,
+    # fallback to this default for signal estimation without a loaded model.
+    # ClassVar prevents dataclass from treating this as an __init__ field.
+    _N_CLASSES_DEFAULT: ClassVar[int] = 28
 
     def __post_init__(self):
         if self.alternatives is None:
@@ -70,7 +79,8 @@ class IntentPrediction:
         if self.signal is None:
             # Fallback: estimate signal from sparse alternatives
             self.signal = ClassificationSignal.from_alternatives(
-                self.confidence, self.alternatives, n_classes=29,
+                self.confidence, self.alternatives,
+                n_classes=self._N_CLASSES_DEFAULT,
             )
 
 
@@ -107,8 +117,48 @@ class IntentClassifier:
         self._q_hat = None
         self._cp_coverage = None
 
+    @staticmethod
+    def _compute_file_hash(file_path: Path) -> str:
+        """Compute SHA-256 hash of a file."""
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @staticmethod
+    def _verify_model_integrity(model_file: Path) -> bool:
+        """Verify model file integrity via SHA-256 sidecar.
+
+        Returns True if hash matches or no sidecar exists (first load).
+        Raises SecurityError if hash mismatch (tampering detected).
+        """
+        hash_file = model_file.with_suffix(model_file.suffix + ".sha256")
+        if not hash_file.exists():
+            logger.warning(
+                f"No integrity hash for {model_file.name} — "
+                f"run training to generate .sha256 sidecar"
+            )
+            # Generate hash for existing model (bootstrap)
+            actual_hash = IntentClassifier._compute_file_hash(model_file)
+            hash_file.write_text(actual_hash, encoding="utf-8")
+            logger.info(f"Generated integrity hash for {model_file.name}")
+            return True
+
+        expected_hash = hash_file.read_text(encoding="utf-8").strip()
+        actual_hash = IntentClassifier._compute_file_hash(model_file)
+        if actual_hash != expected_hash:
+            raise SecurityError(
+                ErrorCode.MODEL_INTEGRITY_FAILED,
+                f"Model integrity check FAILED for {model_file.name}: "
+                f"expected {expected_hash[:16]}..., got {actual_hash[:16]}... "
+                f"— file may have been tampered with"
+            )
+        return True
+
     def load(self) -> bool:
-        """Load trained model from disk."""
+        """Load trained model from disk with integrity verification."""
+        model_file = None
         try:
             model_file = self.model_path / f"{self.algorithm}_model.pkl"
             meta_file = self.model_path / "metadata.json"
@@ -116,6 +166,9 @@ class IntentClassifier:
             if not model_file.exists():
                 logger.warning(f"Model file not found: {model_file}")
                 return False
+
+            # SECURITY: Verify SHA-256 integrity before deserializing pickle
+            self._verify_model_integrity(model_file)
 
             with open(model_file, "rb") as f:
                 saved = pickle.load(f)
@@ -146,11 +199,15 @@ class IntentClassifier:
             logger.info(f"Loaded {self.algorithm} model from {model_file}")
             return True
 
+        except SecurityError:
+            logger.critical(f"MODEL INTEGRITY FAILURE — refusing to load {model_file}")
+            raise
         except Exception as e:
+            path_str = str(model_file) if model_file else str(self.model_path)
             err = ClassificationError(
                 ErrorCode.MODEL_LOAD_FAILED,
                 f"Failed to load {self.algorithm} model: {e}",
-                metadata={"model_path": str(model_file)},
+                metadata={"model_path": path_str},
                 cause=e,
             )
             logger.error(str(err))
@@ -254,7 +311,7 @@ class IntentClassifier:
             prediction_set = None
             if self._q_hat is not None:
                 prediction_set = PredictionSet.from_probabilities(
-                    probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                    probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
                 )
 
             result = IntentPrediction(
@@ -282,8 +339,12 @@ class IntentClassifier:
                 confidence=0.0
             )
 
-        # Load SBERT if not loaded
+        # Load SBERT if not loaded (may download on first use)
         if self.vectorizer is None:
+            logger.warning(
+                "SentenceTransformer not loaded from model file — "
+                "downloading paraphrase-multilingual-MiniLM-L12-v2 (first-time latency)"
+            )
             self.vectorizer = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
         X = self.vectorizer.encode([text])
@@ -313,7 +374,7 @@ class IntentClassifier:
         prediction_set = None
         if self._q_hat is not None:
             prediction_set = PredictionSet.from_probabilities(
-                probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
             )
 
         return IntentPrediction(
@@ -328,24 +389,41 @@ class IntentClassifier:
 
     def _predict_fasttext(self, text: str) -> IntentPrediction:
         """Predict using FastText model."""
-        labels, probs = self.model.predict(text, k=3)
+        # k=-1 returns ALL classes so we get the full probability vector
+        # needed for accurate ClassificationSignal and CP prediction sets.
+        labels, probs_arr = self.model.predict(text, k=-1)
 
+        probs_list = [float(p) for p in probs_arr]
         intent = labels[0].replace("__label__", "")
-        confidence = float(probs[0])
+        confidence = probs_list[0]
 
         meta = self.intent_to_metadata.get(intent, {})
 
         alternatives = [
-            (label.replace("__label__", ""), float(prob))
-            for label, prob in zip(labels[1:], probs[1:])
+            (label.replace("__label__", ""), prob)
+            for label, prob in zip(labels[1:3], probs_list[1:3])
         ]
+
+        # Full signal from complete probability vector (exact, not estimated)
+        signal = ClassificationSignal.from_probabilities(probs_list)
+
+        # Conformal prediction set (if calibrated)
+        prediction_set = None
+        if self._q_hat is not None:
+            label_names = [lbl.replace("__label__", "") for lbl in labels]
+            prediction_set = PredictionSet.from_probabilities(
+                probs_list, label_names, self._q_hat,
+                self._cp_coverage if self._cp_coverage is not None else 0.70,
+            )
 
         return IntentPrediction(
             intent=intent,
             action=meta.get("action", "NONE"),
             tool=meta.get("tool"),
             confidence=confidence,
-            alternatives=alternatives
+            alternatives=alternatives,
+            signal=signal,
+            prediction_set=prediction_set,
         )
 
     def _predict_azure_embedding(self, text: str) -> IntentPrediction:
@@ -397,7 +475,7 @@ class IntentClassifier:
         prediction_set = None
         if self._q_hat is not None:
             prediction_set = PredictionSet.from_probabilities(
-                probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
             )
 
         return IntentPrediction(
@@ -414,15 +492,19 @@ class IntentClassifier:
 
 # Singleton instance
 _classifier: Optional[IntentClassifier] = None
+_classifier_lock = threading.Lock()
 
 
 def get_intent_classifier(algorithm: str = "tfidf_lr") -> IntentClassifier:
-    """Get or create singleton classifier instance."""
+    """Get or create singleton classifier instance (thread-safe)."""
     global _classifier
-    if _classifier is None or _classifier.algorithm != algorithm:
-        _classifier = IntentClassifier(algorithm=algorithm)
-        _classifier.load()
-    return _classifier
+    if _classifier is not None and _classifier.algorithm == algorithm:
+        return _classifier
+    with _classifier_lock:
+        if _classifier is None or _classifier.algorithm != algorithm:
+            _classifier = IntentClassifier(algorithm=algorithm)
+            _classifier.load()
+        return _classifier
 
 
 # ---
@@ -431,7 +513,9 @@ def get_intent_classifier(algorithm: str = "tfidf_lr") -> IntentClassifier:
 
 # Cache for semantic classifier (only load when needed)
 _semantic_classifier: Optional[IntentClassifier] = None
-_semantic_model_unavailable: bool = False  # Prevents repeated warnings
+_semantic_model_unavailable_until: float = 0.0  # Timestamp: retry after this time
+_SEMANTIC_RETRY_SECONDS: float = 300.0  # Retry loading semantic model after 5 min
+_semantic_lock = threading.Lock()
 
 # Ensemble fallback: use semantic if TF-IDF isn't confident enough.
 # Delegates to DecisionEngine.ML_FAST_PATH boundary (0.85 at α=0.0).
@@ -440,24 +524,32 @@ from services.dynamic_threshold import get_engine as _get_engine, DecisionEngine
 
 
 def _get_semantic_classifier() -> IntentClassifier:
-    """Get semantic classifier (lazy loaded)."""
-    global _semantic_classifier, _semantic_model_unavailable
+    """Get semantic classifier (lazy loaded, retries after 5 min cooldown)."""
+    global _semantic_classifier, _semantic_model_unavailable_until
 
-    # Skip if we already know the model is unavailable
-    if _semantic_model_unavailable:
-        raise FileNotFoundError("Azure embedding model not available (cached)")
+    # Skip if we recently failed — but retry after cooldown period
+    now = time.monotonic()
+    if _semantic_model_unavailable_until > now:
+        raise FileNotFoundError("Azure embedding model not available (cooldown)")
 
-    if _semantic_classifier is None:
+    if _semantic_classifier is not None:
+        return _semantic_classifier
+
+    with _semantic_lock:
+        # Double-check after acquiring lock
+        if _semantic_classifier is not None:
+            return _semantic_classifier
+
         # Check if model file exists BEFORE creating classifier
         model_file = MODEL_DIR / "azure_embedding_model.pkl"
         if not model_file.exists():
-            _semantic_model_unavailable = True  # Remember for future calls
-            logger.info("Semantic fallback disabled - azure_embedding model not found")
+            _semantic_model_unavailable_until = now + _SEMANTIC_RETRY_SECONDS
+            logger.info("Semantic fallback disabled - azure_embedding model not found (retry in 5min)")
             raise FileNotFoundError(f"Azure embedding model not available: {model_file}")
 
         _semantic_classifier = IntentClassifier(algorithm="azure_embedding")
         if not _semantic_classifier.load():
-            _semantic_model_unavailable = True
+            _semantic_model_unavailable_until = now + _SEMANTIC_RETRY_SECONDS
             _semantic_classifier = None
             raise RuntimeError("Failed to load azure_embedding model")
     return _semantic_classifier
@@ -494,7 +586,7 @@ def _predict_with_ensemble_inner(query: str, span) -> IntentPrediction:
         return tfidf_pred
 
     # Skip semantic fallback if we already know it's unavailable (prevents log spam)
-    if _semantic_model_unavailable:
+    if _semantic_model_unavailable_until > time.monotonic():
         span.set_attribute("ml.intent", tfidf_pred.intent)
         span.set_attribute("ml.confidence", tfidf_pred.confidence)
         span.set_attribute("ml.source", "tfidf_no_semantic")
@@ -516,7 +608,7 @@ def _predict_with_ensemble_inner(query: str, span) -> IntentPrediction:
             span.set_attribute("ml.source", "semantic")
             return sem_pred
     except Exception as e:
-        if not _semantic_model_unavailable:
+        if _semantic_model_unavailable_until <= time.monotonic():
             err = ClassificationError(
                 ErrorCode.ENSEMBLE_ALL_FAILED,
                 f"Semantic fallback failed: {e}",
@@ -642,6 +734,9 @@ class QueryTypeClassifierML:
                 logger.warning("QueryType model not found, training...")
                 return self.train()
 
+            # SECURITY: Verify SHA-256 integrity before deserializing pickle
+            IntentClassifier._verify_model_integrity(model_file)
+
             with open(model_file, 'rb') as f:
                 data = pickle.load(f)
                 self.vectorizer = data['vectorizer']
@@ -712,7 +807,7 @@ class QueryTypeClassifierML:
             if self._q_hat is not None:
                 label_names = self.model.classes_.tolist()
                 prediction_set = PredictionSet.from_probabilities(
-                    probs.tolist(), label_names, self._q_hat, self._cp_coverage or 0.70
+                    probs.tolist(), label_names, self._q_hat, self._cp_coverage if self._cp_coverage is not None else 0.70
                 )
 
             # Get suffix rules
@@ -745,14 +840,17 @@ class QueryTypeClassifierML:
 
 # Singleton for QueryType classifier
 _query_type_classifier: Optional[QueryTypeClassifierML] = None
+_qt_singleton_lock = threading.Lock()
 
 
 def get_query_type_classifier_ml() -> QueryTypeClassifierML:
     """Get singleton QueryType classifier."""
     global _query_type_classifier
     if _query_type_classifier is None:
-        _query_type_classifier = QueryTypeClassifierML()
-        _query_type_classifier.load()
+        with _qt_singleton_lock:
+            if _query_type_classifier is None:
+                _query_type_classifier = QueryTypeClassifierML()
+                _query_type_classifier.load()
     return _query_type_classifier
 
 

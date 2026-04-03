@@ -245,7 +245,7 @@ class TestToolExecutor:
         )
 
         assert result.success is False
-        assert result.error_code == "PARAMETER_VALIDATION_ERROR"
+        assert result.error_code == "VALIDATION_PARAMETER_INVALID"
         assert "name" in result.missing_params
 
     @pytest.mark.asyncio
@@ -550,7 +550,7 @@ class TestToolExecutorCircuitBreaker:
         result = await executor.execute(sample_tool, {}, sample_context)
 
         assert result.success is False
-        assert result.error_code == "CIRCUIT_OPEN"
+        assert result.error_code == "GATEWAY_CIRCUIT_OPEN"
 
     @pytest.mark.asyncio
     async def test_general_exception_handled(self, mock_gateway, sample_tool, sample_context):
@@ -565,5 +565,5 @@ class TestToolExecutorCircuitBreaker:
         result = await executor.execute(sample_tool, {}, sample_context)
 
         assert result.success is False
-        assert result.error_code == "EXECUTION_ERROR"
+        assert result.error_code == "TOOL_EXECUTION_FAILED"
         assert "Neočekivana greška" in result.ai_feedback

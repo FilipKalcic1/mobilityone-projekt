@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
-from services.errors import BotError, InfrastructureError, ErrorCode
+from services.errors import BotError, InfrastructureError, ErrorCode, SecurityError
 from services.tracing import get_tracer, trace_span
 
 from sqlalchemy import select, update, func, desc
@@ -44,16 +44,11 @@ _tracer = get_tracer("admin_review")
 
 # Constants for validation
 MAX_LIMIT = 1000  # Maximum allowed limit for queries
+_BASE64_PATTERN = re.compile(r'[A-Za-z0-9+/]{20,}={0,2}')
 DEFAULT_LIMIT = 50
 MAX_EXPORT_LIMIT = 10000  # Maximum for training export
 MIN_LIMIT = 1
 QUERY_TIMEOUT_SECONDS = 30  # Database query timeout
-
-
-class SecurityError(BotError):
-    """Raised when potential injection or security issue detected."""
-    def __init__(self, message: str, **kwargs):
-        super().__init__(ErrorCode.FORBIDDEN, message, **kwargs)
 
 
 class ValidationError(BotError):
@@ -254,8 +249,7 @@ class AdminReviewService:
         # Check for base64 encoded content that might contain attacks
         try:
             # Look for base64-like patterns
-            base64_pattern = re.compile(r'[A-Za-z0-9+/]{20,}={0,2}')
-            for match in base64_pattern.finditer(text):
+            for match in _BASE64_PATTERN.finditer(text):
                 try:
                     decoded = base64.b64decode(match.group()).decode('utf-8', errors='ignore')
                     if self._check_dangerous_patterns(decoded.lower()):
@@ -266,10 +260,10 @@ class AdminReviewService:
         except re.error as e:
             logger.warning(f"Base64 pattern scan failed: {e}")
 
-        # Check for unicode escape sequences
+        # Check for unicode escape sequences like \u003c (which is <)
+        # Use raw_unicode_escape to avoid corrupting Croatian diacritics (č, ć, ž, š, đ)
         try:
-            # Decode unicode escapes like \u003c (which is <)
-            decoded_unicode = text.encode().decode('unicode_escape')
+            decoded_unicode = text.encode('raw_unicode_escape').decode('raw_unicode_escape')
             if decoded_unicode != text:
                 decoded_text = decoded_unicode
         except (UnicodeDecodeError, UnicodeEncodeError):
@@ -442,6 +436,7 @@ class AdminReviewService:
                     "ip_address": validated_ip
                 }, validated_ip)
                 raise SecurityError(
+                    ErrorCode.SECURITY_VALIDATION_FAILED,
                     "Correction text contains potentially dangerous content. "
                     "Please use plain text only."
                 )

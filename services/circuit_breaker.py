@@ -14,6 +14,8 @@ from typing import Dict, Optional
 from enum import Enum
 from dataclasses import dataclass
 
+from services.errors import CircuitOpenError
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ class CircuitBreaker:
             CircuitOpenError: If circuit is open
             Original exception: If function fails
         """
+        # Acquire lock for state check — hold through execution for HALF_OPEN safety
         async with self._lock:
             circuit = self._get_circuit(endpoint_key)
 
@@ -89,8 +92,8 @@ class CircuitBreaker:
                     logger.info(f"Circuit HALF_OPEN: {endpoint_key}")
                 else:
                     raise CircuitOpenError(
-                        f"Endpoint {endpoint_key} je onemogućen zbog prethodnih grešaka. "
-                        f"Pokušaj ponovno za {self._time_until_reset(circuit):.0f}s."
+                        endpoint_key,
+                        cooldown_seconds=self._time_until_reset(circuit),
                     )
 
             # Prevent multiple concurrent calls through half-open gate
@@ -98,11 +101,12 @@ class CircuitBreaker:
                 if self._half_open_in_progress.get(endpoint_key, False):
                     # A test call is already in flight — block subsequent callers
                     raise CircuitOpenError(
-                        f"Endpoint {endpoint_key} je onemogućen — testni poziv u tijeku. "
-                        f"Pokušaj ponovno za nekoliko sekundi."
+                        endpoint_key,
+                        cooldown_seconds=5.0,
                     )
 
-        # Execute function
+        # Execute function outside lock (CLOSED state doesn't need serialization,
+        # HALF_OPEN is gated by _half_open_in_progress flag set under lock)
         try:
             result = await func(*args, **kwargs)
             await self._record_success(endpoint_key)
@@ -199,6 +203,6 @@ class CircuitBreaker:
                 logger.info(f"Circuit manually reset: {endpoint_key}")
 
 
-class CircuitOpenError(Exception):
-    """Raised when circuit is open and calls are blocked."""
-    pass
+# CircuitOpenError is imported from services.errors and re-exported here
+# for backward compatibility with: from services.circuit_breaker import CircuitOpenError
+__all__ = ["CircuitBreaker", "CircuitState", "CircuitMetrics", "CircuitOpenError"]

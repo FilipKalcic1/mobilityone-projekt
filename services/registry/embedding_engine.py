@@ -78,7 +78,11 @@ from services.tool_contracts import (
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("embedding_engine")
-settings = get_settings()
+
+
+def _get_settings():
+    """Lazy settings access — avoid module-level parsing before env vars are set."""
+    return get_settings()
 
 
 class EmbeddingEngine:
@@ -463,7 +467,7 @@ class EmbeddingEngine:
         try:
             response = await self.openai.embeddings.create(
                 input=[text[:8000]],
-                model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+                model=_get_settings().AZURE_OPENAI_EMBEDDING_DEPLOYMENT
             )
             return response.data[0].embedding
         except Exception as e:

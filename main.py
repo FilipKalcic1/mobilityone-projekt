@@ -5,8 +5,10 @@ Main entry point with automatic database initialization.
 """
 
 import asyncio
+import hmac
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -129,6 +131,12 @@ REQUEST_LATENCY = Histogram(
 TOOLS_LOADED = Gauge('tools_loaded_total', 'Number of tools loaded in registry')
 
 
+_UUID_RE = re.compile(
+    r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_NUMERIC_ID_RE = re.compile(r"/\d+")
+
+
 class MetricsMiddleware(BaseHTTPMiddleware):
     """Record Prometheus HTTP request metrics (count + latency)."""
 
@@ -145,7 +153,10 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         elapsed = time.monotonic() - start
 
         # Normalize path to avoid high-cardinality label explosion
-        path = request.url.path.rstrip("/") or "/"
+        # Replace UUID/numeric ID segments with placeholders
+        raw_path = request.url.path.rstrip("/") or "/"
+        path = _UUID_RE.sub("/{id}", raw_path)
+        path = _NUMERIC_ID_RE.sub("/{id}", path)
         status = str(response.status_code)
 
         REQUEST_COUNT.labels(method=method, endpoint=path, status=status).inc()
@@ -480,12 +491,21 @@ async def metrics(request: Request):
     # In production, only allow Prometheus scraper (by IP or token)
     if settings.is_production:
         token = request.query_params.get("token", "")
-        admin_tokens = set()
+        admin_tokens = []
         for i in range(1, 5):
             env_token = os.environ.get(f"ADMIN_TOKEN_{i}")
             if env_token:
-                admin_tokens.add(env_token)
-        if admin_tokens and token not in admin_tokens:
+                admin_tokens.append(env_token)
+        if not admin_tokens:
+            logger.error("ADMIN_TOKENS not configured — denying /metrics access in production")
+            return JSONResponse(status_code=503, content={"detail": "Metrics unavailable: admin tokens not configured"})
+        # Constant-time comparison: iterate all tokens to prevent timing oracle
+        token_bytes = token.encode()
+        valid = False
+        for stored in admin_tokens:
+            if hmac.compare_digest(token_bytes, stored.encode()):
+                valid = True
+        if not valid:
             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
     # Read tools count from Redis (written by worker after registry init)

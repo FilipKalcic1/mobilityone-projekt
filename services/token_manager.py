@@ -15,7 +15,8 @@ import httpx
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 class TokenManager:
@@ -45,10 +46,10 @@ class TokenManager:
         self._last_failure: Optional[datetime] = None
 
         # Configuration
-        self.auth_url = settings.MOBILITY_AUTH_URL
-        self.client_id = settings.MOBILITY_CLIENT_ID
-        self.client_secret = settings.MOBILITY_CLIENT_SECRET
-        self.scope = settings.MOBILITY_SCOPE
+        self.auth_url = _get_settings().MOBILITY_AUTH_URL
+        self.client_id = _get_settings().MOBILITY_CLIENT_ID
+        self.client_secret = _get_settings().MOBILITY_CLIENT_SECRET
+        self.scope = _get_settings().MOBILITY_SCOPE
 
         self._cache_key = "mobility:access_token"
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -76,9 +77,17 @@ class TokenManager:
                 cached = await self._redis.get(self._cache_key)
                 if cached:
                     self._token = cached
-                    self._expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    # Use actual Redis TTL so we don't serve a nearly-expired token.
+                    # We stored the token with TTL = expires_in - 120 (120s safety buffer),
+                    # so remaining TTL accurately reflects how long the token is still usable.
+                    ttl_seconds = await self._redis.ttl(self._cache_key)
+                    if ttl_seconds > 0:
+                        self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+                    else:
+                        # TTL unavailable or already expired — force refresh next call
+                        self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
                     self._last_failure = None
-                    logger.debug("Token loaded from Redis")
+                    logger.debug(f"Token loaded from Redis, TTL={ttl_seconds}s")
                     return self._token
             except Exception as e:
                 logger.warning(f"Redis cache read failed: {e}")
@@ -98,7 +107,12 @@ class TokenManager:
             return await self._fetch_new_token()
 
     async def _get_http_client(self) -> httpx.AsyncClient:
-        """Get or create cached HTTP client for token requests."""
+        """Get or create cached HTTP client for token requests.
+
+        Design: client is lazily created and reused for connection pooling.
+        If a connection error occurs, httpx handles retries internally.
+        The client is closed on shutdown via close().
+        """
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(timeout=5.0)
         return self._http_client

@@ -47,11 +47,13 @@ USAGE:
 
 import json
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
+import threading
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,12 +62,15 @@ from models import HallucinationReport
 from config import get_settings
 from services.errors import InfrastructureError, GatewayError, ErrorCode
 from services.tracing import get_tracer, trace_span
+from services.text_normalizer import (
+    extract_tool_from_text as _shared_extract_tool,
+    extract_query_patterns as _shared_extract_patterns,
+)
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("feedback_learning_service")
-settings = get_settings()
 
 # Cache file for learned boosts
-LEARNED_BOOSTS_FILE = Path.cwd() / ".cache" / "learned_search_boosts.json"
+LEARNED_BOOSTS_FILE = Path(__file__).parent.parent / ".cache" / "learned_search_boosts.json"
 
 # Thresholds
 CONFIDENCE_THRESHOLD_AUTO_APPLY = 0.70  # Auto-apply patterns with >70% confidence
@@ -207,13 +212,16 @@ class FeedbackLearningService:
 
     async def _get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding for text using OpenAI."""
+        _settings = get_settings()
         if not self._embedding_client:
             try:
                 from openai import AsyncAzureOpenAI
                 self._embedding_client = AsyncAzureOpenAI(
-                    azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-                    api_key=settings.AZURE_OPENAI_API_KEY,
-                    api_version=settings.AZURE_OPENAI_API_VERSION
+                    azure_endpoint=_settings.AZURE_OPENAI_ENDPOINT,
+                    api_key=_settings.AZURE_OPENAI_API_KEY,
+                    api_version=_settings.AZURE_OPENAI_API_VERSION,
+                    max_retries=1,
+                    timeout=10.0,
                 )
             except Exception as e:
                 logger.warning(f"Could not initialize embedding client: {e}")
@@ -222,7 +230,7 @@ class FeedbackLearningService:
         try:
             response = await self._embedding_client.embeddings.create(
                 input=[text[:8000]],
-                model=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+                model=_settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
             )
             return response.data[0].embedding
         except Exception as e:
@@ -382,6 +390,10 @@ class FeedbackLearningService:
                     for p in boost.patterns:
                         if p not in existing.patterns and len(existing.patterns) < MAX_BOOSTS_PER_TOOL:
                             existing.patterns.append(p)
+                    # Merge negative patterns (tools to penalize)
+                    for np in boost.negative_patterns:
+                        if np not in existing.negative_patterns:
+                            existing.negative_patterns.append(np)
                     # Update confidence (weighted average)
                     existing.confidence = (existing.confidence + boost.confidence) / 2
                     existing.occurrence_count += boost.occurrence_count
@@ -414,39 +426,8 @@ class FeedbackLearningService:
             return result
 
     def _extract_tool_from_correction(self, correction: str) -> Optional[str]:
-        """Extract tool name from correction text."""
-        if not correction:
-            return None
-
-        import re
-        # Look for tool patterns
-        patterns = [
-            r"(get_\w+)",
-            r"(post_\w+)",
-            r"(put_\w+)",
-            r"(patch_\w+)",
-            r"(delete_\w+)",
-            r"koristiti\s+(\w+)",
-            r"trebao?\s+(\w+)",
-        ]
-
-        correction_lower = correction.lower()
-        for pattern in patterns:
-            match = re.search(pattern, correction_lower)
-            if match:
-                tool = match.group(1)
-                # Normalize
-                if not tool.startswith(("get_", "post_", "put_", "patch_", "delete_")):
-                    # Try to find full tool name
-                    full_match = re.search(
-                        r"(get|post|put|patch|delete)_\w*" + re.escape(tool),
-                        correction_lower
-                    )
-                    if full_match:
-                        return full_match.group(0)
-                return tool
-
-        return None
+        """Extract tool name from correction text. Delegates to shared utility."""
+        return _shared_extract_tool(correction)
 
     def _extract_tool_from_response(
         self,
@@ -472,35 +453,8 @@ class FeedbackLearningService:
         return None
 
     def _extract_patterns(self, query: str) -> List[str]:
-        """Extract meaningful patterns from a query."""
-        if not query:
-            return []
-
-        # Croatian stopwords
-        stopwords = {
-            "mi", "me", "ja", "ti", "on", "ona", "ono", "daj", "dajte",
-            "molim", "te", "vas", "trebam", "treba", "hoću", "želim",
-            "mogu", "možeš", "može", "li", "da", "ne", "i", "ili",
-            "za", "od", "do", "na", "u", "s", "sa", "po", "iz",
-            "je", "su", "sam", "si", "smo", "ste", "biti", "bio",
-            "koja", "koji", "koje", "što", "kako", "gdje", "kada",
-            "prikaži", "pokaži", "reci", "kaži", "dohvati",
-        }
-
-        import re
-        query_lower = query.lower()
-        words = re.findall(r'\b\w+\b', query_lower)
-        words = [w for w in words if w not in stopwords and len(w) > 2]
-
-        patterns = []
-        # Create n-grams (prefer 2-3 words)
-        for n in [2, 3, 1]:
-            for i in range(len(words) - n + 1):
-                pattern = " ".join(words[i:i+n])
-                if len(pattern) > 4:
-                    patterns.append(pattern)
-
-        return patterns[:5]
+        """Extract meaningful patterns from a query. Delegates to shared utility."""
+        return _shared_extract_patterns(query)
 
     def _generate_recommendations(
         self,
@@ -650,7 +604,7 @@ class FeedbackLearningService:
             Number of tools updated
         """
         if output_path is None:
-            output_path = Path.cwd() / "config" / "tool_documentation.json"
+            output_path = Path(__file__).parent.parent / "config" / "tool_documentation.json"
 
         # Load existing documentation
         try:
@@ -745,12 +699,19 @@ class FeedbackLearningService:
 
 # Singleton instance
 _feedback_learning_service: Optional[FeedbackLearningService] = None
+_singleton_lock = threading.Lock()
 
 def get_feedback_learning_service(db: AsyncSession) -> FeedbackLearningService:
     """Get or create feedback learning service instance."""
     global _feedback_learning_service
     if _feedback_learning_service is None:
-        _feedback_learning_service = FeedbackLearningService(db)
+        with _singleton_lock:
+            if _feedback_learning_service is None:
+                _feedback_learning_service = FeedbackLearningService(db)
+                return _feedback_learning_service
+    # Update db session — callers pass a fresh session each request.
+    # Simple attribute assignment is atomic under CPython GIL.
+    _feedback_learning_service.db = db
     return _feedback_learning_service
 
 async def run_learning_cycle(db: AsyncSession) -> LearningResult:

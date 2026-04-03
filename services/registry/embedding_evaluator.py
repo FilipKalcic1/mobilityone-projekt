@@ -15,7 +15,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +387,7 @@ class EmbeddingEvaluator:
         """Save test set to JSON file."""
         filepath = self.data_dir / filename
         data = {
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "total_queries": len(test_cases),
             "test_cases": [
                 {
@@ -450,7 +450,7 @@ class EmbeddingEvaluator:
         """
         result = EvaluationResult(
             total_queries=len(test_cases),
-            evaluated_at=datetime.now().isoformat()
+            evaluated_at=datetime.now(timezone.utc).isoformat()
         )
 
         if not test_cases:

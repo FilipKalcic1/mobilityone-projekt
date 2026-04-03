@@ -34,6 +34,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class ToolMetrics:
     # Performance tracking
     avg_response_time_ms: float = 0.0
     total_response_time_ms: float = 0.0
+    timed_calls: int = 0  # Calls that had response_time_ms > 0
 
     # Timestamps
     first_call: Optional[str] = None
@@ -135,6 +137,7 @@ class ToolMetrics:
             "last_error_time": self.last_error_time,
             "avg_response_time_ms": self.avg_response_time_ms,
             "total_response_time_ms": self.total_response_time_ms,
+            "timed_calls": self.timed_calls,
             "first_call": self.first_call,
             "last_call": self.last_call,
             "success_rate": self.success_rate,
@@ -156,6 +159,7 @@ class ToolMetrics:
             last_error_time=data.get("last_error_time"),
             avg_response_time_ms=data.get("avg_response_time_ms", 0.0),
             total_response_time_ms=data.get("total_response_time_ms", 0.0),
+            timed_calls=data.get("timed_calls", 0),
             first_call=data.get("first_call"),
             last_call=data.get("last_call")
         )
@@ -242,11 +246,12 @@ class ToolEvaluator:
         if not metrics.first_call:
             metrics.first_call = now
 
-        # Update response time average
+        # Update response time average (only count calls that provided timing)
         if response_time_ms > 0:
             metrics.total_response_time_ms += response_time_ms
+            metrics.timed_calls += 1
             metrics.avg_response_time_ms = (
-                metrics.total_response_time_ms / metrics.total_calls
+                metrics.total_response_time_ms / metrics.timed_calls
             )
 
         logger.debug(
@@ -459,10 +464,13 @@ class ToolEvaluator:
 
 # Global instance
 _tool_evaluator: Optional[ToolEvaluator] = None
+_singleton_lock = threading.Lock()
 
 def get_tool_evaluator() -> ToolEvaluator:
     """Get global tool evaluator instance."""
     global _tool_evaluator
     if _tool_evaluator is None:
-        _tool_evaluator = ToolEvaluator()
+        with _singleton_lock:
+            if _tool_evaluator is None:
+                _tool_evaluator = ToolEvaluator()
     return _tool_evaluator

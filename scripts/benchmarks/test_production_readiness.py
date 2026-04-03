@@ -44,9 +44,12 @@ async def test_imports():
         ("services.admin_review", "AdminReviewService"),
     ]
 
+    import importlib
     for module, classes in imports:
         try:
-            exec(f"from {module} import {classes}")
+            mod = importlib.import_module(module)
+            for cls_name in classes.split(","):
+                getattr(mod, cls_name.strip())
             print(f"  [OK] {module}")
         except Exception as e:
             print(f"  [FAIL] {module}: {e}")

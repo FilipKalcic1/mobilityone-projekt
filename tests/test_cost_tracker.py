@@ -133,7 +133,7 @@ class TestGetTotalStats:
 class TestGetCostTrackerSingleton:
     """Test get_cost_tracker factory - covers lines 137-139."""
 
-    async def test_creates_singleton(self):
+    def test_creates_singleton(self):
         """Test singleton creation."""
         import services.cost_tracker as ct_module
         ct_module._cost_tracker = None  # Reset
@@ -141,12 +141,12 @@ class TestGetCostTrackerSingleton:
         from services.cost_tracker import get_cost_tracker
 
         redis = AsyncMock()
-        t1 = await get_cost_tracker(redis)
-        t2 = await get_cost_tracker(redis)
+        t1 = get_cost_tracker(redis)
+        t2 = get_cost_tracker(redis)
 
         assert t1 is t2
 
-    async def test_creates_instance_if_none(self):
+    def test_creates_instance_if_none(self):
         """Test creates new instance if none exists."""
         import services.cost_tracker as ct_module
         ct_module._cost_tracker = None  # Reset
@@ -154,7 +154,7 @@ class TestGetCostTrackerSingleton:
         from services.cost_tracker import get_cost_tracker
 
         redis = AsyncMock()
-        result = await get_cost_tracker(redis)
+        result = get_cost_tracker(redis)
 
         assert result is not None
         assert isinstance(result, CostTracker)

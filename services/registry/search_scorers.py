@@ -12,6 +12,7 @@ from typing import Dict, List, Set, Tuple, Any, Optional
 from services.tool_contracts import UnifiedToolDefinition
 from services.intent_classifier import detect_action_intent, ActionIntent
 from services.patterns import USER_SPECIFIC_PATTERNS, USER_FILTER_PARAMS
+from services.registry.search_filters import detect_categories
 
 logger = logging.getLogger(__name__)
 
@@ -283,20 +284,8 @@ def apply_category_boosting(
     query_lower = query.lower()
     query_words = set(query_lower.split())
 
-    # Find matching categories based on keywords
-    matching_categories: Set[str] = set()
-
-    for cat_name, keywords in category_keywords.items():
-        # Check for word overlap
-        if query_words & keywords:
-            matching_categories.add(cat_name)
-            continue
-
-        # Check for substring matches
-        for keyword in keywords:
-            if len(keyword) >= 4 and keyword in query_lower:
-                matching_categories.add(cat_name)
-                break
+    # Delegate category detection to shared function (DRY)
+    matching_categories = detect_categories(query, category_keywords)
 
     if matching_categories:
         logger.info(f"Query matches categories: {matching_categories}")
@@ -358,6 +347,8 @@ def apply_documentation_boosting(
         # Match against example_queries
         example_queries = doc.get("example_queries", [])
         for example in example_queries:
+            if not isinstance(example, str):
+                continue
             example_lower = example.lower()
             example_words = set(example_lower.split())
             if query_words & example_words:

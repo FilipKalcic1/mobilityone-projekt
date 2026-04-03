@@ -27,7 +27,7 @@ Design decisions:
 
 from __future__ import annotations
 
-from enum import unique
+from enum import Enum, unique
 from typing import Any, Dict, Optional
 
 
@@ -36,7 +36,7 @@ from typing import Any, Dict, Optional
 # ---------------------------------------------------------------------------
 
 @unique
-class ErrorCode(str, __import__("enum").Enum):
+class ErrorCode(str, Enum):
     """Machine-readable error codes.
 
     Naming: {DOMAIN}_{SPECIFIC_FAILURE}
@@ -50,6 +50,10 @@ class ErrorCode(str, __import__("enum").Enum):
     TRAINING_DATA_INVALID = "CLASSIFICATION_TRAINING_DATA_INVALID"
     CALIBRATION_MISSING = "CLASSIFICATION_CALIBRATION_MISSING"
     ENSEMBLE_ALL_FAILED = "CLASSIFICATION_ENSEMBLE_ALL_FAILED"
+    MODEL_INTEGRITY_FAILED = "CLASSIFICATION_MODEL_INTEGRITY_FAILED"
+
+    # ── Security ──────────────────────────────────────────────────
+    SECURITY_VALIDATION_FAILED = "SECURITY_VALIDATION_FAILED"
 
     # ── Search ─────────────────────────────────────────────────────
     FAISS_NOT_INITIALIZED = "SEARCH_FAISS_NOT_INITIALIZED"
@@ -271,6 +275,11 @@ class CircuitOpenError(GatewayError):
         )
         self.endpoint: str = endpoint
         self.cooldown_seconds: float = cooldown_seconds
+
+
+class SecurityError(BotError):
+    """Security-related errors (integrity check failures, unauthorized access)."""
+    pass
 
 
 class ConversationError(BotError):

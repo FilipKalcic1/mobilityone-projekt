@@ -7,14 +7,18 @@ NEVER fabricate data - only return what exists in the response.
 
 import json
 import logging
+import re
 from typing import Dict, Any, Optional
+import threading
 
 from config import get_settings
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
 from services.circuit_breaker import CircuitOpenError
+from services.text_normalizer import sanitize_for_llm
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 class LLMResponseExtractor:
     """
@@ -177,7 +181,8 @@ Pitanje: "kada istječe registracija"
 Podaci: {"Mileage": 50000, "Name": "Golf"}
 Odgovor: ❌ Podatak o isteku registracije nije dostupan u sustavu."""
 
-        user_prompt = f"""PITANJE: {query}
+        sanitized_query = sanitize_for_llm(query) if query else ""
+        user_prompt = f"""PITANJE: {sanitized_query}
 
 DOSTUPNI PODACI:
 {data_str}
@@ -187,6 +192,7 @@ DOSTUPNI PODACI:
 Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         try:
+            settings = _get_settings()
             response = await self._circuit_breaker.call(
                 f"llm_extractor:{settings.AZURE_OPENAI_DEPLOYMENT_NAME}",
                 self.openai.chat.completions.create,
@@ -220,8 +226,6 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
         Logs warnings if potential hallucinations are detected.
         """
-        import re
-
         # Check for suspicious patterns that might indicate hallucination
 
         # 1. Check for vehicle count claims
@@ -384,10 +388,13 @@ Izvuci SAMO ono što korisnik traži. Budi koncizan."""
 
 # Singleton instance
 _extractor = None
+_singleton_lock = threading.Lock()
 
 def get_response_extractor() -> LLMResponseExtractor:
     """Get singleton instance of response extractor."""
     global _extractor
     if _extractor is None:
-        _extractor = LLMResponseExtractor()
+        with _singleton_lock:
+            if _extractor is None:
+                _extractor = LLMResponseExtractor()
     return _extractor

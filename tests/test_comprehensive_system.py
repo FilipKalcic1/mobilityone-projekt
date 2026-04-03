@@ -653,8 +653,7 @@ def _make_engine():
     """Build MessageEngine with all dependencies mocked."""
     ms = _mock_settings()
     patches = {
-        "settings": patch("services.engine.settings", ms),
-        "get_settings": patch("services.engine.get_settings", return_value=ms),
+        "get_settings": patch("services.engine._get_settings", return_value=ms),
         "ToolExecutor": patch("services.engine.ToolExecutor"),
         "AIOrchestrator": patch("services.engine.AIOrchestrator"),
         "ResponseFormatter": patch("services.engine.ResponseFormatter"),

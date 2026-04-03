@@ -368,7 +368,6 @@ if __name__ == "__main__":
     print()
 
     test_scenario_1_multiple_uuids()
-    test_scenario_2_summary_over_budget()
     test_scenario_3_no_tool_calls()
     test_scenario_4_duplicate_system_prompt()
     test_scenario_5_tool_score_alignment()

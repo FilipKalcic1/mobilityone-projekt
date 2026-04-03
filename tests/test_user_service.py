@@ -75,7 +75,9 @@ def mock_cache():
     """Mock cache service."""
     cache = MagicMock()
     cache.get = AsyncMock(return_value=None)
+    cache.get_json = AsyncMock(return_value=None)
     cache.set = AsyncMock(return_value=True)
+    cache.set_json = AsyncMock(return_value=True)
     cache.delete = AsyncMock(return_value=True)
     return cache
 
@@ -346,14 +348,14 @@ class TestBuildContext:
     @pytest.mark.asyncio
     async def test_returns_cached_context(self, user_service, mock_cache):
         """If cache has valid context, return it immediately."""
-        cached_ctx = json.dumps({
+        cached_ctx = {
             "person_id": "person-123",
             "phone": "+385991234567",
             "tenant_id": "tenant-hr",
             "display_name": "Cached User",
             "vehicle": {"plate": "ZG-0000"},
-        })
-        mock_cache.get.return_value = cached_ctx
+        }
+        mock_cache.get_json.return_value = cached_ctx
 
         ctx = await user_service.build_context("person-123", "+385991234567")
         assert ctx["display_name"] == "Cached User"
@@ -374,7 +376,7 @@ class TestBuildContext:
     @patch("services.user_service.get_schema_extractor")
     async def test_builds_context_with_vehicle_data(self, mock_extractor_factory, user_service, mock_gateway, mock_cache):
         """Context should include vehicle data from API when gateway is available."""
-        mock_cache.get.return_value = None  # No cache
+        mock_cache.get_json.return_value = None  # No cache
 
         # Mock schema extractor
         extractor = MagicMock()
@@ -397,12 +399,12 @@ class TestBuildContext:
         assert ctx["vehicle"].get("LicencePlate") == "ZG-1234-AB"
         assert ctx["display_name"] == "Ivan Horvat"
         # Should cache valid context
-        mock_cache.set.assert_awaited()
+        mock_cache.set_json.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_build_context_gateway_error_returns_basic(self, user_service, mock_gateway, mock_cache):
         """If gateway errors, context should still be returned with empty vehicle."""
-        mock_cache.get.return_value = None
+        mock_cache.get_json.return_value = None
         mock_gateway.execute.side_effect = Exception("API down")
 
         ctx = await user_service.build_context("person-123", "+385991234567")

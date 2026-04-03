@@ -23,7 +23,22 @@ import sys
 from collections import deque
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import PlainTextResponse
 import redis.asyncio as aioredis
+try:
+    from redis.exceptions import (
+        ConnectionError as RedisConnectionError,
+        RedisError,
+        ResponseError,
+    )
+    # Guard: test stubs may inject MagicMocks that aren't real exception classes
+    if not (isinstance(RedisConnectionError, type) and issubclass(RedisConnectionError, BaseException)):
+        raise TypeError("redis.exceptions returned stub types")
+except Exception:
+    RedisConnectionError = OSError  # type: ignore[assignment,misc]
+    RedisError = OSError  # type: ignore[assignment,misc]
+    class ResponseError(Exception):  # type: ignore[assignment]
+        """Sentinel — never raised; safe fallback when redis.exceptions unavailable."""
 import logging
 
 from config import get_settings
@@ -38,6 +53,9 @@ _tracer = get_tracer(__name__)
 # ---
 _MAX_DIAG_ENTRIES = 50
 _diag_buffer: deque = deque(maxlen=_MAX_DIAG_ENTRIES)
+# Stats lock: writes are atomic in asyncio's cooperative model (no await between
+# read-modify-write), but the lock ensures a consistent snapshot on read.
+_stats_lock = asyncio.Lock()
 _stats = {
     "total_received": 0,
     "total_pushed": 0,
@@ -126,41 +144,41 @@ def extract_text_and_type(result: dict) -> tuple:
     # Format 1 & 2: message object (most common Infobip format)
     message_obj = result.get("message")
     if message_obj and isinstance(message_obj, dict):
-        msg_type = message_obj.get("type", "UNKNOWN")
+        msg_type = message_obj.get("type") or "UNKNOWN"
 
         # Case-insensitive type check
-        if msg_type.upper() == "TEXT":
+        if str(msg_type).upper() == "TEXT":
             text = message_obj.get("text", "")
-            if text:
+            if isinstance(text, str) and text.strip():
                 return text.strip(), "TEXT"
 
         # Format 6: message object without type field but with text
         if not text and "text" in message_obj:
             text = message_obj.get("text", "")
-            if text:
+            if isinstance(text, str) and text.strip():
                 return text.strip(), msg_type or "TEXT"
 
         # Non-text message - return type for handling
-        return "", msg_type
+        return "", str(msg_type)
 
     # Format 3 & 4: content field
     content = result.get("content")
     if content:
         if isinstance(content, dict):
-            content_type = content.get("type", "")
-            if content_type.upper() == "TEXT":
+            content_type = content.get("type") or ""
+            if str(content_type).upper() == "TEXT":
                 text = content.get("text", "")
-                if text:
+                if isinstance(text, str) and text.strip():
                     return text.strip(), "TEXT"
-            return "", content_type or "UNKNOWN"
+            return "", str(content_type) or "UNKNOWN"
 
         if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict):
-                    item_type = item.get("type", "")
-                    if item_type.upper() == "TEXT":
+                    item_type = item.get("type") or ""
+                    if str(item_type).upper() == "TEXT":
                         text = item.get("text", "")
-                        if text:
+                        if isinstance(text, str) and text.strip():
                             return text.strip(), "TEXT"
             # Return type of first item if no text found
             if content and isinstance(content[0], dict):
@@ -232,11 +250,16 @@ async def _write_dlq(dlq_entry: str) -> None:
         redis = await get_redis()
         if redis:
             await redis.lpush("dlq:webhook", dlq_entry)
-            await redis.ltrim("dlq:webhook", 0, 9999)  # Cap at 10K entries
-            await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
+            # ltrim/expire are best-effort maintenance — failure doesn't
+            # un-store the message, so we return immediately regardless.
+            try:
+                await redis.ltrim("dlq:webhook", 0, 9999)  # Cap at 10K entries
+                await redis.expire("dlq:webhook", 2592000)  # 30-day TTL for GDPR retention
+            except Exception as maint_err:
+                logger.warning(f"DLQ Redis ltrim/expire failed (message stored, maintenance skipped): {maint_err}")
             logger.info("DLQ message stored in Redis (dlq:webhook)")
             return
-    except (ConnectionError, TimeoutError, OSError, aioredis.ConnectionError, aioredis.RedisError) as redis_dlq_err:
+    except (ConnectionError, TimeoutError, OSError, RedisConnectionError, RedisError) as redis_dlq_err:
         logger.warning(f"DLQ Redis write failed, falling back to file: {redis_dlq_err}")
     except Exception as redis_dlq_err:
         logger.error(f"DLQ Redis unexpected error (possible bug): {type(redis_dlq_err).__name__}: {redis_dlq_err}")
@@ -403,7 +426,7 @@ async def _process_webhook(request: Request, request_id: str, span) -> dict:
                         pushed += 1
                         logger.info(f"Non-text message forwarded: {sender[-4:]}... type={msg_type}")
                         break
-                    except (ConnectionError, TimeoutError, OSError, aioredis.ConnectionError, aioredis.RedisError) as redis_err:
+                    except (ConnectionError, TimeoutError, OSError, RedisConnectionError, RedisError) as redis_err:
                         if redis_attempt < 2:
                             await asyncio.sleep(0.5 * (2 ** redis_attempt))
                             async with _redis_lock:
@@ -423,12 +446,10 @@ async def _process_webhook(request: Request, request_id: str, span) -> dict:
             }
 
             # Push with retry (max 3 attempts with exponential backoff)
-            push_success = False
             for redis_attempt in range(3):
                 try:
                     redis = await get_redis()
                     await redis.xadd("whatsapp_stream_inbound", stream_data)
-                    push_success = True
                     pushed += 1
                     _stats["total_pushed"] += 1
                     _stats["last_success_at"] = datetime.now(timezone.utc).isoformat()
@@ -436,7 +457,7 @@ async def _process_webhook(request: Request, request_id: str, span) -> dict:
                     _diag_log("pushed", {"sender": sender[-4:], "text_preview": text[:30]})
                     break
 
-                except (ConnectionError, OSError, TimeoutError, aioredis.ConnectionError, aioredis.RedisError) as redis_err:
+                except (ConnectionError, OSError, TimeoutError, RedisConnectionError, RedisError) as redis_err:
                     if redis_attempt < 2:
                         delay = 0.5 * (2 ** redis_attempt)  # 0.5s, 1.0s
                         logger.warning(
@@ -533,11 +554,12 @@ async def whatsapp_webhook_verify(request: Request):
         logger.warning("WHATSAPP_VERIFY_TOKEN not configured, skipping verification")
         return {"status": "ok"}
 
-    if mode == "subscribe" and token == expected_token:
+    if mode == "subscribe" and hmac.compare_digest(token or "", expected_token):
         logger.info("WhatsApp webhook verified successfully")
         if not challenge:
             raise HTTPException(status_code=400, detail="Missing challenge parameter")
-        return int(challenge)
+        # Return challenge as-is (Meta/Infobip sends strings, not necessarily ints)
+        return PlainTextResponse(content=str(challenge), status_code=200)
 
     logger.warning(f"Webhook verification failed: mode={mode}")
     raise HTTPException(status_code=403, detail="Verification failed")
@@ -571,11 +593,18 @@ async def webhook_debug(request: Request):
         if env_token:
             expected_tokens.add(env_token)
 
-    if not expected_tokens or token not in expected_tokens:
+    token_bytes = (token or "").encode()
+    valid = any(
+        hmac.compare_digest(token_bytes, stored.encode())
+        for stored in expected_tokens
+    )
+    if not expected_tokens or not valid:
         raise HTTPException(status_code=404, detail="Not found")
 
+    async with _stats_lock:
+        stats_snapshot = dict(_stats)
     diag = {
-        "stats": dict(_stats),
+        "stats": stats_snapshot,
         "recent_events": list(_diag_buffer),
         "redis": {"status": "unknown"},
         "stream": {},
@@ -584,7 +613,11 @@ async def webhook_debug(request: Request):
             "has_secret_key": bool(settings.INFOBIP_SECRET_KEY),
             "has_api_key": bool(settings.INFOBIP_API_KEY),
             "sender_number": settings.INFOBIP_SENDER_NUMBER,
-            "redis_url_masked": settings.REDIS_URL.split("@")[-1] if "@" in settings.REDIS_URL else settings.REDIS_URL,
+            "redis_url_masked": (
+                "redis://***@" + settings.REDIS_URL.split("@")[-1]
+                if "@" in settings.REDIS_URL
+                else "redis://<no-auth>"
+            ) if settings.REDIS_URL else "not-configured",
         }
     }
 
@@ -602,7 +635,7 @@ async def webhook_debug(request: Request):
                 "first_entry": stream_info.get("first-entry"),
                 "last_entry": stream_info.get("last-entry"),
             }
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             diag["stream"] = {"error": str(e)}
 
         # Get consumer group info
@@ -617,7 +650,7 @@ async def webhook_debug(request: Request):
                 }
                 for g in groups
             ]
-        except (aioredis.ResponseError, aioredis.ConnectionError, aioredis.RedisError) as e:
+        except (ResponseError, RedisConnectionError, RedisError) as e:
             diag["consumer_groups"] = {"error": str(e)}
 
     except Exception as e:

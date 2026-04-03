@@ -11,16 +11,19 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional
+import threading
 
 from config import get_settings
 from services.openai_client import get_openai_client, get_llm_circuit_breaker
 from services.circuit_breaker import CircuitOpenError
 from services.context import UserContextManager
+from services.text_normalizer import sanitize_for_llm
 from services.tracing import get_tracer, trace_span
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("chain_planner")
-settings = get_settings()
+def _get_settings():
+    return get_settings()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -34,9 +37,9 @@ MULTI_TOOL_PATTERNS = [
     {
         # "kilometrazu, troskove i putovanja"
         "keywords_all": [
-            [r"kilometra[žz]|km"],
-            [r"troš|trosk|rashod|expense"],
-            [r"putovanj|trip|vožnj"],
+            [re.compile(r"kilometra[žz]|km")],
+            [re.compile(r"troš|trosk|rashod|expense")],
+            [re.compile(r"putovanj|trip|vožnj")],
         ],
         "tools": ["get_MasterData", "get_Expenses", "get_Trips"],
         "understanding": "Kilometraža, troškovi i putovanja",
@@ -45,8 +48,8 @@ MULTI_TOOL_PATTERNS = [
     {
         # "daj mi kilometrazu i troskove" / "km i rashode"
         "keywords_all": [
-            [r"kilometra[žz]|km|stanje km"],
-            [r"troš|trosk|rashod|izdatak|expense"],
+            [re.compile(r"kilometra[žz]|km|stanje km")],
+            [re.compile(r"troš|trosk|rashod|izdatak|expense")],
         ],
         "tools": ["get_MasterData", "get_Expenses"],
         "understanding": "Kilometraža i troškovi",
@@ -54,8 +57,8 @@ MULTI_TOOL_PATTERNS = [
     {
         # "km i putovanja"
         "keywords_all": [
-            [r"kilometra[žz]|km|stanje km"],
-            [r"putovanj|trip|vožnj"],
+            [re.compile(r"kilometra[žz]|km|stanje km")],
+            [re.compile(r"putovanj|trip|vožnj")],
         ],
         "tools": ["get_MasterData", "get_Trips"],
         "understanding": "Kilometraža i putovanja",
@@ -63,8 +66,8 @@ MULTI_TOOL_PATTERNS = [
     {
         # "troskovi i putovanja"
         "keywords_all": [
-            [r"troš|trosk|rashod|izdatak|expense"],
-            [r"putovanj|trip|vožnj"],
+            [re.compile(r"troš|trosk|rashod|izdatak|expense")],
+            [re.compile(r"putovanj|trip|vožnj")],
         ],
         "tools": ["get_Expenses", "get_Trips"],
         "understanding": "Troškovi i putovanja",
@@ -72,8 +75,8 @@ MULTI_TOOL_PATTERNS = [
     {
         # "podatke o vozilu i moje podatke"
         "keywords_all": [
-            [r"vozil|auto"],
-            [r"korisni[kc]|osob|profil|moj[ie] podatk"],
+            [re.compile(r"vozil|auto")],
+            [re.compile(r"korisni[kc]|osob|profil|moj[ie] podatk")],
         ],
         "tools": ["get_MasterData", "get_PersonData_personIdOrEmail"],
         "understanding": "Podaci o vozilu i korisniku",
@@ -81,8 +84,8 @@ MULTI_TOOL_PATTERNS = [
     {
         # "rezervacije i troskove"
         "keywords_all": [
-            [r"rezervacij|booking|kalendar"],
-            [r"troš|trosk|rashod|expense"],
+            [re.compile(r"rezervacij|booking|kalendar")],
+            [re.compile(r"troš|trosk|rashod|expense")],
         ],
         "tools": ["get_VehicleCalendar", "get_Expenses"],
         "understanding": "Rezervacije i troškovi",
@@ -90,8 +93,8 @@ MULTI_TOOL_PATTERNS = [
     {
         # "slucajeve i troskove"
         "keywords_all": [
-            [r"slu[čc]aj|šteta|steta|kvar|prijav|slucaj"],
-            [r"troš|trosk|rashod|expense"],
+            [re.compile(r"slu[čc]aj|šteta|steta|kvar|prijav|slucaj")],
+            [re.compile(r"troš|trosk|rashod|expense")],
         ],
         "tools": ["get_Cases", "get_Expenses"],
         "understanding": "Slučajevi i troškovi",
@@ -182,30 +185,30 @@ class ChainPlanner:
         with trace_span(_tracer, "chain_planner.create_plan", {"query_length": len(query), "num_tools": len(available_tools)}):
             logger.info(f"Planning chain for: {query[:50]}...")
 
-        # Check for deterministic multi-tool patterns (no LLM needed)
-        multi_plan = self._check_multi_tool_patterns(query)
-        if multi_plan:
-            logger.info(f"MULTI-TOOL FAST PATH: {[s.tool_name for s in multi_plan.primary_path]}")
-            return multi_plan
+            # Check for deterministic multi-tool patterns (no LLM needed)
+            multi_plan = self._check_multi_tool_patterns(query)
+            if multi_plan:
+                logger.info(f"MULTI-TOOL FAST PATH: {[s.tool_name for s in multi_plan.primary_path]}")
+                return multi_plan
 
-        # Check for simple cases first
-        simple_plan = self._check_simple_cases(query, user_context, tool_scores)
-        if simple_plan:
-            return simple_plan
+            # Check for simple cases first
+            simple_plan = self._check_simple_cases(query, user_context, tool_scores)
+            if simple_plan:
+                return simple_plan
 
-        # Build context for planner
-        context_summary = self._summarize_context(user_context)
-        tools_summary = self._summarize_tools(tool_scores[:10])  # More tools for chain
+            # Build context for planner
+            context_summary = self._summarize_context(user_context)
+            tools_summary = self._summarize_tools(tool_scores[:10])  # More tools for chain
 
-        # Ask LLM to plan
-        plan_response = await self._get_plan_from_llm(
-            query, context_summary, tools_summary
-        )
+            # Ask LLM to plan
+            plan_response = await self._get_plan_from_llm(
+                query, context_summary, tools_summary
+            )
 
-        if not plan_response:
-            return self._create_fallback_plan(query, tool_scores)
+            if not plan_response:
+                return self._create_fallback_plan(query, tool_scores)
 
-        return self._parse_plan_response(plan_response, tool_scores)
+            return self._parse_plan_response(plan_response, tool_scores)
 
     def _check_simple_cases(
         self,
@@ -279,7 +282,7 @@ class ChainPlanner:
             keyword_groups = pattern["keywords_all"]
             # ALL keyword groups must match (each group needs at least one regex hit)
             if all(
-                any(re.search(regex, query_lower) for regex in group)
+                any(regex.search(query_lower) for regex in group)
                 for group in keyword_groups
             ):
                 steps = [
@@ -517,7 +520,8 @@ class ChainPlanner:
         }
         }"""
 
-        user_message = f"""UPIT: {query}
+        sanitized_query = sanitize_for_llm(query) if query else ""
+        user_message = f"""UPIT: {sanitized_query}
 
 KONTEKST:
 {context}
@@ -528,6 +532,7 @@ DOSTUPNI ALATI:
 Napravi CHAIN PLAN izvršenja u JSON formatu."""
 
         try:
+            settings = _get_settings()
             response = await self._circuit_breaker.call(
                 f"llm_planner:{settings.AZURE_OPENAI_DEPLOYMENT_NAME}",
                 self.openai.chat.completions.create,
@@ -592,9 +597,13 @@ Napravi CHAIN PLAN izvršenja u JSON formatu."""
             for fb_data in fallbacks_data:
                 fb_steps = []
                 for fb_step_data in fb_data.get("steps", []):
+                    try:
+                        fb_step_type = StepType(fb_step_data.get("type", "execute_tool"))
+                    except ValueError:
+                        fb_step_type = StepType.EXECUTE_TOOL
                     fb_step = PlanStep(
                         step_number=fb_step_data.get("step", 1),
-                        step_type=StepType(fb_step_data.get("type", "execute_tool")),
+                        step_type=fb_step_type,
                         tool_name=fb_step_data.get("tool"),
                         question=fb_step_data.get("question"),
                         reason=fb_step_data.get("reason", "")
@@ -677,11 +686,14 @@ Napravi CHAIN PLAN izvršenja u JSON formatu."""
 
 # Singleton instance
 _chain_planner = None
+_singleton_lock = threading.Lock()
 
 
 def get_chain_planner() -> ChainPlanner:
     """Get singleton instance."""
     global _chain_planner
     if _chain_planner is None:
-        _chain_planner = ChainPlanner()
+        with _singleton_lock:
+            if _chain_planner is None:
+                _chain_planner = ChainPlanner()
     return _chain_planner
